@@ -77,7 +77,7 @@ my $Script = 'brandysnap';
 $| = 1;
 
 # version of this script
-my $Version = '0.1.0';
+my $Version = '0.1.1';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -2705,6 +2705,7 @@ sub runRsync ($\@$$) {
 
     if ($succeeded) {
         printlog "\nrsync successfully created new snapshot '$dest/$snapshot'\n", 1;  
+        printlog "(dry run: no snapshot actually created)\n", 1 if $Opt{'dry-run'};
     } else {
         printlog "\nWARNING: rsync did NOT create a new snapshot on destination '$dest'\n", 1;
     }
@@ -2733,7 +2734,7 @@ sub run ($\@) {
         my @expirableSnapshots = getExpirableSnapshots(@S, @specs, $snapshotTime);
         my $rsyncOK = runRsync($dest, @expirableSnapshots, $snapshotTime, $S[0]);  
         # ($S[0] will be undefined the first time)
-        unshift @S, $snapshotTime if !$rsyncOK;
+        unshift @S, $snapshotTime if $rsyncOK;
         # FIXME stop here if rsync failed??   or carry on with deletions and status?
     } else {
         printlog "Option 'no-snapshot' given -- no new snapshot will be created\n", 2;
