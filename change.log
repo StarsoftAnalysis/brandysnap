@@ -1,2 +1,14 @@
-0.1.0	18/06/11  First public release
+0.1.3 
+ * no snapshot info for remote destination -- too slow (for now).
+ * better validation of bandwith limit options.
+ * rsync-options -- don't include the essential ones (--relative)
+   in the option, and put the user's ones first.
+ * strip unnecessary quotes and spaces from string options.
+ * improvements to spec alignment -- use partial periods
+   if they have enough snapshots.
+ * re-write compileSpecs to make it prettier and right
+   with corresponding changes to findGoodPeriods etc.
+
 0.1.1	19/06/11  Minor bug fixes
+
+0.1.0	18/06/11  First public release

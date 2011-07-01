@@ -1,0 +1,183 @@
+Brandysnap Quick-Start Guide
+============================
+
+This is preliminary documentation for the brandysnap script.
+
+> This is part of the brandysnap documentation.
+> Copyright (C) 2011  Chris Dennis  chris@starsoftanalysis.co.uk
+> See the file fdl-1.3.txt for copying conditions.
+
+Introduction
+------------
+
+Brandysnap is (yet another) script that uses rsync to create snapshot backups of files on directories.
+
+It is still being developed, and should be considered very experimental software.  Use it at your own risk!
+
+It is designed to be flexible and robust.  In particular, it copes well with situations where snapshots are not created as regularly as they should be.  This can be for a variety of reasons -- hardware failure, operator failure, weekends, holidays, someone forgot to plug in the external USB drive...
+
+Rather than assigning 'importance' to snapshots according to when they were made (for example, keeping Friday afternoon backups for longer than Tuesday morning ones), it looks at what snapshots exist and decides if any can be deleted.  If the Friday afternoon backup is missing, it will keep the nearest one it can find.
+
+The basic rule is 'backup first, ask questions later'.  Brandysnap assumes that snapshots are cheap -- in both time and space.  In other words, making a snapshot is quick, and uses relatively little disk space because of the use of hard links.
+
+It therefore creates a new snapshot every time it is run, and then thinks about which snapshots, if any, are no longer required.
+
+Brandysnap tries to cope with any situation.  Either the source or the destination can be on a remote computer (but not both at the same time).
+
+Brandysnap is designed to be run regularly from cron (or similar automation system).  It can also be run manually if required without upsetting things.
+
+Brandysnap has been developed on Linux.  It is written in Perl and uses a selection of fairly standard modules (all available in Ubuntu repositories, and no doubt elsewhere too).  It relies on hard links [see ...] and will only work properly when creating snapshots on a filing system that can handle hard links, such as ext3 or ext4 [and others...].
+
+Lots of snapshots don't make a file more secure: if the file hasn't changed, and is the same in all snapshots, then it is only stored once on the disk.  If it gets corrupted for any reason, then it will be corrupted in all snapshots.  (If the file is DELETED from one snapshot, it will still exist in the others, because of the way hard links work.) Think of the whole set of snapshots as one backup, with multiple versions of files that have changed.
+
+
+Very Quick Start
+----------------
+
+If you want to try it out without reading further, create a configuration file called brandysnap-test1.conf containing something like this:
+
+    source      = /path/to/something/to/backup
+    destination = /path/to/writable/directory
+    template    = brandysnap-test1
+    spec        = 4h1,1h1,1d7
+    lockfile    = ~/brandysnap-test1.lock
+
+and then run
+
+    brandysnap --dry-run --conf brandysnap-test1.conf
+
+The `dry-run` option will mean that nothing will actually be done.  Once you're happy than the script won't break anything, try it without the `dry-run`.    
+
+For more options, run `brandysnap --help`.
+
+
+Remote sources and destinations
+-------------------------------
+
+Brandysnap assumes that any messing about with passwords has been taken care of.
+
+In other words, it will call rsync on remote directories without supplying a password.
+
+There are various ways of setting up rsync so that it doesn't prompt for a password -- they are not described here.  [ a reference or two would be helpful here] So it's important to get the password-less access sorted out first.  In fact rsync may be run many times during one run of brandysnap, so suppand rsync would prompt for a password each time.
+
+Multiple destinations can be configured, in which case snapshots will be created on all destinations that are available.  This can be used to put snapshots on several external USB drives in rotation, for example.  Or you could specify one local and one remote destination for security.  But note that multiple destinations won't be in sync with each other that's not the intention.  They will end up with different lists of snapshots if they are available at different times
+
+
+Configuration
+-------------
+
+The number of snapshots that are made depends on how often brandysnap is run.  It creates a new snapshot every time.  What is more interesting is how many snapshots are KEPT.  This is 
+determined by a series of specifications, or 'specs', such as
+
+	4d5,3w3,1d11
+
+which is a concise way of saying 'keep four snapshots a day from the last five days, then three a week for three weeks, then one a month for eleven months.  If brandysnap has run successfully for the last year, then there will be at least 4x5 + 3x3 + 1x11 = 40 snapshots.
+
+Most of the tricky stuff in brandysnap is in deciding which snapshots to keep.
+
+Each spec is of the form
+
+	<frequency><period><count>
+
+The 'frequency' is the number of snapshots to be kept in each period.  It can be any number from 1 to ...whatever is reasonable.  Note that this is not the number of snapshots that will be CREATED -- that is determined simply by how often brandysnap is run, and that will usually be down to the way that cron is configured.
+
+The 'period' is a single letter indicating the time period.  It can be 
+one of
+* h - hour	
+* d - day
+* w - week
+* m - month
+* y - year
+The period can be given in either upper or lower case.
+
+The 'count' indicates the number of periods, as a number from 1 to as many as you like.
+
+If the count is left out, the period is 'padded' to make up to the next period, working backwards in time from 'now'.  For example, 
+
+	4d,2w4
+
+will be interpreted as `4d7,2w4`.  The 'day' specification is expanded to a week's worth of days to align with the next spec which is in weeks.
+
+If the last spec has no count, it will be padded 'forever'.  The number of snapshots will only be limited by the available disk space.  And when the disk is full, the oldest snapshots will be deleted.
+
+More spec examples:
+
+* `1d` - just keep 1 backup every day, with no limit to the number of backups.
+* `1h24,4d6,3w3,4m11` - one an hour for the first day, then 4 a day for the rest of the week then 3 a week for the rest of the month, then 4 a month to give a whole year of snapshots.
+* ...
+
+Snapshots also get deleted as time passes.  If a day with four snapshots gets to old enough to fall within a `3w` spec, then the extra snapshots will be deleted.
+
+
+Other options
+-------------
+
+All options can be given either on the command line or in the configuration file.  Command line options override configuration file ones.  They are case-insensitive.
+
+On the command line, options must be preceded by one or two hyphens, and can be abbreviated as long as they do not become ambiguous.  An 'equals' sign is optional.  For example:
+
+    brandysnap --source xyz -verbose=1 --conf=bs1.conf -cal false
+
+In the configuration file, leave off the hyphens and don't abbreviate the options.  Lines beginning with '#' are considered to be comments and are ignore.  [These differences between the command line and the configuration file will be fixed...]
+
+Some options (such as source and destination) can be specified more than once.
+
+'Yes/no' options can be specified as any of `yes`/`true`/`on`/`1` or `no`/`false`/`off`/`1`.
+
+`~` can be used to specify local files and directories e.g.
+    --logfile = ~/brandysnap.log
+The `~` will be expanded to the home directory of the user who /runs/ brandysnap.  
+`~` can also be used on remote directories, e.g. `chris@example.com:~/documents`.  In this case, the `~` will be expanded by rsync to mean the home directory of the user specified (or implied) before the `@` symbol, in this case `/home/chris/`.
+
+
+Calendar mode
+-------------
+
+In 'calendar mode', which is the default, brandysnap works in terms of real weeks and months.  Days always start at midnight, weeks at midnight on Sunday etc. (but see `--weekstart` option).  In non-calendar mode, the specs are interpreted more simply, working backwards from the moment when brandysnap is run.  There will be no gap between periods: days and weeks can start at any time, depending on when the previous spec ran out.
+
+Safe mode
+---------
+
+In 'safe mode', which the default, specs will only match against the list of existing snapshots if there are enough snapshots to satisfy the spec's definition.  Incomplete specs will be skipped.  This has the result that brandysnap is less likely to delete snapshots.  This is designed to cater for situations when brandysnap has not run successfully as often as it should have, for whatever reason.  For example, because of weekends or holidays, or because the destination wasn't available because an external USB drive wasn't connected (or two or more USB drives are being used in rotation).  e.g if the spec is `4d5`, it's now Monday and brandysnap did not run at the weekend, then the days with fewer than 4 snapshots (i.e. Saturday and Sunday) will be skipped; counting the 5 days will start on Friday and work backwards from there.  Safe mode can be turned off via the `--safe` option.
+
+Strict mode
+-----------
+
+In 'strict mode', which is not the default, brandysnap will not run if there are minor problems with the specs.  Normally, it will display information about how it has interpreted the specs, and carry on.
+
+Weeks and months and years
+--------------------------
+
+The fact that months and years do not have whole or fixed numbers of 
+weeks makes counting periods awkward.  Brandysnap deals with this by 
+skipping over the extra days, and not deleting any of their snapshots. 
+
+Status report
+-------------
+
+Brandysnap displays a status report on all existing snapshots at the end of each run.
+
+However, is the destination is on a remote computer, the status report does include details of the disk space used by each snapshot because of the process of retrieving that information is slow.
+
+The full status report can be seen for remote destinations by running brandysnap with the `--status` option in addition to the usual configuration.  And even then, can only display 'Real size', not 'Delete size', because rsync doesn't give information about the number of hard links.
+
+Snapshot names
+--------------
+
+Each snapshot is a separate directory within the destination, with a name of the form
+
+    <template>-<timestamp:YYYYMMDD-hhmmss>
+
+where the 'template' is specified by the --template option.  For example
+
+	bs1-20110616-121159
+
+That format is fixed -- it is used to identify snapshots; any directory that doesn't match that pattern will be ignored.
+
+Permissions
+-----------
+
+Obviously brandysnap can only access things that is has permission to access.  Run it as root if you want it to have access to all files.
+
+To be continued...
+
