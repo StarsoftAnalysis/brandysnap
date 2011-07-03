@@ -28,6 +28,17 @@ Then it looks at all existing snapshots to see if any old
 snapshots can be deleted because they are no longer required, as
 defined by the configured 'specification'.  
 
+Requirements
+------------
+
+Brandysnap runs on Linux (it is currently being developed on Ubuntu 10.10).
+
+It requires Perl 5 version 5.10.1 or later, and the following non-core modules:
+
+* Math::Combinatorics	
+* Config::General
+* Filesys::DF
+
 --------------------------------------------------------------
 This is part of the brandysnap documentation.
 Copyright (C) 2011  Chris Dennis  chris@starsoftanalysis.co.uk

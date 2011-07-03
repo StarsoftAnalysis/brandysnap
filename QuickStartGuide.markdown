@@ -129,6 +129,14 @@ Some options (such as source and destination) can be specified more than once.
 The `~` will be expanded to the home directory of the user who /runs/ brandysnap.  
 `~` can also be used on remote directories, e.g. `chris@example.com:~/documents`.  In this case, the `~` will be expanded by rsync to mean the home directory of the user specified (or implied) before the `@` symbol, in this case `/home/chris/`.
 
+* exclude,
+* exclude-from,
+* include,
+* include-from: these four options are passed through to rsync unchecked and unchanged.  '~' is NOT expanded to a home directory.  See the rsync documentation for details
+* calendar yes/no : see below
+* 
+* safe yes/no : see below
+* 
 
 Calendar mode
 -------------

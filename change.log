@@ -1,4 +1,4 @@
-0.1.3 
+0.1.3   01/07/11
  * no snapshot info for remote destination -- too slow (for now).
  * better validation of bandwith limit options.
  * rsync-options -- don't include the essential ones (--relative)
