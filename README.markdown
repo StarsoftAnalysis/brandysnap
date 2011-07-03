@@ -39,9 +39,9 @@ It requires Perl 5 version 5.10.1 or later, and the following non-core modules:
 * Config::General
 * Filesys::DF
 
---------------------------------------------------------------
-This is part of the brandysnap documentation.
-Copyright (C) 2011  Chris Dennis  chris@starsoftanalysis.co.uk
+**************************************************************
+This is part of the brandysnap documentation.<br>
+Copyright (C) 2011  Chris Dennis  chris@starsoftanalysis.co.uk<br>
 See the file fdl-1.3.txt for copying conditions.
---------------------------------------------------------------
+**************************************************************
  
