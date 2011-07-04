@@ -138,14 +138,16 @@ Some options (such as `source` and `destination`) can be specified more than onc
 
 
 '`~`' can be used to specify local files and directories e.g.
+
     --logfile = ~/brandysnap.log
+
 The '`~`' will be expanded to the home directory of the user who _runs_ brandysnap.  
 '`~`' can also be used on remote directories, e.g. `chris@example.com:~/documents`.  In this case, the '`~`' will be expanded by rsync to mean the home directory of the user specified (or implied) before the '`@`' symbol, in this case '`/home/chris/`'.
 '`~`' can NOT be used in any of the `include`/`exclude` options.
 
-Options marked with '!' in the following list are required.
-Options marked with '*' in the following list can be specified more than once.
-'`yes/no`' options can be specified as any of `yes`/`true`/`on`/`1` or `no`/`false`/`off`/`0`.
+* Options marked with '!' in the following list are required.
+* Options marked with '*' in the following list can be specified more than once.
+* '`yes/no`' options can be specified as any of `yes`/`true`/`on`/`1` or `no`/`false`/`off`/`0`.
 
 ### Main options
 
@@ -154,28 +156,39 @@ The name of a file to look in for further options.  Configuration file options w
 
 #### `source <file/dir>` *!
 A local or remote file or directory to add to the snapshot.  Examples:
+
 	source ~/Documents
 	source /home
 	source chris@example.com:~/Documents
+
 More than one source can be specified, in which case each source will be rsync'd, one at a time, to each destination in turn.
 Rsync can not copy from a remote source to a remote destination, so any source/destination pairs which are both remote will be skipped.
 Each source must be readable by the user who runs brandysnap.  If any files or directories within the source are not readable, brandysnap will carry on regardless.
+
 See the section on remote authorisation.
+
 By default, brandysnap uses the rsync options `--archive --hard-links --one-filesystem`, so the whole of each source will be copied recursively without following symbolic links.  See the `rsync-options` option for ways to change this.
 
 #### `destination <dir>` *!
 A local or remote directory for use as the snapshot destination.  Examples:
+
 	destination /backups/
 	dest chris@example.com:/backups
+
 More than one destination can be specified (see `source`).  
+
 Each destination must be writable by the user who runs brandysnap.
+
 See the section on remote authorisation.
 
 #### `template <name>` !
 The directory name of each snapshot is of the form
+
 	<template>-<timestamp>
+
 See the [Snapshot Names section](#snapshotNames) for more details.
 Example:
+
 	template docs
 
 #### `spec <string>` !   
@@ -185,12 +198,15 @@ The snapshot-keeping specification.  See the [Keeping Snapshots section](#keepin
 To prevent separate runs of brandysnap using the same destinations at the same time, you need to give 
 the name of temporary file which will be created and locked while brandysnap is running.
 The user running brandysnap must have permission to create and delete this file.  For example:
+
 	lockfile /tmp/brandysnap-docs.lock
 
 #### `logfile <file>`
 The name of a file which will be used to log the output from brandysnap.  Examples:
+
 	logfile /var/log/brandysnap.log
 	logfile ~/bs-docs.log
+
 The user running brandysnap must have permission to create and write to the log file.
 
 ### Tuning options
@@ -241,7 +257,9 @@ In `dry-run` mode, brandysnap goes through the motions, but doesn't actually cre
 
 #### `rsync-cmd <path>`
 The location of the rsync programme on your system.  The default is just `rsync` which means brandysnap looks for rsync in you normal path. On some systems, you might need to set it to something else such as
+
 	rsync-cmd /usr/bin/rsync
+
 (default: `rsync`)
 
 #### `compress <yes/no>`
@@ -330,7 +348,7 @@ The full status report can be seen for remote destinations by running brandysnap
 
 Each snapshot is a separate directory within the destination, with a name of the form
 
-    <template>-<timestamp:YYYYMMDD-hhmmss>
+	<template>-<timestamp:YYYYMMDD-hhmmss>
 
 where the 'template' is specified by the --template option.  For example
 
