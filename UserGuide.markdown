@@ -8,7 +8,7 @@ This is preliminary documentation for the [brandysnap](http://www.brandysnap.org
 
 **************************************************************
 This is part of the brandysnap documentation.</br>
-Copyright (C) 2011  Chris Dennis  chris@starsoftanalysis.co.uk</br>
+Copyright &copy; 2011  Chris Dennis  chris@starsoftanalysis.co.uk</br>
 See the file fdl-1.3.txt for copying conditions.
 **************************************************************
 
@@ -38,6 +38,8 @@ Lots of snapshots don't make a file more secure: if the file hasn't changed, and
 
 Very Quick Start
 ----------------
+
+See the README file for brief installation instructions.
 
 If you want to try it out without reading further, create a configuration file called brandysnap-test1.conf containing something like this:
 
@@ -219,19 +221,19 @@ In safe mode, snapshots are only considered for deletion if the specified period
 
 #### `hbest <0..59>`     
 The `xbest` options can be used to tune the snapshot-matching algorithm which decides which snapshots should be deleted.  The defaults assume that the latest snapshots within a period are the most valuable, and should be kept.  
-`hbest` determines the favoured minute within an hour for an hourly specification. For example, to prefer snapshots created in the middle of an hours, use `hbest 30`.  (default: `59`)
+`hbest` determines the favoured minute within an hour for an hourly specification. For example, to prefer hourly snapshots created in the middle of an hours, use `hbest 30`.  (default: `59`)
 
 #### `dbest <0..23.9>`
-Determines the favoured time within day in hours.  For example, to prefer snapshots created at 5pm, use `dbest 17`. (default: `23.9`)
+Determines the favoured time within day in hours.  For example, to prefer daily snapshots created at 5pm, use `dbest 17`. (default: `23.9`)
 
 #### `wbest <1..7>`
-Determines the favoured day within a week, with 1=Sunday, 7=Saturday.  For example, to prefer snapshots created on Friday, use `wbest 6`. (default: `1`)
+Determines the favoured day within a week, with 1=Sunday, 7=Saturday.  For example, to prefer weekly snapshots created on Friday, use `wbest 6`. (default: `1`)
 
 #### `mbest <1..31>`
-Determines the favoured day within a month.  For example, to prefer snapshots created at the beginning of the month, use `mbest 1`.  [This may be improved in the future to allow preferences such as 'the last Friday in the month'. If the value specified is greater than the number of days in a particular month, the last day of the month is used.  To always select the last day of the month, use `mbest 31`.  (default: `31`)
+Determines the favoured day within a month.  For example, to prefer monthly snapshots created at the beginning of the month, use `mbest 1`.  [This may be improved in the future to allow preferences such as 'the last Friday in the month'. If the value specified is greater than the number of days in a particular month, the last day of the month is used.  To always select the last day of the month, use `mbest 31`.  (default: `31`)
 
 #### `ybest <1..366>`
-Determines the favoured day within a year.  In leap years, the value `366` is changed to `365`, so `366` always means 'the last day of the year'. (default: `366`)
+Determines the favoured day within a year.  In leap years, the value `366` is automatically changed to `365`, so `366` always means 'the last day of the year'. For example, to prefer yearly snapshots in the middle of the year, use `ybest 180`. (default: `366`)
 
 #### `weekstart <1..7>`
 Sets the first day of week.  If you consider that weeks start on Monday, use `weekstart 2`.  `1`=Sunday, `7`=Saturday.  (default: `1`)

@@ -39,9 +39,37 @@ It requires Perl 5 version 5.10.1 or later, and the following non-core modules:
 * Config::General
 * Filesys::DF
 
+Installation
+------------
+
+There is not (yet) an installation script or package.  All you need to do is
+
+1.  Download the script and all the related files by clicking on the
+    'Downloads' button on https://github.com/StarsoftAnalysis/brandysnap
+    and unpack the files into a suitable directory on your computer.
+
+2.  Make sure you've got the necessary Perl modules, i.e. 
+
+    * libmath-combinatorics-perl
+    * libconfig-general-perl
+    * libfilesys-df-perl
+
+    which you can install with your favourite package manager, or from the 
+    command line with something like:
+
+        sudo apt-get install libmath-combinatorics-perl libconfig-general-perl libfilesys-df-perl
+
+3.  Use a text editor to create a configuration file -- refer to the user guide for details.
+
+4.  Run the script, with a command something like this:
+
+        ./brandysnap --conf brandysnap-test1.conf --dry-run
+
+
+
 **************************************************************
 This is part of the brandysnap documentation.<br>
-Copyright (C) 2011  Chris Dennis  chris@starsoftanalysis.co.uk<br>
+Copyright &copy; 2011  Chris Dennis  chris@starsoftanalysis.co.uk<br>
 See the file fdl-1.3.txt for copying conditions.
 **************************************************************
  
