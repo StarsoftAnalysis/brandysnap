@@ -39,6 +39,11 @@ It requires Perl 5 version 5.10.1 or later, and the following non-core modules:
 * Config::General
 * Filesys::DF
 
+It also requires rsync, which should available in your version of Linux.
+Brandysnap has been developed with rsync version 3.0.7.  It should work with 
+any version of rsync that has the '--link-dest' option.
+
+
 Installation
 ------------
 
@@ -48,8 +53,10 @@ There is not (yet) an installation script or package.  All you need to do is
     'Downloads' button on https://github.com/StarsoftAnalysis/brandysnap
     and unpack the files into a suitable directory on your computer.
 
-2.  Make sure you've got the necessary Perl modules, i.e. 
+2.  Make sure you've got rsync and the necessary Perl modules, i.e. these
+    packages:
 
+    * rsync
     * libmath-combinatorics-perl
     * libconfig-general-perl
     * libfilesys-df-perl
@@ -57,7 +64,7 @@ There is not (yet) an installation script or package.  All you need to do is
     which you can install with your favourite package manager, or from the 
     command line with something like:
 
-        sudo apt-get install libmath-combinatorics-perl libconfig-general-perl libfilesys-df-perl
+        sudo apt-get install rsync libmath-combinatorics-perl libconfig-general-perl libfilesys-df-perl
 
 3.  Use a text editor to create a configuration file -- refer to the user guide for details.
 
