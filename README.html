@@ -39,6 +39,10 @@ defined by the configured 'specification'.  </p>
 <li>Filesys::DF</li>
 </ul>
 
+<p>It also requires rsync, which should available in your version of Linux.
+Brandysnap has been developed with rsync version 3.0.7.  It should work with 
+any version of rsync that has the '--link-dest' option.</p>
+
 <h2>Installation</h2>
 
 <p>There is not (yet) an installation script or package.  All you need to do is</p>
@@ -47,9 +51,11 @@ defined by the configured 'specification'.  </p>
 <li><p>Download the script and all the related files by clicking on the
 'Downloads' button on https://github.com/StarsoftAnalysis/brandysnap
 and unpack the files into a suitable directory on your computer.</p></li>
-<li><p>Make sure you've got the necessary Perl modules, i.e. </p>
+<li><p>Make sure you've got rsync and the necessary Perl modules, i.e. these
+packages:</p>
 
 <ul>
+<li>rsync</li>
 <li>libmath-combinatorics-perl</li>
 <li>libconfig-general-perl</li>
 <li>libfilesys-df-perl</li>
@@ -58,7 +64,7 @@ and unpack the files into a suitable directory on your computer.</p></li>
 <p>which you can install with your favourite package manager, or from the 
 command line with something like:</p>
 
-<pre><code>sudo apt-get install libmath-combinatorics-perl libconfig-general-perl libfilesys-df-perl
+<pre><code>sudo apt-get install rsync libmath-combinatorics-perl libconfig-general-perl libfilesys-df-perl
 </code></pre></li>
 <li><p>Use a text editor to create a configuration file -- refer to the user guide for details.</p></li>
 <li><p>Run the script, with a command something like this:</p>

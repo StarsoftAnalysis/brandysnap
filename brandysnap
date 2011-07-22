@@ -77,7 +77,7 @@ my $Script = 'brandysnap';
 $| = 1;
 
 # version of this script
-my $Version = '0.1.4';
+my $Version = '0.1.4+';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -475,7 +475,7 @@ sub processOptions () {
         dry-run version help
         stacktrace weekstart
         logfile lockfile logfile-temp
-        rsync-cmd rsync-opts
+        rsync-cmd rsync-opts remote-rsync-cmd
         include include-from exclude exclude-from
         expire-old
         bwlimit-in bwlimit-out
@@ -492,7 +492,7 @@ sub processOptions () {
     my @boolopt  = qw(safe calendar snapshot delete delete-cp dry-run 
         stacktrace version expire-old status compress);
     # String options (NOT the mult-value ones)
-    my @stringopt = qw(config lockfile logfile template rsync-cmd rsync-opts);
+    my @stringopt = qw(config lockfile logfile template rsync-cmd rsync-opts remote-rsync-cmd);
     # Level options (take values 0..9)
     my @levelopt = qw(verbose loglevel debug);
 
@@ -513,8 +513,8 @@ sub processOptions () {
     $defopt{mbest}          = 31;         # preferred day within a month 1-31  
     $defopt{ybest}          = 366;        # preferred day in the year
     # 
-    $defopt{'bwlimit-in'}   = 100;        # are these reasonable defaults for ADSL?
-    $defopt{'bwlimit-out'}  = 20;
+    $defopt{'bwlimit-in'}   = 0;        
+    $defopt{'bwlimit-out'}  = 0;
     $defopt{calendar}       = 1;
     $defopt{compress}       = 1;
     $defopt{delete}         = 1;
@@ -534,6 +534,7 @@ sub processOptions () {
     # The following deliberately do not have defaults:
     #   template   source  lockfile   logfile   config  destination  spec
     #   include include-from exclude exclude-from
+    #   remote-rsync-cmd
 
     my %confopt = ();   # config file options
     my %cmdopt = ();    # command line options
@@ -566,6 +567,8 @@ sub processOptions () {
             'loglevel=i',
             'mbest=i',
             'rsync-cmd=s',
+            'rsync-opts=s',
+            'remote-rsync-cmd=s',
             'safe!',
             'snapshot!',
             'source=s@',
@@ -699,7 +702,7 @@ sub processOptions () {
 
     # Add basic info to logfile
     logit "\n" . '-' x 80, 1;
-    logit "\n$Script version $Version starting\n", 1;
+    logit "\n$Script version $Version starting at " . (strftime "%H:%M:%S", localtime) . "\n", 1;
     logit "Command line: $0 @ARGVcopy\n", 3;
 
     # Lock file (must be local)
@@ -960,6 +963,8 @@ Rsync options
                           (set to 0 for no limit)
 --rsync-opts   options   extra options to pass to rsync 
                           (default: -aHx --numeric-ids)
+--remote-rsync-cmd file  location of the rsync programme on the remote
+                          computer (optional, no default)
 Advanced options
 --delete       yes/no    delete no-longer-required snapshots (default: yes)
 --delete-cp    yes/no    delete even in current period (default: yes)
@@ -2745,11 +2750,16 @@ sub runRsync ($\@$$) {
         $bwlimit = "--bwlimit=$Opt{'bwlimit-in'}"  if $remoteSource;
         $bwlimit = "--bwlimit=$Opt{'bwlimit-out'}" if $remoteDest;
 
+        # Set remote rsync option
+        my $rsyncPath = '';
+        $rsyncPath = "--rsync-path '$Opt{'remote-rsync-cmd'}'"
+            if ($Opt{'remote-rsync-cmd'} and ($remoteSource or $remoteDest));
+
         printlog "Running rsync from source '$source' to destination '$destDir'\n", 2;
         # Note that rsync-opts is put first -- 
         # our own required options will override the user's
         my $args = "$Opt{'rsync-opts'} $verbose $linkdest $incExcOpts $compression " . 
-            "$bwlimit --relative '$source' '$destDir'";
+            "$bwlimit --relative $rsyncPath '$source' '$destDir'";
 
         # Run rsync.
         # If it fails for lack of space, delete an old snapshot and try again
@@ -2859,8 +2869,8 @@ sub runRsync ($\@$$) {
 #---------------------------------------------------------------------------------------------------
 
 sub run ($\@) {
-
-    my $dest  = shift;  
+    # Do the processing for a single destination
+    my $dest  = shift;      
     my @specs = @{(shift)};
 
     # Get time stamp for this run
@@ -2871,9 +2881,8 @@ sub run ($\@) {
         '-' x (length($dest) + length($Opt{template})) . "\n", 1;
 
     my @S = getSList($dest);
-    debug "got list of " . @S . " snapshots\n", 2;
+    debug "run: got list of " . @S . " snapshots\n", 4;
 
-    # Now we can run rsync
     if ($Opt{snapshot}) {
         my @expirableSnapshots = getExpirableSnapshots(@S, @specs, $snapshotTime);
         my $rsyncOK = runRsync($dest, @expirableSnapshots, $snapshotTime, $S[0]);  
@@ -2898,7 +2907,7 @@ sub run ($\@) {
             printlog "Option 'no-delete' given, so no existing snapshots will be deleted\n", 2;
         }
     } else {
-        debug "No snapshots and/or no cSpecs -- nothing to do\n", 2;
+        debug "run: No snapshots and/or no cSpecs -- nothing to do\n", 4;
     }
 
     # Display the current situation (even if there are no cSpecs)
@@ -3360,7 +3369,7 @@ sub testSuite {
 # Mainline is here
 
 # Display basic info -- logging will happen later
-printit "\n$Script version $Version\n", 1;
+printit "\n$Script version $Version starting at " . (strftime "%H:%M:%S", localtime) . "\n", 1,1;
 printit "Command line: $0 @ARGV\n", 3;
 
 # No options supplied -- display help and exit
@@ -3425,7 +3434,7 @@ if ($Opt{test}) {
     }
 }
 
-printlog "\n$Script stopping\n", 1,1;
+printlog "\n$Script stopping at " . (strftime "%H:%M:%S", localtime) . "\n", 1,1;
 logit '-' x 80, 1;
 
 # Free the lock

@@ -219,8 +219,9 @@ In calendar mode, hours start on the hours, days start at midnight, weeks start 
 #### `safe <yes/no>`
 In safe mode, snapshots are only considered for deletion if the specified periods are 'complete' -- i.e. they have the required number of snapshots.  If safe mode is turned off, all periods are considered complete, and extra snapshots in any of them will be deleted. See the [Safe Mode section](#safeMode) below for further details.  (default: `yes`)
 
+The `xbest` options can be used to tune the snapshot-matching algorithm which decides which snapshots should be deleted.  The defaults assume that the latest snapshots within a period are the most valuable, and should be kept.  Note that if calendar mode is turned off, the `xbest` options are relative to the start of the period: for example `wbest = 3` means the middle of the week, even if the week happens to start at 5:30am on a Tuesday.
+
 #### `hbest <0..59>`     
-The `xbest` options can be used to tune the snapshot-matching algorithm which decides which snapshots should be deleted.  The defaults assume that the latest snapshots within a period are the most valuable, and should be kept.  
 `hbest` determines the favoured minute within an hour for an hourly specification. For example, to prefer hourly snapshots created in the middle of an hours, use `hbest 30`.  (default: `59`)
 
 #### `dbest <0..23.9>`
@@ -360,4 +361,12 @@ That format is fixed -- it is used to identify snapshots; any directory that doe
 
 ***********************************************************
 
+Known Issues
+------------
 
+As of 16 July 2011 and version 0.1.5, the following issues and bugs are known.
+
+* The option `--remote-rsync-cmd` can only be specified once, and applies to all remote sources and directories.
+* Under certain circumstances, rsync can fail when there are files that are hard-linked together
+and for which you do not have read permission.  This is fixed in rsync 3.0.9 and later.  You can get
+round it by specifying `--rsync-opts` with the usual options but omitting `--hard-links`.

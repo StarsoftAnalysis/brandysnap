@@ -32,6 +32,8 @@ Requirements
 ------------
 
 Brandysnap runs on Linux (it is currently being developed on Ubuntu 10.10).
+I have heard that it also runs on Mac OS X, as long as the following
+requirements are met.
 
 It requires Perl 5 version 5.10.1 or later, and the following non-core modules:
 
@@ -54,7 +56,7 @@ There is not (yet) an installation script or package.  All you need to do is
     and unpack the files into a suitable directory on your computer.
 
 2.  Make sure you've got rsync and the necessary Perl modules, i.e. these
-    packages:
+    packages (on Ubuntu/Debian-type versions of Linux):
 
     * rsync
     * libmath-combinatorics-perl
