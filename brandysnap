@@ -77,7 +77,7 @@ my $Script = 'brandysnap';
 $| = 1;
 
 # version of this script
-my $Version = '0.1.4+';
+my $Version = '0.1.5+';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -147,6 +147,38 @@ my $TotalSnapshots = 0;
 # An empty temporary directory for use in deleteSnapshot() and mkdirRsync()
 # (yes, I know, this is a bit of a kludge)
 my $EmptyDir = tempdir(CLEANUP => 1);
+
+# Arrays defining types of options
+# All options
+my @AllOpt = qw(
+    debug verbose loglevel test
+    hbest dbest wbest mbest ybest
+    safe calendar strict
+    config destination spec template source
+    snapshot delete delete-cp
+    dry-run version help
+    stacktrace weekstart
+    logfile lockfile logfile-temp
+    rsync-cmd rsync-opts remote-rsync-cmd
+    include include-from exclude exclude-from
+    expire-old
+    bwlimit-in bwlimit-out
+    status
+    compress
+    );
+my %AllOpt = (map {$_ => 1} @AllOpt);
+# Required options (not including those that have a default value)
+my @ReqOpt = qw(destination source template lockfile spec);
+# Multi-value options (are also all string options)
+my %MultiOpt = qw(source 1  include 1  include-from 1  
+    exclude 1  exclude-from 1  destination 1);
+# Boolean options
+my @BoolOpt  = qw(safe calendar snapshot delete delete-cp dry-run 
+    stacktrace version expire-old status compress);
+# String options (NOT the multi-value ones)
+my @StringOpt = qw(config lockfile logfile template rsync-cmd rsync-opts remote-rsync-cmd);
+# Level options (take values 0..9)
+my @LevelOpt = qw(verbose loglevel debug);
 
 # Mainline code is at the end of this file
 
@@ -465,37 +497,6 @@ sub mergeOpts (@) {
 
 sub processOptions () {
 
-    # All options
-    my @allopt = qw(
-        debug verbose loglevel test
-        hbest dbest wbest mbest ybest
-        safe calendar strict
-        config destination spec template source
-        snapshot delete delete-cp
-        dry-run version help
-        stacktrace weekstart
-        logfile lockfile logfile-temp
-        rsync-cmd rsync-opts remote-rsync-cmd
-        include include-from exclude exclude-from
-        expire-old
-        bwlimit-in bwlimit-out
-        status
-        compress
-        );
-    my %allopt = (map {$_ => 1} @allopt);
-    # Required options (not including those that have a default value)
-    my @reqopt = qw(destination source template lockfile spec);
-    # Multi-value options (are also all string options)
-    my %multiopt = qw(source 1  include 1  include-from 1  
-        exclude 1  exclude-from 1  destination 1);
-    # Boolean options
-    my @boolopt  = qw(safe calendar snapshot delete delete-cp dry-run 
-        stacktrace version expire-old status compress);
-    # String options (NOT the mult-value ones)
-    my @stringopt = qw(config lockfile logfile template rsync-cmd rsync-opts remote-rsync-cmd);
-    # Level options (take values 0..9)
-    my @levelopt = qw(verbose loglevel debug);
-
     # Default options hard-coded here
     # -------------------------------
     my %defopt = ();    # default options
@@ -628,7 +629,7 @@ sub processOptions () {
     delete $Opt{logfile};
 
     # Check for missing options
-    foreach my $ropt (@reqopt) {
+    foreach my $ropt (@ReqOpt) {
         unless ($Opt{$ropt}) {
             printlog "ERROR: required option '$ropt' is missing\n", 1;
             $errorcount += 1;
@@ -637,7 +638,7 @@ sub processOptions () {
 
     # Check for unknown options
     foreach my $opt (sort keys %Opt) {
-        unless ($allopt{$opt}) {
+        unless ($AllOpt{$opt}) {
             printlog "ERROR: unknown option '$opt' found\n", 1;
             # This is an error because it's probably a miss-spelled option, 
             # or the user doesn't know what they're doing
@@ -647,7 +648,7 @@ sub processOptions () {
 
     # Multi-value options
     foreach my $opt (sort keys %Opt) {
-        if ($multiopt{$opt}) {
+        if ($MultiOpt{$opt}) {
             # Make sure multiple options are always arrays (if they exist at all)
             #debug "$mopt is of type " . ref($Opt{$mopt}) . "\n";;
             if (!ref($Opt{$opt})) {
@@ -670,7 +671,7 @@ sub processOptions () {
     }
 
     # String options -- sort out any quotes
-    foreach my $opt (@stringopt) {
+    foreach my $opt (@StringOpt) {
         $Opt{$opt} = stripQuotes($Opt{$opt}) if $Opt{$opt};
     }
 
@@ -799,7 +800,7 @@ sub processOptions () {
         $Opt{$opt} = int($Opt{$opt});
         $Opt{$opt} = 0 if $Opt{$opt} < 0;
     }
-    foreach my $opt (@levelopt) {
+    foreach my $opt (@LevelOpt) {
         checkOutput $opt;
     }
 
@@ -815,7 +816,7 @@ sub processOptions () {
         }
         return 0
     }
-    foreach my $opt (@boolopt) {
+    foreach my $opt (@BoolOpt) {
         $errorcount += checkBoolean $opt;
     }
 
@@ -890,20 +891,32 @@ sub processOptions () {
 
 #---------------------------------------------------------------------------------------------------
 
+sub printableOption ($) {
+    # Return a printable version of an option
+    my $opt = shift;
+    if (ref($Opt{$opt}) eq 'ARRAY') {
+        # multiple option -- which happen to be all strings
+        return join(', ', map {"'$_'"} @{$Opt{$opt}}); 
+    }
+    if (grep {$_ eq $opt} @BoolOpt) {
+        # boolean options
+        return $Opt{$opt} ? 'yes' : 'no';
+    }
+    if (grep {$_ eq $opt} @StringOpt) {
+        # string  
+        return "'$Opt{$opt}'";
+    }
+    # else it's numeric
+    return "$Opt{$opt}";
+}
+
 sub displayOptions () {
     my $optSummary = "\nOptions summary:";
     my $max = 80;
     my $pos = 0;
     foreach my $opt (sort keys %Opt) {
         my $key = "$opt";
-        my $value = '';
-        if (ref($Opt{$opt}) eq 'ARRAY') {
-            $value = join(', ', map {"'$_'"} @{$Opt{$opt}}); 
-        } 
-        else {
-            $value = "'$Opt{$opt}'";
-        }
-        my $text = sprintf("%12s - %s", $key, $value);
+        my $text = sprintf("%16s - %s", $key, printableOption($opt)); 
         # one per line for now
         if (1) {    #$pos and ($pos + length($text) > $max)) {
             $optSummary .= "\n";
@@ -937,7 +950,7 @@ Main options
 Tuning options
 --calendar     yes/no    use calendar mode (default: yes)
 --safe         yes/no    use safe mode (default: yes)
---hbest        minute    favoured time within hour (default: 59)
+--hbest        0..59     favoured time within hour (default: 59)
 --dbest        0..23.9   favoured time within day in hours (default: 23.9)
 --mbest        1..31     favoured day within month (default: 31)
 --wbest        1..7      favoured day within week, 1=Sunday (default: 1)
@@ -953,13 +966,13 @@ Rsync options
 --rsync-cmd    file      location of the rsync programme (default: rsync)
 --compress     yes/no    enable rsync compression for remote transfers 
                           (default: yes)
---include      pattern  *rsync inclusion
+--include      pattern  *rsync inclusion (see rsync documentation)
 --include-from file     *rsync inclusions
 --exclude      pattern  *rsync exclusion
 --exclude-from file     *rsync exclusions 
---bwlimit-in   n         bandwidth limit for receiving in kbps (default: 100)
+--bwlimit-in   n         bandwidth limit for receiving in kbps (default: 0)
                           (set to 0 for no limit)
---bwlimit-out  n         bandwidth limit for sending in kbps (default: 20)
+--bwlimit-out  n         bandwidth limit for sending in kbps (default: 0)
                           (set to 0 for no limit)
 --rsync-opts   options   extra options to pass to rsync 
                           (default: -aHx --numeric-ids)
@@ -1371,16 +1384,25 @@ sub fmtRange ($$) {
     my $beg = shift;
     my $end = shift;
     my $range = $end - $beg;
+    my $begStamp = time2stamp($beg);
+    debug "fR: range is " . pair2range($beg, $end) . "\n", 1;
     if ($range == HOUR) {
-        return "hour from " . time2stamp($beg);
+        return "hour from " . $begStamp;
     } elsif ($range == DAY) {
-        return "day from " . time2stamp($beg);
+        return "day from " . $begStamp;
     } elsif ($range == WEEK) {
-        return "week from " . time2stamp($beg);
+        return "week from " . $begStamp;
+    }
+    my $delta = DateCalc(time2date($beg), time2date($end), 1);
+    debug "fR: delta is $delta\n", 1;
+    if ($delta eq '+0:1:+0:0:0:0:0') {
+        return "month from " . $begStamp;
+    } elsif ($delta eq '+1:0:+0:0:0:0:0') {
+        return "year from " . $begStamp;
     } else {
         return "period " . time2stamp($beg) . " to " . time2stamp($end);
     }
-    # TODO expand this or remove it
+    # TODO expand this for multiple periods?
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -1447,7 +1469,7 @@ sub deleteSnapshot ($$) {
         #my $output = `$cmd`;
         debug "dS: rsync output: \n@output", 3;
         debug "dS: rsync returned $rc, $rc2\n", 3;
-        # FIXME don't worry if it failed because snapshot didn't exist
+        # This returns no error if the snapshot didn't exist, which is fine
         if ($rc) {
             printlog "ERROR: failed to delete remote snapshot '$snapshot' from '$dest' (code $rc)", 1,1;
             return 1;
@@ -1485,21 +1507,28 @@ sub deleteSnapshot ($$) {
 
 #---------------------------------------------------------------------------------------------------
 
-sub deleteSnapshots ($\@\@) {
+sub deleteSnapshots ($\@\@$) {
     # Delete the snapshots from the given list (latest first)
-    my $dest   = shift;
-    my @D      = @{(shift)};
-    my @cSpecs = @{(shift)};
+    my $dest      = shift;
+    my @D         = @{(shift)};
+    my @cSpecs    = @{(shift)};
+    my $deleteNew = shift;
     my $ci = 0; # index into @cSpecs
     my $errors = 0;
-    debug "deleteSnapshots: list is: @D\n";
-    foreach my $d (@D) {
+    debug "dS: list is: " . (join(' ', map {time2stamp($_)} @D)) . "\n";
+    foreach my $di (0..$#D) {
+        my $d = $D[$di];
         while (@cSpecs and $cSpecs[$ci]->{beg} > $d) { 
             $ci += 1; 
         }; 
-        printlog "Deleting snapshot " . snapshotName($d) . 
-            " because there are too many for spec " . $cSpecs[$ci]->{label} . "\n", 2;
-        $errors += deleteSnapshot($dest, snapshotName($d));
+        if ($di == 0 and $deleteNew) {
+            # Don't need to delete the new snapshot because we avoided creating it
+            debug "dS: not deleting newest snapshot because it was not created\n", 3;
+        } else {
+           printlog "Deleting snapshot " . snapshotName($d) . 
+                " because there are too many for spec " . $cSpecs[$ci]->{label} . "\n", 2;
+           $errors += deleteSnapshot($dest, snapshotName($d));
+        }
     }
     #printlog "Total of $errors errors while deleting snapshots!\n", 1; 
     return $errors;
@@ -1752,7 +1781,7 @@ sub visualise ($$$$@) {
     my $beg        = shift;
     my $end        = shift;
     my $showPeriod = shift;
-    my $best       = shift // 0;   # optional -- this is a nasty hack
+    my $best       = shift // 0; 
     my $labelwidth = 5;
     #my ($columns, $rows) = Term::Size::chars *STDOUT{IO};
     #$columns = max($columns, 132); # minimum, and also if there's no tty
@@ -1772,7 +1801,7 @@ sub visualise ($$$$@) {
                     time2stamp($a) . ")\n", 1;
             }   
             if ($label eq 'Ideal' and !$points[$pos] and $best == $a) {
-                $points[$pos] = 'B';
+                $points[$pos] = 'B';  # this is a nasty hack! what if it later does 'B'+1 ?
             }
             else {
                 $points[$pos] += 1;
@@ -1811,8 +1840,9 @@ sub getDeleteList (\@\@) {
     # Given a list S of existing snapshots as a list of timestamps,
     # return a list of the ones to be deleted
     # by checking against the list of cSpecs.
-    my @S = @{(shift)};
+    my @S      = @{(shift)};
     my @cSpecs = @{(shift)};
+
     my @allMatches;
     my @D;
     my $firstbeg = MAXTIME; 
@@ -2605,13 +2635,14 @@ sub displayCSpecs (\@;\@) {
 
 #===================================================================================================
 
-sub getExpirableSnapshots (\@\@$) {
+sub getExpirableSnapshots (\@\@\@$) {
     # Return a list of snapshots that are 'expirable'
     # because they fall within range of the last 'unlimited' spec,
     # or because the expire-old option allows it
-    my @S     = @{(shift)};
-    my @specs = @{(shift)};
-    my $now   = shift;
+    my @S      = @{(shift)};
+    my @specs  = @{(shift)};
+    my @cSpecs = @{(shift)};
+    my $now    = shift;
 
     debug "gES: \@S=@S \@specs=@specs \$now=$now\n", 3;
     my @expirable;
@@ -2626,11 +2657,11 @@ sub getExpirableSnapshots (\@\@$) {
     }
     my $lastSpec = $specs[-1];
     if ($lastSpec->{count} == UNLIMITED) {
-        # 'pre-compile' specs (without the new snapshot
-        # from this run) to find any that are expirable
-        my @cSpecs = compileSpecs($now+1, @specs, @S, 1);
-        debug "gES: temporary cSpecs: @cSpecs", 3;
-        displayCSpecs(@cSpecs, @S) if $Opt{debug} >= 3;
+        ## 'pre-compile' specs (without the new snapshot
+        ## from this run) to find any that are expirable
+        #my @cSpecs = compileSpecs($now+1, @specs, @S, 1);
+        #debug "gES: temporary cSpecs: @cSpecs", 3;
+        #displayCSpecs(@cSpecs, @S) if $Opt{debug} >= 3;
         my $lastraw = $lastSpec->{rawspec};
         my $i = $#cSpecs;
         # Pick out snapshots in the 'unlimited' cSpecs, which are always at the end
@@ -2880,35 +2911,47 @@ sub run ($\@) {
     printlog   '--------------------------------------------------' . 
         '-' x (length($dest) + length($Opt{template})) . "\n", 1;
 
-    my @S = getSList($dest);
-    debug "run: got list of " . @S . " snapshots\n", 4;
+    # Get list of existing snapshots (including the one about to be made)
+    my @S = ($snapshotTime, getSList($dest));
+    debug "run: got list of " . @S . " snapshots (inc. this one)\n", 4;
+
+    # 'Compile' the specs taking account of current time and existing snapshots
+    my @cSpecs;
+    @cSpecs = compileSpecs($snapshotTime, @specs, @S);
+    displayCSpecs(@cSpecs, @S);
+
+    # Get the list of snapshots to be deleted
+    my @D = getDeleteList(@S, @cSpecs);
+
+    # See if the new snapshot will be the one to be deleted
+    my $deleteNew = grep {$_ == $snapshotTime} @D;
 
     if ($Opt{snapshot}) {
-        my @expirableSnapshots = getExpirableSnapshots(@S, @specs, $snapshotTime);
-        my $rsyncOK = runRsync($dest, @expirableSnapshots, $snapshotTime, $S[0]);  
-        # ($S[0] will be undefined the first time)
-        @S = getSList($dest);   # re-do @S for additions and deletions
+        if ($deleteNew and $Opt{delete} and $Opt{'delete-cp'}) {
+            printlog "NOTE: new snapshot would be immediately deleted, so rsync will NOT be run\n", 1;
+        } else {
+            my @expirableSnapshots = getExpirableSnapshots(@S, @specs, @cSpecs, $snapshotTime);
+            my $rsyncOK = runRsync($dest, @expirableSnapshots, $snapshotTime, $S[1]);  
+            # ($S[1] will be undefined the first time)
+            # TODO get runRsync to return list of things deleted
+            @S = getSList($dest);   # re-do @S for additions and deletions
+        }
     } else {
         printlog "Option 'no-snapshot' given -- no new snapshot will be created\n", 2;
     }
 
-    my @cSpecs;
-    # 'Compile' the specs taking account of current time and existing snapshots
-    @cSpecs = compileSpecs($snapshotTime, @specs, @S);
-    displayCSpecs(@cSpecs, @S);
-
-    if (@S and @cSpecs) {
-        my @D = getDeleteList(@S, @cSpecs);
+    #if (@S and @cSpecs) {
+        #my @D = getDeleteList(@S, @cSpecs);
         if ($Opt{delete}) {
-            deleteSnapshots($dest, @D, @cSpecs);
+            deleteSnapshots($dest, @D, @cSpecs, $deleteNew);
             # Get new snapshot list after deletions
             @S = getSList($dest);
         } else {
             printlog "Option 'no-delete' given, so no existing snapshots will be deleted\n", 2;
         }
-    } else {
-        debug "run: No snapshots and/or no cSpecs -- nothing to do\n", 4;
-    }
+    #} else {
+    #    debug "run: No snapshots and/or no cSpecs -- nothing to do\n", 4;
+    #}
 
     # Display the current situation (even if there are no cSpecs)
     status($dest, @S, @cSpecs);
@@ -3369,7 +3412,7 @@ sub testSuite {
 # Mainline is here
 
 # Display basic info -- logging will happen later
-printit "\n$Script version $Version starting at " . (strftime "%H:%M:%S", localtime) . "\n", 1,1;
+printit "\n$Script version $Version starting at " . (strftime "%H:%M:%S", localtime) . "\n", 1;
 printit "Command line: $0 @ARGV\n", 3;
 
 # No options supplied -- display help and exit
