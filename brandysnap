@@ -41,7 +41,7 @@ use Config::General qw(ParseConfig);
 use File::Path qw(remove_tree);
 use File::Glob qw(:glob); 
 use File::Find;
-use File::Temp qw(tempdir);
+use File::Temp qw(tempfile tempdir);
 use File::Spec::Functions qw(rel2abs splitdir catfile catdir);
 use File::Basename;
 use Fcntl qw(:flock);
@@ -50,7 +50,6 @@ use Scalar::Util qw(looks_like_number);
 use IPC::Open3;
 use Symbol qw(gensym);
 use IO::File;
-use Data::Dumper;   # testing only
 
 # get a stack trace: (may get turned off later)
 use Carp;
@@ -77,7 +76,7 @@ my $Script = 'brandysnap';
 $| = 1;
 
 # version of this script
-my $Version = '0.1.5+';
+my $Version = '0.1.7';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -903,12 +902,14 @@ sub printableOption ($) {
         return $Opt{$opt} ? 'yes' : 'no';
     }
     if (grep {$_ eq $opt} @StringOpt) {
-        # string  
+        # string option
         return "'$Opt{$opt}'";
     }
     # else it's numeric
     return "$Opt{$opt}";
 }
+
+#---------------------------------------------------------------------------------------------------
 
 sub displayOptions () {
     my $optSummary = "\nOptions summary:";
@@ -1081,40 +1082,21 @@ sub sourceDir ($) {
 
 sub snapshotInfo ($$) {
     # Get the amount of space that would be freed by deleting a file or directory.
-    # The value returned is a number of blocks, which ought to be 512bytes each.
-
+    # The value returned is a number of blocks, which ought to be 512 bytes each.
     # Because of hard links, deleting a file may not free any space.
     # So this routine only counts files whose link count is 1.
-
-    # WRONG!!! Hard links /within/ the directory in question will 
+    # Hard links /within/ the directory in question will 
     # give an underestimate of the amount of space that will be freed.
     # We'll assume that most of the links are between snapshots, not within them.
 
     # TODO could use 'du', which gives very similar results for
     # most snapshots, but picks one as the 'complete' one -- why?
 
-    # Is this helpful? -- maybe only to the script.
-    # If two snapshots both have big files that aren't in any other
-    # snapshot, their delete size will still be small.  If one is
-    # deleted, the delete size of the other is suddenly much bigger.
-    # True.  Confusing for the punter though.
-
-    # Also get the amount of space 'apparently' used by a snapshot.
-    # i.e. ignoring the fact that some files are 'shared' by hard linking.
-
     my $dest     = shift;
     my $snapshot = shift;   # Unix date of snapshot dir
 
-    # Getting remote snapshot info is very slow, so only
-    # do it for explicit '--status' requests
-    # NO -- too slow even for that 
-    # TODO -- du via ssh or similar if remote and not rsyncd
     if (remote($dest)) {
-        #if ($Opt{status}) {
-        #    return (0, snapshotInfoRemote($dest, $snapshot));
-        #} else {
-            return (0,0);
-        #}
+        return (0, snapshotInfoRemote($dest, $snapshot));
     }
 
     # Now we're dealing with a local snapshot
@@ -1159,7 +1141,7 @@ sub snapshotInfo ($$) {
 
 #---------------------------------------------------------------------------------------------------
 
-sub snapshotInfoRemote ($$) {
+sub snapshotInfoRemote0 ($$) {  # old version
     # Recursively get snapshot information for a remote destination via rsync.
     # rsync returns directory listings thusly (even for recent dates):
     #    -rwxr-xr-x         149 2008/06/13 13:56:30 textsmart
@@ -1216,6 +1198,59 @@ sub snapshotInfoRemote ($$) {
     return $totalSize;
 }
 
+#---------------------------------------------------------------------------------------------------
+
+sub snapshotInfoRemote ($$) {
+    # Get snapshot information for a remote destination via rsync.
+    # rsync returns directory listings thusly (even for recent dates):
+    #    -rwxr-xr-x         149 2008/06/13 13:56:30 textsmart
+    #    drwxr-xr-x        4096 2011/05/07 17:41:48 40dnamer
+    # and gives return code 23 if the directory is not found
+    # 255 for wrong password, unknown host etc.
+    # Note the lack of nlink information, so we can't calculate 'delete size'.
+
+    my $dest = shift;
+    my $dir  = shift;  # name of subfolder (initially the snapshot name)
+    my $path = "$dest/$dir";    # not catdir!
+    debug "sIR: path=$path\n", 3;
+
+    my $totalSize = 0;
+
+    # Get rsync listing into a temporary file
+    my @items;
+    my ($fh, $filename) = tempfile(UNLINK => 1);
+    my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
+        "--recursive --bwlimit=$Opt{'bwlimit-in'} '$path/'", 3,3, $fh);
+    debug "sIR: rc=$rc rc2=$rc2 filename=$filename\n", 3;
+    if ($rc) {
+        return (0, 0);
+    }
+
+    seek $fh, 0, 0;
+    while (my $item = readline $fh) {
+        debug "sIR: item = $item", 9;
+        # matching e.g.: 'drwxr-xr-x        4096 2011/05/07 17:41:48 40dnamer'
+        if ($item =~ m|^(?<t>.)(?<p>.{9})\s+(?<size>\d+)\s\d{4}/\d{2}/\d{2}\s\d{2}:\d{2}:\d{2}\s(?<name>.*)$|) {
+            next if $+{name} eq '.';
+            next if $+{name} eq '..';
+            if ($+{t} eq '-' or $+{t} eq 'l' or $+{t} eq 'd') {
+                # file or symbolic link or directory
+                # (we're not following the symbolic link, just counting the space of the link itself)
+                # (and we're counting the directory itself, not its contents)
+                debug "sIR: t=$+{t} size=$+{size} name=$+{name}\n", 9;
+                $totalSize += ceil($+{size} / 512) * 512; # a function for this TODO
+            } else {
+                # (ignore anything other than files and directories)
+            }
+        } else {
+            # (ignore any non-matching lines)
+            debug "sIR: ignoring $item\n", 3;
+        }
+    }
+
+    return $totalSize;
+}
+
 #===================================================================================================
 
 sub status ($\@;\@) {
@@ -1224,7 +1259,6 @@ sub status ($\@;\@) {
     my @S      = @{(shift)};
     my @cSpecs;
     @cSpecs    = @{(shift)} if @_;
-    #my @cSpecs = @{(shift)};
     my $count  = 0;
     my $totald = 0;
     my $totala = 0;
@@ -1275,18 +1309,18 @@ sub status ($\@;\@) {
                 bytes($averaged), bytes($averagea)), $plevel,$llevel;
         }
         if (!remote($dest)) {
-        my $ref = df($dest, 1);
-        if (defined($ref)) {
-            printlog sprintf("%-*s     %13s\n", $nameLength+12, 
-                'Disk space used (not just by snapshots):', bytes($ref->{used})), $plevel,$llevel;  
-            printlog sprintf("%-*s     %13s\n", $nameLength+12, 
-                'Disk space available:', bytes($ref->{bfree})), $plevel,$llevel;
-            printlog sprintf("%-*s     %13s\n", $nameLength+12, 
-                'Disk size:', bytes($ref->{blocks})), $plevel,$llevel;
-        } else {
-            printlog "Couldn't get disk space for $dest\n", $plevel,$llevel;
+            my $ref = df($dest, 1);
+            if (defined($ref)) {
+                printlog sprintf("%-*s     %13s\n", $nameLength+12, 
+                    'Disk space used (not just by snapshots):', bytes($ref->{used})), $plevel,$llevel;  
+                printlog sprintf("%-*s     %13s\n", $nameLength+12, 
+                    'Disk space available:', bytes($ref->{bfree})), $plevel,$llevel;
+                printlog sprintf("%-*s     %13s\n", $nameLength+12, 
+                    'Disk size:', bytes($ref->{blocks})), $plevel,$llevel;
+            } else {
+                printlog "Couldn't get disk space for $dest\n", $plevel,$llevel;
+            }
         }
-    }
     }
 }
 
@@ -1294,6 +1328,7 @@ sub status ($\@;\@) {
 # 'periods'
 
 # NB periods end on the beginning of the next one
+
 sub getPeriod ($$) {
     # Return the beginning and end of the period containing
     # the moment specified
@@ -2657,11 +2692,6 @@ sub getExpirableSnapshots (\@\@\@$) {
     }
     my $lastSpec = $specs[-1];
     if ($lastSpec->{count} == UNLIMITED) {
-        ## 'pre-compile' specs (without the new snapshot
-        ## from this run) to find any that are expirable
-        #my @cSpecs = compileSpecs($now+1, @specs, @S, 1);
-        #debug "gES: temporary cSpecs: @cSpecs", 3;
-        #displayCSpecs(@cSpecs, @S) if $Opt{debug} >= 3;
         my $lastraw = $lastSpec->{rawspec};
         my $i = $#cSpecs;
         # Pick out snapshots in the 'unlimited' cSpecs, which are always at the end
@@ -2961,8 +2991,8 @@ sub run ($\@) {
 #---------------------------------------------------------------------------------------------------
     
 sub systemcall ($$$$;$$) {
-    # Run a system command, given as a string.
-    # Return the command's return code
+    # Run a system command, given as a program name and argument string.
+    # Return the command's return code and extra info if possible.
     # Elaborate scheme for catching STDOUT and STDERR taken 
     # from the PERL FAQ http://perldoc.perl.org/perlfaq8.html#How-can-I-capture-STDERR-from-an-external-command?
     my $cmd         = shift;
@@ -2970,6 +3000,7 @@ sub systemcall ($$$$;$$) {
     my $stdoutLevel = shift;
     my $stderrLevel = shift;
     my $stdoutRef   = shift;    # if specified, it's an array reference that will receive lines from stdout
+                                # OR a file handle to store stdout lines in
     my $stderrRef   = shift;    # ditto for stderr
     if ($Opt{'dry-run'}) {
         if ($cmd eq $Opt{'rsync-cmd'}) {
@@ -2989,6 +3020,8 @@ sub systemcall ($$$$;$$) {
     while (<CATCHOUT>) {
         if (ref($stdoutRef) eq 'ARRAY') {
             push @$stdoutRef, $_; 
+        } elsif (ref($stdoutRef) eq 'GLOB') {
+            print $stdoutRef $_;
         } else {
             printlog $_, $stdoutLevel;
         }
@@ -3005,6 +3038,8 @@ sub systemcall ($$$$;$$) {
         }
         if (ref($stderrRef) eq 'ARRAY') {
             push @$stderrRef, $_; 
+        } elsif (ref($stderrRef) eq 'GLOB') {
+            print $stdoutRef $_;
         } else {
             printlog $_, $stderrLevel;
         }
