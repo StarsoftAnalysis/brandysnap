@@ -74,7 +74,11 @@ There is not (yet) an installation script or package.  All you need to do is
 
         ./brandysnap --conf brandysnap-test1.conf --dry-run
 
+Alternatives
+------------
 
+Brandysnap is one of a number of rsync-based scripts for managing snapshots.
+LBackup is another, and the [LBackup website](http://www.lbackup.org/) has a list of [other alternatives](http://www.lbackup.org/alternatives).
 
 **************************************************************
 This is part of the brandysnap documentation.<br>
