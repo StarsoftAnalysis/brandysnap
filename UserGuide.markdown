@@ -347,7 +347,7 @@ However, is the destination is on a remote computer, the status report does incl
 The full status report can be seen for remote destinations by running brandysnap with the `--status` option in addition to the usual configuration.  And even then, can only display 'Real size', not 'Delete size', because rsync doesn't give information about the number of hard links.
 
 <a name="snapshotNames">Snapshot names</a>
---------------
+------------------------------------------
 
 Each snapshot is a separate directory within the destination, with a name of the form
 
@@ -370,3 +370,9 @@ As of 16 July 2011 and version 0.1.5, the following issues and bugs are known.
 * Under certain circumstances, rsync can fail when there are files that are hard-linked together
 and for which you do not have read permission.  This is fixed in rsync 3.0.9 and later.  You can get
 round it by specifying `--rsync-opts` with the usual options but omitting `--hard-links`.
+* If the timings of snapshots are slightly out, a snapshot may appear to be in 
+the wrong period, which will affect deletions.  
+For example, when doing one snapshot a day with calendar mode turned off, if 
+yesterday's snapshot was at 11:40:03, and today's is at 11:40:01, 
+then yesterday's will be considered as part of today, 
+because it is less than 24 hours ago, so it will be deleted.  A fix is planned to address this issue.

@@ -22,7 +22,7 @@ words, making a snapshot is quick, and uses relatively little disk
 space because of the use of hard links.
 
 Brandysnap should be run regularly, via cron or something similar.  It 
-creates a new snapshot each time it is run.
+creates a new snapshot each time it is run (usually).
 
 Then it looks at all existing snapshots to see if any old
 snapshots can be deleted because they are no longer required, as

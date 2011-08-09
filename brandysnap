@@ -76,7 +76,7 @@ my $Script = 'brandysnap';
 $| = 1;
 
 # version of this script
-my $Version = '0.1.7';
+my $Version = '0.1.8';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -131,7 +131,7 @@ my @LevelName = ('hour', 'day', 'week', 'month', 'year');
 
 # Number of hours in periods at each level
 # (approximate for months and years)
-my @Hours = (1, 24, 24*7, 24*7*4, 24*7*4*52);   
+my @Hours = (1, 24, 24*7, 24*7*4, 24*7*4*12);   
 
 # Periods in seconds:
 use constant MINUTE => 60;
@@ -1606,9 +1606,9 @@ sub calcPadding ($$$) {
     my $length1 = $Hours[$level1];
     my $length2 = $Hours[$level2];
     my $result = ($length2 - ($timesofar % $length2)) / $length1;
-    debug "calcPadding: l1=$level1 l2=$level2 tsf=$timesofar; returning $result\n", 9;
+    debug "cP: l1=$level1 l2=$level2 tsf=$timesofar; returning $result\n", 3;
     if ($result != floor($result)) {
-        debug "auto-padded spec is not aligned!\n", 1;
+        debug "cP: auto-padded spec is not aligned!\n", 1;
     }
     return floor($result);
 }
@@ -1633,7 +1633,7 @@ sub parseSpecs ($) {
     # backup disk is full.
 
     my $rawspec = lc(shift);
-    debug "parseSpecs: rawspec = $rawspec\n", 2;
+    debug "pS: rawspec = $rawspec\n", 2;
 
     my @rawspecs = split /,/, $rawspec;
     my @specs = ();
