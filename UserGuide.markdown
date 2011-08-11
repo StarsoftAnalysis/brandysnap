@@ -355,7 +355,7 @@ Status report
 
 Brandysnap displays a status report on all existing snapshots at the end of each run.
 
-However, is the destination is on a remote computer, the status report does include details of the disk space used by each snapshot because of the process of retrieving that information is slow.
+However, if the destination is on a remote computer, the status report does include details of the disk space used by each snapshot because of the process of retrieving that information is slow.
 
 The full status report can be seen for remote destinations by running brandysnap with the `--status` option in addition to the usual configuration.  And even then, can only display 'Real size', not 'Delete size', because rsync doesn't give information about the number of hard links.
 

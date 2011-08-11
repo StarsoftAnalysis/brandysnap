@@ -56,7 +56,7 @@ lockfile    = ~/brandysnap-test1.lock
 
 <p>For more options, run <code>brandysnap --help</code>.</p>
 
-<h2>Remote sources and destinations</h2>
+<h2>Remote Sources and Destinations</h2>
 
 <p>Brandysnap assumes that any messing about with passwords has been taken care of.</p>
 
@@ -65,6 +65,12 @@ lockfile    = ~/brandysnap-test1.lock
 <p>There are various ways of setting up rsync so that it doesn't prompt for a password -- they are not described here.  [ a reference or two would be helpful here] So it's important to get the password-less access sorted out first.  In fact rsync may be run many times during one run of brandysnap, so suppand rsync would prompt for a password each time.</p>
 
 <p>Multiple destinations can be configured, in which case snapshots will be created on all destinations that are available.  This can be used to put snapshots on several external USB drives in rotation, for example.  Or you could specify one local and one remote destination for security.  But note that multiple destinations won't be in sync with each other that's not the intention.  They will end up with different lists of snapshots if they are available at different times</p>
+
+<h2>Preserving Ownership</h2>
+
+<p>In order to preserver ownership of files, brandysnap needs to be run as root or via 'sudo'.</p>
+
+<p>[More detail needed here re use of sudo and <code>remote-rsync-cmd = 'sudo rsync'</code>]</p>
 
 <h2><a name="keepingSnapshots">Keeping Snapshots</a></h2>
 
@@ -238,10 +244,11 @@ logfile ~/bs-docs.log
 
 <p>In safe mode, snapshots are only considered for deletion if the specified periods are 'complete' -- i.e. they have the required number of snapshots.  If safe mode is turned off, all periods are considered complete, and extra snapshots in any of them will be deleted. See the <a href="#safeMode">Safe Mode section</a> below for further details.  (default: <code>yes</code>)</p>
 
+<p>The <code>xbest</code> options can be used to tune the snapshot-matching algorithm which decides which snapshots should be deleted.  The defaults assume that the latest snapshots within a period are the most valuable, and should be kept.  Note that if calendar mode is turned off, the <code>xbest</code> options are relative to the start of the period: for example <code>wbest = 3</code> means the middle of the week, even if the week happens to start at 5:30am on a Tuesday.</p>
+
 <h4><code>hbest &lt;0..59&gt;</code></h4>
 
-<p>The <code>xbest</code> options can be used to tune the snapshot-matching algorithm which decides which snapshots should be deleted.  The defaults assume that the latest snapshots within a period are the most valuable, and should be kept. <br />
-<code>hbest</code> determines the favoured minute within an hour for an hourly specification. For example, to prefer hourly snapshots created in the middle of an hours, use <code>hbest 30</code>.  (default: <code>59</code>)</p>
+<p><code>hbest</code> determines the favoured minute within an hour for an hourly specification. For example, to prefer hourly snapshots created in the middle of an hours, use <code>hbest 30</code>.  (default: <code>59</code>)</p>
 
 <h4><code>dbest &lt;0..23.9&gt;</code></h4>
 
@@ -328,7 +335,11 @@ logfile ~/bs-docs.log
 
 <h4><code>expire-old &lt;yes/no&gt;</code></h4>
 
-<p>Consider <em>all</em> snapshots (oldest first) as expirable to make room when then destination is full. (default: <code>no</code>)</p>
+<p>Consider <em>all</em> snapshots (oldest first) as expirable to make room when the destination is full. (default: <code>no</code>)</p>
+
+<h4><code>restart &lt;yes/no&gt;</code></h4>
+
+<p>If a previous run of brandysnap was interrupted for any reason, use this option to re-do the same snapshot (simply by relying on rsync's ability to not copy files that have not changed).  Any files in the source that have changed since the previous run <em>will</em> be updated.  If more than one destination is being used, rsync will be run for <em>all</em> destinations, even if some of them completed successfully before.</p>
 
 <h4><code>snapshot &lt;yes/no&gt;</code></h4>
 
@@ -382,7 +393,7 @@ skipping over the extra days, and not deleting any of their snapshots. </p>
 
 <p>Brandysnap displays a status report on all existing snapshots at the end of each run.</p>
 
-<p>However, is the destination is on a remote computer, the status report does include details of the disk space used by each snapshot because of the process of retrieving that information is slow.</p>
+<p>However, if the destination is on a remote computer, the status report does include details of the disk space used by each snapshot because of the process of retrieving that information is slow.</p>
 
 <p>The full status report can be seen for remote destinations by running brandysnap with the <code>--status</code> option in addition to the usual configuration.  And even then, can only display 'Real size', not 'Delete size', because rsync doesn't give information about the number of hard links.</p>
 
@@ -401,3 +412,20 @@ skipping over the extra days, and not deleting any of their snapshots. </p>
 <p>That format is fixed -- it is used to identify snapshots; any directory that doesn't match that pattern will be ignored.</p>
 
 <hr />
+
+<h2>Known Issues</h2>
+
+<p>As of 16 July 2011 and version 0.1.5, the following issues and bugs are known.</p>
+
+<ul>
+<li>The option <code>--remote-rsync-cmd</code> can only be specified once, and applies to all remote sources and directories.</li>
+<li>Under certain circumstances, rsync can fail when there are files that are hard-linked together
+and for which you do not have read permission.  This is fixed in rsync 3.0.9 and later.  You can get
+round it by specifying <code>--rsync-opts</code> with the usual options but omitting <code>--hard-links</code>.</li>
+<li>If the timings of snapshots are slightly out, a snapshot may appear to be in 
+the wrong period, which will affect deletions. <br />
+For example, when doing one snapshot a day with calendar mode turned off, if 
+yesterday's snapshot was at 11:40:03, and today's is at 11:40:01, 
+then yesterday's will be considered as part of today, 
+because it is less than 24 hours ago, so it will be deleted.  A fix is planned to address this issue.</li>
+</ul>
