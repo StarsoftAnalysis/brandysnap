@@ -58,7 +58,7 @@ The `dry-run` option will mean that nothing will actually be done.  Once you're 
 For more options, run `brandysnap --help`.
 
 
-Remote sources and destinations
+Remote Sources and Destinations
 -------------------------------
 
 Brandysnap assumes that any messing about with passwords has been taken care of.
@@ -68,6 +68,14 @@ In other words, it will call rsync on remote directories without supplying a pas
 There are various ways of setting up rsync so that it doesn't prompt for a password -- they are not described here.  [ a reference or two would be helpful here] So it's important to get the password-less access sorted out first.  In fact rsync may be run many times during one run of brandysnap, so suppand rsync would prompt for a password each time.
 
 Multiple destinations can be configured, in which case snapshots will be created on all destinations that are available.  This can be used to put snapshots on several external USB drives in rotation, for example.  Or you could specify one local and one remote destination for security.  But note that multiple destinations won't be in sync with each other that's not the intention.  They will end up with different lists of snapshots if they are available at different times
+
+
+Preserving Ownership
+--------------------
+
+In order to preserver ownership of files, brandysnap needs to be run as root or via 'sudo'.
+
+[More detail needed here re use of sudo and `remote-rsync-cmd = 'sudo rsync'`]
 
 
 <a name="keepingSnapshots">Keeping Snapshots</a>
@@ -116,6 +124,7 @@ More spec examples:
 
 Snapshots also get deleted as time passes.  If a day with four snapshots gets to old enough to fall within a `3w` spec, then the extra snapshots will be deleted.
 
+
 Definition of 'snapshot' vs full/incremental backups
 ----------------------------------------------------
 Lots of snapshots don't make a file more secure: if the file hasn't changed, and is the same in all snapshots, 
@@ -124,6 +133,7 @@ in all snapshots.  (If the file is DELETED from one snapshot, it will still exis
 of the way hard links work.)
 
 Think of the whole set of snapshots as one backup, with multiple versions of files that have changed.
+
 
 Options
 -------
@@ -289,7 +299,10 @@ Delete no-longer-required snapshots.  If this option is turned off, brandysnap w
 Include the 'current period' when considering which snapshots to delete.  See the description of [current period](#currentPeriod) below. (default: `yes`)
 
 #### `expire-old <yes/no>`
-Consider _all_ snapshots (oldest first) as expirable to make room when then destination is full. (default: `no`)
+Consider _all_ snapshots (oldest first) as expirable to make room when the destination is full. (default: `no`)
+
+#### `restart <yes/no>`
+If a previous run of brandysnap was interrupted for any reason, use this option to re-do the same snapshot (simply by relying on rsync's ability to not copy files that have not changed).  Any files in the source that have changed since the previous run _will_ be updated.  If more than one destination is being used, rsync will be run for _all_ destinations, even if some of them completed successfully before.
 
 #### `snapshot <yes/no>`
 Create a new snapshot.  If this option is turned off, no new snapshot will be created during this run of brandysnap but old snapshots may be deleted. (default: `yes`)

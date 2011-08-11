@@ -76,7 +76,7 @@ my $Script = 'brandysnap';
 $| = 1;
 
 # version of this script
-my $Version = '0.1.8';
+my $Version = '0.1.9';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -162,8 +162,7 @@ my @AllOpt = qw(
     include include-from exclude exclude-from
     expire-old
     bwlimit-in bwlimit-out
-    status
-    compress
+    status compress restart
     );
 my %AllOpt = (map {$_ => 1} @AllOpt);
 # Required options (not including those that have a default value)
@@ -173,7 +172,7 @@ my %MultiOpt = qw(source 1  include 1  include-from 1
     exclude 1  exclude-from 1  destination 1);
 # Boolean options
 my @BoolOpt  = qw(safe calendar snapshot delete delete-cp dry-run 
-    stacktrace version expire-old status compress);
+    stacktrace version expire-old status compress restart);
 # String options (NOT the multi-value ones)
 my @StringOpt = qw(config lockfile logfile template rsync-cmd rsync-opts remote-rsync-cmd);
 # Level options (take values 0..9)
@@ -522,6 +521,7 @@ sub processOptions () {
     $defopt{'dry-run'}      = 0;
     $defopt{'expire-old'}   = 0;          # expire oldest S's to make room, even when not unlimited
     $defopt{help}           = 0;
+    $defopt{restart}        = 0;
     $defopt{'rsync-cmd'}    = 'rsync';    # Should it be '/usr/bin/rsync'?
     $defopt{'rsync-opts'}   = '--hard-links --numeric-ids --archive --one-file-system';
     $defopt{safe}           = 1;        
@@ -566,6 +566,7 @@ sub processOptions () {
             'logfile=s',
             'loglevel=i',
             'mbest=i',
+            'restart!',
             'rsync-cmd=s',
             'rsync-opts=s',
             'remote-rsync-cmd=s',
@@ -983,6 +984,7 @@ Advanced options
 --delete       yes/no    delete no-longer-required snapshots (default: yes)
 --delete-cp    yes/no    delete even in current period (default: yes)
 --expire-old   yes/no    delete oldest snapshots when disk is full (default: no)
+--restart      yes/no    continue previous snapshot (default: no)
 --snapshot     yes/no    create new snapshots (default: yes)
 --status       yes/no    print a status report only (default: no)
 --strict       yes/no    use strict mode (default: no)
@@ -1420,7 +1422,7 @@ sub fmtRange ($$) {
     my $end = shift;
     my $range = $end - $beg;
     my $begStamp = time2stamp($beg);
-    debug "fR: range is " . pair2range($beg, $end) . "\n", 1;
+    debug "fR: range is " . pair2range($beg, $end) . "\n", 9;
     if ($range == HOUR) {
         return "hour from " . $begStamp;
     } elsif ($range == DAY) {
@@ -1428,7 +1430,7 @@ sub fmtRange ($$) {
     } elsif ($range == WEEK) {
         return "week from " . $begStamp;
     }
-    my $delta = DateCalc(time2date($beg), time2date($end), 1);
+    my $delta = DateCalc(time2date($beg), time2date($end), 9);
     debug "fR: delta is $delta\n", 1;
     if ($delta eq '+0:1:+0:0:0:0:0') {
         return "month from " . $begStamp;
@@ -1534,7 +1536,7 @@ sub deleteSnapshot ($$) {
             }
         }
         # Rename the directory so that it's not considered in future runs
-        rename($snapshotPath, 'part-deleted');  
+        rename($snapshotPath, "$snapshotPath-part-deleted");  
         return scalar @$err;
     }
     return 0;
@@ -1871,12 +1873,13 @@ sub arrayDiff (\@\@) {
 
 #---------------------------------------------------------------------------------------------------
 
-sub getDeleteList (\@\@) {
+sub getDeleteList (\@\@;$) {
     # Given a list S of existing snapshots as a list of timestamps,
     # return a list of the ones to be deleted
     # by checking against the list of cSpecs.
     my @S      = @{(shift)};
     my @cSpecs = @{(shift)};
+    my $plevel = shift // 3;    # optional to override print level
 
     my @allMatches;
     my @D;
@@ -1891,8 +1894,6 @@ sub getDeleteList (\@\@) {
         my $end = $c->{end};
         debug "\ngDL processing cSpec $c->{label} beg=$beg end=$end\n", 9;
 
-        $firstbeg = $beg if $beg < $firstbeg;
-        $lastend  = $end if $end > $lastend;
         # find S's in that period
         my @C; # candidates, just identified by timestamp
         foreach my $s (@S) {
@@ -1902,6 +1903,11 @@ sub getDeleteList (\@\@) {
             }
         }
         debug " candidates: @C total: " . @C . "\n", 9;
+        if (@C) {
+            # there are snapsnots in this period, so adjust the overall range
+            $firstbeg = $beg if $beg < $firstbeg;
+            $lastend  = $end if $end > $lastend;
+        }
         if (!@C) {
             # no candidates found
             debug " no candidates found to match $c->{label} for period " . 
@@ -1921,15 +1927,16 @@ sub getDeleteList (\@\@) {
     } # foreach spec
 
     # Summarise keepers and deleters over whole period
-    printlog "\nSummary of whole period: " . time2stamp($firstbeg) . ' - ' . 
-        time2stamp($lastend) . "\n", 3; 
-    printlog "----------------------------------------------------------\n", 3;
-    #printlog "Snapshots: " . @S . ": @S\n", 3;
-    #printlog "Keepers:   " . @allMatches . ": @allMatches\n", 3;
-    #printlog "Deleters:  " . @D . ": @D\n", 3;
-    printlog @S . ' snapshots, ' . @allMatches . ' to be kept, ' . @D . " to be deleted\n", 3;
+    printlog "\nSummary of all existing snapshots: " . time2stamp($firstbeg) . ' - ' . 
+        time2stamp($lastend) . "\n", $plevel; 
+    printlog "--------------------------------------------------------------------\n", $plevel;
+    #printlog "Snapshots: " . @S . ": @S\n", $plevel;
+    #printlog "Keepers:   " . @allMatches . ": @allMatches\n", $plevel;
+    #printlog "Deleters:  " . @D . ": @D\n", $plevel;
+    printlog @S . ' snapshots, ' . @allMatches . ' to be kept, ' . @D . " to be deleted\n", $plevel;
     visualise($firstbeg, $lastend, 0, 0, 'Snap' => \@S, 'Keep' => \@allMatches, 'Del' => \@D)
-        if ($Opt{verbose} >= 3);
+        if ($Opt{verbose} >= $plevel);
+
     return @D;  # list of timestamps of snapshots to delete
 }
 
@@ -2759,7 +2766,8 @@ sub runRsync ($\@$$) {
 
     my $remoteDest = remote($dest);
 
-    my $succeeded = 0;
+    my $succeeded = 1;  # stays true if ALL sources are copied successfully
+
     my $deletionsAllSources = 0;
 
     # Loop through sources one at a time
@@ -2788,10 +2796,13 @@ sub runRsync ($\@$$) {
             $destDir = "$destDir/$subDir";  # can't use catdir because it nobbles rsync:// URLs
             # That extra directory level won't be created by rsync normally,
             # so we'll have to do one of them manually
+            # (It may already be there if there is more than one destination)
             # Destination is local, so just we can just use mkdir
-            if (!mkdir("$dest/$snapshot", 0755)) {
-                printlog "ERROR: Unable to create directory '$dest/$snapshot ($!)'\n";
-                # rsync will also fail
+            if (!$Opt{'dry-run'}) {
+                if (!-e "$dest/$snapshot" and !mkdir("$dest/$snapshot", 0755)) {
+                    printlog "ERROR: Unable to create directory '$dest/$snapshot' ($!)\n";
+                    # rsync will also fail
+                }
             }
         }
 
@@ -2837,18 +2848,17 @@ sub runRsync ($\@$$) {
             given ($rc) {
                 when (0) {
                     $keepTrying = 0;
-                    $succeeded = 1;
                 }
                 when (1) {
                     printlog "ERROR: rsync failed complaining about options / usage\n", 1;
                     $snapshotTime = undef;
                     $keepTrying = 0;
+                    $succeeded = 0;
                     last SOURCE;
                 }
                 when ([22, 23]) {
                     # Errors on some files such as problems with permissions -- carry on
                     $keepTrying = 0;
-                    $succeeded = 1;
                 }
                 when ([12]) {
                     # 12 e.g. snapshot dir not found or disk is full.
@@ -2865,6 +2875,7 @@ sub runRsync ($\@$$) {
                             deleteSnapshot($dest, $snapshot);
                             printlog "ERROR: snapshot was not complete, and has been deleted\n", 1;
                             printlog "ERROR: rsync reported a serious problem (1: $rc $rc2)\n", 1;
+                            $succeeded = 0;
                             last SOURCE;
                         } else {
                             # have another go
@@ -2874,6 +2885,7 @@ sub runRsync ($\@$$) {
                                 # No snapshots deleted, so stop trying
                                 $keepTrying = 0;
                                 printlog "ERROR: rsync reported a serious problem (2: $rc $rc2)\n", 1;
+                                $succeeded = 0;
                                 last SOURCE;
                             } else {
                                 # More space freed, so try again
@@ -2890,6 +2902,7 @@ sub runRsync ($\@$$) {
                         #   -- make the default NO DELETE for remote transfers?
                         printlog "ERROR: snapshot was not complete, and has been deleted\n", 1;
                         $keepTrying = 0;
+                        $succeeded = 0;
                         printlog "ERROR: rsync reported a serious problem (3: $rc $rc2)\n", 1;
                         # (but maybe we'll try the next source)
                     }
@@ -2900,6 +2913,7 @@ sub runRsync ($\@$$) {
                     # 255, various, including wrong ssh password, 
                     printlog "ERROR: rsync reported a serious problem (4: $rc $rc2)\n", 1;
                     $keepTrying = 0;
+                    $succeeded = 0;
                     last SOURCE;
                 }
             }
@@ -2934,16 +2948,32 @@ sub run ($\@) {
     my $dest  = shift;      
     my @specs = @{(shift)};
 
-    # Get time stamp for this run
-    my $snapshotTime = newSnapshotTime($dest);
+    # Get list of existing snapshots
+    my @S = getSList($dest);
+
+    # If there are no previous snapshots, ignore the 'restart' option
+    if ($Opt{restart} and !@S) {
+        printlog "NOTE: No previous snapshots found, so 'restart' option will be ignored\n", 1;
+        $Opt{restart} = 0;
+    }
+
+    my $snapshotTime;
+    if ($Opt{restart}) {
+        # Restarting the previous snapshot
+        $snapshotTime = $S[0];
+        printlog "NOTE: Restarting snapshot " . snapshotName($snapshotTime) . "\n", 1;
+    } else {
+        # Normal run, creating a new snapshot.
+        # Get time stamp for this run...
+        $snapshotTime = newSnapshotTime($dest);
+        # ...and include it in the list
+        unshift @S, $snapshotTime if ($Opt{snapshot});
+    }
+    debug "run: got list of " . @S . " snapshots\n", 4;
 
     printlog "\nCreating snapshot " . snapshotName($snapshotTime) . " on destination $dest\n", 1;
     printlog   '--------------------------------------------------' . 
         '-' x (length($dest) + length($Opt{template})) . "\n", 1;
-
-    # Get list of existing snapshots (including the one about to be made)
-    my @S = ($snapshotTime, getSList($dest));
-    debug "run: got list of " . @S . " snapshots (inc. this one)\n", 4;
 
     # 'Compile' the specs taking account of current time and existing snapshots
     my @cSpecs;
@@ -2953,7 +2983,7 @@ sub run ($\@) {
     # Get the list of snapshots to be deleted
     my @D = getDeleteList(@S, @cSpecs);
 
-    # See if the new snapshot will be the one to be deleted
+    # See if the new snapshot would be one of the ones deleted
     my $deleteNew = grep {$_ == $snapshotTime} @D;
 
     if ($Opt{snapshot}) {
@@ -2963,27 +2993,25 @@ sub run ($\@) {
             my @expirableSnapshots = getExpirableSnapshots(@S, @specs, @cSpecs, $snapshotTime);
             my $rsyncOK = runRsync($dest, @expirableSnapshots, $snapshotTime, $S[1]);  
             # ($S[1] will be undefined the first time)
-            # TODO get runRsync to return list of things deleted
-            @S = getSList($dest);   # re-do @S for additions and deletions
+            if (!$rsyncOK) {
+                # Failed to create a new snapshot, so re-do the list of deletions
+                @S = grep {$_ != $snapshotTime} @S;
+                @D = getDeleteList(@S, @cSpecs, 9);
+            }
         }
     } else {
         printlog "Option 'no-snapshot' given -- no new snapshot will be created\n", 2;
     }
 
-    #if (@S and @cSpecs) {
-        #my @D = getDeleteList(@S, @cSpecs);
-        if ($Opt{delete}) {
-            deleteSnapshots($dest, @D, @cSpecs, $deleteNew);
-            # Get new snapshot list after deletions
-            @S = getSList($dest);
-        } else {
-            printlog "Option 'no-delete' given, so no existing snapshots will be deleted\n", 2;
-        }
-    #} else {
-    #    debug "run: No snapshots and/or no cSpecs -- nothing to do\n", 4;
-    #}
+    if ($Opt{delete}) {
+        deleteSnapshots($dest, @D, @cSpecs, $deleteNew);
+        # Get new snapshot list after deletions
+        @S = getSList($dest);
+    } else {
+        printlog "Option 'no-delete' given, so no existing snapshots will be deleted\n", 2;
+    }
 
-    # Display the current situation (even if there are no cSpecs)
+    # Display the current situation
     status($dest, @S, @cSpecs);
 
 }
@@ -2993,14 +3021,14 @@ sub run ($\@) {
 sub systemcall ($$$$;$$) {
     # Run a system command, given as a program name and argument string.
     # Return the command's return code and extra info if possible.
-    # Elaborate scheme for catching STDOUT and STDERR taken 
-    # from the PERL FAQ http://perldoc.perl.org/perlfaq8.html#How-can-I-capture-STDERR-from-an-external-command?
+    # Elaborate scheme for catching STDOUT and STDERR taken from the PERL FAQ 
+    # http://perldoc.perl.org/perlfaq8.html#How-can-I-capture-STDERR-from-an-external-command?
     my $cmd         = shift;
     my $args        = shift;    # as a string
     my $stdoutLevel = shift;
     my $stderrLevel = shift;
-    my $stdoutRef   = shift;    # if specified, it's an array reference that will receive lines from stdout
-                                # OR a file handle to store stdout lines in
+    my $stdoutRef   = shift;    # if specified, it's an array reference that will receive lines 
+                                # from stdout OR a file handle to store stdout lines in
     my $stderrRef   = shift;    # ditto for stderr
     if ($Opt{'dry-run'}) {
         if ($cmd eq $Opt{'rsync-cmd'}) {
