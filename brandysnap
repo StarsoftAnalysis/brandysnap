@@ -76,7 +76,7 @@ my $Script = 'brandysnap';
 $| = 1;
 
 # version of this script
-my $Version = '0.1.9';
+my $Version = '0.1.10';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -1314,7 +1314,7 @@ sub status ($\@;\@) {
             my $ref = df($dest, 1);
             if (defined($ref)) {
                 printlog sprintf("%-*s     %13s\n", $nameLength+12, 
-                    'Disk space used (not just by snapshots):', bytes($ref->{used})), $plevel,$llevel;  
+                    'Disk space used (not just by these snapshots):', bytes($ref->{used})), $plevel,$llevel;  
                 printlog sprintf("%-*s     %13s\n", $nameLength+12, 
                     'Disk space available:', bytes($ref->{bfree})), $plevel,$llevel;
                 printlog sprintf("%-*s     %13s\n", $nameLength+12, 
@@ -1431,7 +1431,7 @@ sub fmtRange ($$) {
         return "week from " . $begStamp;
     }
     my $delta = DateCalc(time2date($beg), time2date($end), 9);
-    debug "fR: delta is $delta\n", 1;
+    debug "fR: delta is $delta\n", 9;
     if ($delta eq '+0:1:+0:0:0:0:0') {
         return "month from " . $begStamp;
     } elsif ($delta eq '+1:0:+0:0:0:0:0') {
@@ -1787,7 +1787,6 @@ sub getSList ($) {
     my $template = $Opt{template};  
     my @S;
     debug "gSL: dir=$dir template=$Opt{template}\n", 9;
-    #my @listing = `$Opt{'rsync-cmd'} --bwlimit=$Opt{'bwlimit-in'} '$dir/'`;
     my @listing;
     my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
         "--bwlimit=$Opt{'bwlimit-in'} '$dir/'", 9,9, \@listing);    
@@ -2661,6 +2660,8 @@ sub displayCSpecs (\@;\@) {
         $totalD += ($c->{freq} > 0 and $c->{snapshots} > $c->{freq}) ? $c->{snapshots}-$c->{freq} : 0;
     }
     printlog sprintf("%-15s   %-15s  %2s  %1s  %5s  %-30s  %4s  %4s\n",
+        '', '', '', '', '', '-' x 30, '----', '----'), 3;
+    printlog sprintf("%-15s   %-15s  %2s  %1s  %5s  %-30s  %4s  %4s\n",
         '', '', '', '', '', 'Totals:', $totalS, $totalD), 3;
 
     # Visualise each cSpec period
@@ -2856,8 +2857,9 @@ sub runRsync ($\@$$) {
                     $succeeded = 0;
                     last SOURCE;
                 }
-                when ([22, 23]) {
-                    # Errors on some files such as problems with permissions -- carry on
+                when ([22, 23, 24]) {
+                    # Errors on some files such as problems with permissions,
+                    # or files that have vanished -- carry on
                     $keepTrying = 0;
                 }
                 when ([12]) {
@@ -2897,13 +2899,13 @@ sub runRsync ($\@$$) {
                     } else {
                         debug "Disk is not full, apparently -- some other error\n", 3;
                         # so we've got half a snapshot -- delete it
+                        printlog "ERROR: rsync reported a serious problem (3: $rc $rc2)\n", 1;
                         deleteSnapshot($dest, $snapshot);
                         # FIXME is this a good idea -- maybe make it an option?
-                        #   -- make the default NO DELETE for remote transfers?
+                        #   -- make the default NO DELETE for remote destinations?
                         printlog "ERROR: snapshot was not complete, and has been deleted\n", 1;
                         $keepTrying = 0;
                         $succeeded = 0;
-                        printlog "ERROR: rsync reported a serious problem (3: $rc $rc2)\n", 1;
                         # (but maybe we'll try the next source)
                     }
                 }
@@ -2912,6 +2914,8 @@ sub runRsync ($\@$$) {
                     # 5 - failed to start rsyncd protocol
                     # 255, various, including wrong ssh password, 
                     printlog "ERROR: rsync reported a serious problem (4: $rc $rc2)\n", 1;
+                    deleteSnapshot($dest, $snapshot);
+                    printlog "ERROR: snapshot was not complete, and has been deleted\n", 1;
                     $keepTrying = 0;
                     $succeeded = 0;
                     last SOURCE;

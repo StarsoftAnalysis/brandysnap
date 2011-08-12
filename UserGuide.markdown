@@ -4,7 +4,7 @@ Brandysnap User Guide
 
 (expanded version of the Quick Start guide)
 
-This is preliminary documentation for the [brandysnap](http://www.brandysnap.org) script, version 0.1.4, 4 July 2011.
+This is preliminary documentation for the [brandysnap](http://www.brandysnap.org) script, version 0.1.9, 11 August 2011.
 
 **************************************************************
 This is part of the brandysnap documentation.</br>
