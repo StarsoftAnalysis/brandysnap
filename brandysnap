@@ -72,11 +72,18 @@ use subs qw(printit logit printlog debug warning
 
 my $Script = 'brandysnap';
 
+# Make this script robust against interruptions.
+# $Quitting becomes true if the script has been interrupted
+my $Quitting = 0;
+# Set the process group so that we can tidy up child processes:
+setpgrp(0, 0);
+# (Note that signals are not trapped here, only in runRsync() and systemcall() where it matters)
+
 # turn off buffering on STDOUT to get full error messages
 $| = 1;
 
 # version of this script
-my $Version = '0.1.10';
+my $Version = '0.1.11';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -2810,8 +2817,8 @@ sub runRsync ($\@$$) {
         # Set up link-dest option if there is a previous snapshot
         # (as a relative path, which will work whether local or remote)
         my $linkdest = $lastSnapshot ? 
-            "--link-dest='$upDir../$Opt{template}-" . time2stamp($lastSnapshot) . "/$subDir'" : 
-            '';
+        "--link-dest='$upDir../$Opt{template}-" . time2stamp($lastSnapshot) . "/$subDir'" : 
+        '';
 
         # Set compression option
         my $compression = '';
@@ -2826,7 +2833,7 @@ sub runRsync ($\@$$) {
         # Set remote rsync option
         my $rsyncPath = '';
         $rsyncPath = "--rsync-path '$Opt{'remote-rsync-cmd'}'"
-            if ($Opt{'remote-rsync-cmd'} and ($remoteSource or $remoteDest));
+        if ($Opt{'remote-rsync-cmd'} and ($remoteSource or $remoteDest));
 
         printlog "Running rsync from source '$source' to destination '$destDir'\n", 2;
         # Note that rsync-opts is put first -- 
@@ -2834,100 +2841,113 @@ sub runRsync ($\@$$) {
         my $args = "$Opt{'rsync-opts'} $verbose $linkdest $incExcOpts $compression " . 
             "$bwlimit --relative $rsyncPath '$source' '$destDir'";
 
-        # Run rsync.
-        # If it fails for lack of space, delete an old snapshot and try again
-        my $maxTries = @expirableSnapshots + 1; 
-        my $keepTrying = $maxTries;  
-        my $deletions = 0;
-        my $tries = 0;
-        while ($keepTrying) {
-            $keepTrying -= 1;
-            $tries += 1;
-            printlog "Running rsync -- try " . ($maxTries-$keepTrying) . " of $maxTries\n", 2;
-            my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, $args, 2,2);
-            debug "after rsync rc=$rc rc2='$rc2'\n", 3;
-            given ($rc) {
-                when (0) {
-                    $keepTrying = 0;
-                }
-                when (1) {
-                    printlog "ERROR: rsync failed complaining about options / usage\n", 1;
-                    $snapshotTime = undef;
-                    $keepTrying = 0;
-                    $succeeded = 0;
-                    last SOURCE;
-                }
-                when ([22, 23, 24]) {
-                    # Errors on some files such as problems with permissions,
-                    # or files that have vanished -- carry on
-                    $keepTrying = 0;
-                }
-                when ([12]) {
-                    # 12 e.g. snapshot dir not found or disk is full.
-                    # or ERROR: out of memory in flist_expand [receiver]
-                    #
-                    # See if the target disk is full, in which case
-                    # delete some snapshots and try again
-                    if ($rc2 eq 'diskfull') { 
-                        if (!$keepTrying) {
-                            # no space, and no more tries, 
-                            # so delete the partial snapshot
-                            debug "rR: deleting partial left cos disk full if any\n", 3;
-                            # DON'T delete it for now -- see below
-                            deleteSnapshot($dest, $snapshot);
-                            printlog "ERROR: snapshot was not complete, and has been deleted\n", 1;
-                            printlog "ERROR: rsync reported a serious problem (1: $rc $rc2)\n", 1;
-                            $succeeded = 0;
-                            last SOURCE;
-                        } else {
-                            # have another go
-                            printlog "WARNING: destination '$dest' is full -- will delete an old snapshot and try again\n";
-                            my $deleted = deleteOldSnapshots($dest, @expirableSnapshots, 1);
-                            if ($deleted < 1) {
-                                # No snapshots deleted, so stop trying
-                                $keepTrying = 0;
-                                printlog "ERROR: rsync reported a serious problem (2: $rc $rc2)\n", 1;
+        { 
+            # Wrap the call to rsync and associated houskeeping into a block
+            # and trap interrupts so that the block becomes (sort of) atomic,
+            # i.e. if rsync fails, the partial snapshot will be deleted
+            # before we give up completely.
+            local $SIG{INT}  = sub { $Quitting = 1; };
+            local $SIG{QUIT} = sub { $Quitting = 1; };
+            local $SIG{ABRT} = sub { $Quitting = 1; };
+            local $SIG{TERM} = sub { $Quitting = 1; };
+
+            my $maxTries = @expirableSnapshots + 1; 
+            my $keepTrying = $maxTries;  
+            my $deletions = 0;
+            my $tries = 0;
+            # Run rsync.
+            # If it fails for lack of space, delete an old snapshot and try again
+            while ($keepTrying and !$Quitting) {
+                $keepTrying -= 1;
+                $tries += 1;
+                printlog "Running rsync -- try " . ($maxTries-$keepTrying) . " of $maxTries\n", 2;
+                my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, $args, 2,2);
+                debug "after rsync rc=$rc rc2='$rc2'\n", 3;
+                given ($rc) {
+                    when (0) {
+                        $keepTrying = 0;
+                    }
+                    when (1) {
+                        printlog "ERROR: rsync failed complaining about options / usage\n", 1;
+                        $snapshotTime = undef;
+                        $keepTrying = 0;
+                        $succeeded = 0;
+                        last SOURCE;
+                    }
+                    when ([22, 23, 24]) {
+                        # Errors on some files such as problems with permissions,
+                        # or files that have vanished -- carry on
+                        $keepTrying = 0;
+                    }
+                    when ([12]) {
+                        # 12 e.g. snapshot dir not found or disk is full.
+                        # or ERROR: out of memory in flist_expand [receiver]
+                        #
+                        # See if the target disk is full, in which case
+                        # delete some snapshots and try again
+                        if ($rc2 eq 'diskfull') { 
+                            if (!$keepTrying) {
+                                # no space, and no more tries, 
+                                # so delete the partial snapshot
+                                debug "rR: deleting partial left cos disk full if any\n", 3;
+                                # DON'T delete it for now -- see below
+                                deleteSnapshot($dest, $snapshot);
+                                printlog "ERROR: snapshot was not complete, and has been deleted\n", 1;
+                                printlog "ERROR: rsync reported a serious problem (1: $rc $rc2)\n", 1;
                                 $succeeded = 0;
                                 last SOURCE;
                             } else {
-                                # More space freed, so try again
-                                printlog "NOTE: Old snapshot deleted successfully -- continuing\n";
-                                $deletions += $deleted;
-                                $deletionsAllSources += $deleted;
+                                # have another go
+                                printlog "WARNING: destination '$dest' is full -- will delete an old snapshot and try again\n";
+                                my $deleted = deleteOldSnapshots($dest, @expirableSnapshots, 1);
+                                if ($deleted < 1) {
+                                    # No snapshots deleted, so stop trying
+                                    $keepTrying = 0;
+                                    printlog "ERROR: rsync reported a serious problem (2: $rc $rc2)\n", 1;
+                                    $succeeded = 0;
+                                    last SOURCE;
+                                } else {
+                                    # More space freed, so try again
+                                    printlog "NOTE: Old snapshot deleted successfully -- continuing\n";
+                                    $deletions += $deleted;
+                                    $deletionsAllSources += $deleted;
+                                }
                             }
+                        } else {
+                            debug "Disk is not full, apparently -- some other error\n", 3;
+                            # so we've got half a snapshot -- delete it
+                            printlog "ERROR: rsync reported a serious problem (3: $rc $rc2)\n", 1;
+                            deleteSnapshot($dest, $snapshot);
+                            # FIXME is this a good idea -- maybe make it an option?
+                            #   -- make the default NO DELETE for remote destinations?
+                            printlog "ERROR: snapshot was not complete, and has been deleted\n", 1;
+                            $keepTrying = 0;
+                            $succeeded = 0;
+                            # (but maybe we'll try the next source)
                         }
-                    } else {
-                        debug "Disk is not full, apparently -- some other error\n", 3;
-                        # so we've got half a snapshot -- delete it
-                        printlog "ERROR: rsync reported a serious problem (3: $rc $rc2)\n", 1;
+                    }
+                    default {
+                        # 11 e.g. include-from file not found
+                        # 5 - failed to start rsyncd protocol
+                        # 255, various, including wrong ssh password, 
+                        # 2, 20 - SIGINT etc.
+                        printlog "ERROR: rsync reported a serious problem (4: $rc $rc2)\n", 1;
                         deleteSnapshot($dest, $snapshot);
-                        # FIXME is this a good idea -- maybe make it an option?
-                        #   -- make the default NO DELETE for remote destinations?
                         printlog "ERROR: snapshot was not complete, and has been deleted\n", 1;
                         $keepTrying = 0;
                         $succeeded = 0;
-                        # (but maybe we'll try the next source)
+                        last SOURCE;
                     }
                 }
-                default {
-                    # 11 e.g. include-from file not found
-                    # 5 - failed to start rsyncd protocol
-                    # 255, various, including wrong ssh password, 
-                    printlog "ERROR: rsync reported a serious problem (4: $rc $rc2)\n", 1;
-                    deleteSnapshot($dest, $snapshot);
-                    printlog "ERROR: snapshot was not complete, and has been deleted\n", 1;
-                    $keepTrying = 0;
-                    $succeeded = 0;
-                    last SOURCE;
-                }
-            }
-            debug "No more tries\n" if $keepTrying == 0;
-        }
+                debug "No more tries\n" if $keepTrying == 0;
+            } # while
 
-        if ($deletions) {
-            printlog "NOTE: $deletions expirable snapshots were deleted while processing source '$source'\n", 2;
-            printlog "(dry run: no snapshots actually deleted)\n", 2 if $Opt{'dry-run'};
-        }
+            if ($deletions) {
+                printlog "NOTE: $deletions expirable snapshots were deleted while processing source '$source'\n", 2;
+                printlog "(dry run: no snapshots actually deleted)\n", 2 if $Opt{'dry-run'};
+            }
+
+        } # block
 
     } # for each source
 
@@ -2983,7 +3003,7 @@ sub run ($\@) {
     my @cSpecs;
     @cSpecs = compileSpecs($snapshotTime, @specs, @S);
     displayCSpecs(@cSpecs, @S);
-
+    
     # Get the list of snapshots to be deleted
     my @D = getDeleteList(@S, @cSpecs);
 
@@ -3006,6 +3026,8 @@ sub run ($\@) {
     } else {
         printlog "Option 'no-snapshot' given -- no new snapshot will be created\n", 2;
     }
+
+    return if ($Quitting);
 
     if ($Opt{delete}) {
         deleteSnapshots($dest, @D, @cSpecs, $deleteNew);
@@ -3034,6 +3056,8 @@ sub systemcall ($$$$;$$) {
     my $stdoutRef   = shift;    # if specified, it's an array reference that will receive lines 
                                 # from stdout OR a file handle to store stdout lines in
     my $stderrRef   = shift;    # ditto for stderr
+    my $rc = 0;
+    my $rc2 = '';
     if ($Opt{'dry-run'}) {
         if ($cmd eq $Opt{'rsync-cmd'}) {
             # Special case: if cmd is 'rsync', pass dry-run to rsync and really run it
@@ -3046,45 +3070,61 @@ sub systemcall ($$$$;$$) {
     }
     debug "systemcall: cmd=|$cmd| args=|$args|\n", 5;
     printlog "Running command: $cmd $args\n", $stdoutLevel;
-    local *CATCHERR = IO::File->new_tmpfile;
-    my $pid = open3(gensym, \*CATCHOUT, ">&CATCHERR", "$cmd $args");
-    printlog "$cmd output:\n", $stdoutLevel unless $stdoutRef;
-    while (<CATCHOUT>) {
-        if (ref($stdoutRef) eq 'ARRAY') {
-            push @$stdoutRef, $_; 
-        } elsif (ref($stdoutRef) eq 'GLOB') {
-            print $stdoutRef $_;
-        } else {
-            printlog $_, $stdoutLevel;
+    {
+        # Get the return code instead of stopping if $cmd is interrupted
+        sub killgroup {
+            # Make sure all child processes are killed too.
+            my $sig = shift;
+            local $SIG{$sig} = 'IGNORE'; # don't kill ourselves again
+            $Quitting = 1; 
+            kill($sig, -$$);
+        };
+        local $SIG{INT}  = \&killgroup;
+        local $SIG{QUIT} = \&killgroup;
+        local $SIG{ABRT} = \&killgroup;
+        local $SIG{TERM} = \&killgroup;
+        local *CATCHERR = IO::File->new_tmpfile;
+        my $pid = open3(gensym, \*CATCHOUT, ">&CATCHERR", "$cmd $args");
+        # Deal with stdout from $cmd
+        printlog "$cmd output:\n", $stdoutLevel unless $stdoutRef;
+        while (<CATCHOUT>) {
+            if (ref($stdoutRef) eq 'ARRAY') {
+                push @$stdoutRef, $_; 
+            } elsif (ref($stdoutRef) eq 'GLOB') {
+                print $stdoutRef $_;
+            } else {
+                printlog $_, $stdoutLevel;
+            }
         }
-    }
-    waitpid($pid, 0);
-    my $rc = $?;
-    my $rc2 = '';
-    seek CATCHERR, 0, 0;
-    printlog "$cmd errors:\n", $stderrLevel unless $stderrRef;
-    while (<CATCHERR>) {
-        # scan for specific errors
-        if (/No space left on device/) {
-            $rc2 = 'diskfull';
-        }
-        if (ref($stderrRef) eq 'ARRAY') {
-            push @$stderrRef, $_; 
-        } elsif (ref($stderrRef) eq 'GLOB') {
-            print $stdoutRef $_;
-        } else {
-            printlog $_, $stderrLevel;
+        waitpid($pid, 0);
+        $rc = $?;
+        $rc2 = '';
+        # Deal with stderr from $cmd
+        seek CATCHERR, 0, 0;
+        printlog "$cmd errors:\n", $stderrLevel unless $stderrRef;
+        while (<CATCHERR>) {
+            # scan for specific errors
+            if (/No space left on device/) {
+                $rc2 = 'diskfull';
+            }
+            if (ref($stderrRef) eq 'ARRAY') {
+                push @$stderrRef, $_; 
+            } elsif (ref($stderrRef) eq 'GLOB') {
+                print $stdoutRef $_;
+            } else {
+                printlog $_, $stderrLevel;
+            }
         }
     }
     if ($rc == -1) {
-        printlog "Failed to execute command '$cmd': $!", 1;
+        printlog "Failed to execute command '$cmd': $!\n", 1;
     } elsif ($rc & 127) {
         my $sig = $rc & 127;
-        printlog "Command '$cmd' died with signal $sig", 1;
+        printlog "Command '$cmd' died with signal $sig\n", 1;
         #  ($? & 127),  ($? & 128) ? 'with' : 'without';
     } else {
         $rc = $rc >> 8;
-        printlog "Command '$cmd' exited with value $rc\n", 3 if $rc;
+        printlog "Command '$cmd' exited with value $rc\n", 1 if $rc;
     }
     return ($rc, $rc2);
 }
@@ -3532,15 +3572,27 @@ if ($Opt{test}) {
     testSuite();
 } elsif ($Opt{status}) {
     # Display the status of snapshots on each destination
-    foreach my $dest (@{$Opt{destination}}) {
+    #foreach my $dest (@{$Opt{destination}}) {
+    #    my @S = getSList($dest);
+    #    status($dest, @S);
+    #}
+    my $di = 0;
+    while (!$Quitting and $di <= $#{$Opt{destination}}) {
+        my $dest = ${$Opt{destination}}[$di];
         my @S = getSList($dest);
         status($dest, @S);
+        $di += 1;
     }
 } else {
     my @specs = processSpecs();
     # Run rsync to each of the destinations
-    foreach my $dest (@{$Opt{destination}}) {
-        run($dest, @specs);
+    #foreach my $dest (@{$Opt{destination}}) {
+    #    run($dest, @specs);
+    #}
+    my $di = 0;
+    while (!$Quitting and $di <= $#{$Opt{destination}}) {
+        run(${$Opt{destination}}[$di], @specs);
+        $di += 1;
     }
 }
 

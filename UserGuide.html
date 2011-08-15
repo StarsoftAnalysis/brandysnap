@@ -1,8 +1,6 @@
 <h1>Brandysnap User Guide</h1>
 
-<p>(expanded version of the Quick Start guide)</p>
-
-<p>This is preliminary documentation for the <a href="http://www.brandysnap.org">brandysnap</a> script, version 0.1.9, 11 August 2011.</p>
+<p>This is preliminary documentation for the <a href="http://www.brandysnap.org">brandysnap</a> script, version 0.1.11, 15 August 2011.</p>
 
 <hr />
 
@@ -411,11 +409,17 @@ skipping over the extra days, and not deleting any of their snapshots. </p>
 
 <p>That format is fixed -- it is used to identify snapshots; any directory that doesn't match that pattern will be ignored.</p>
 
+<h2>Interrupt handling</h2>
+
+<p>Brandysnap is designed to be robust: if it receives an interrupt signal, for example if the computer
+is shutting down, or the user has pressed ctrl-C, while rsync is running, it traps the signal and stops cleanly, 
+deleting any partially completed snapshot if possible.</p>
+
 <hr />
 
 <h2>Known Issues</h2>
 
-<p>As of 16 July 2011 and version 0.1.5, the following issues and bugs are known.</p>
+<p>As of 15 August July 2011 and version 0.1.11, the following issues and bugs are known.</p>
 
 <ul>
 <li>The option <code>--remote-rsync-cmd</code> can only be specified once, and applies to all remote sources and directories.</li>

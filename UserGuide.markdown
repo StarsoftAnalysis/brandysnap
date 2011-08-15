@@ -2,9 +2,7 @@
 Brandysnap User Guide
 =====================
 
-(expanded version of the Quick Start guide)
-
-This is preliminary documentation for the [brandysnap](http://www.brandysnap.org) script, version 0.1.9, 11 August 2011.
+This is preliminary documentation for the [brandysnap](http://www.brandysnap.org) script, version 0.1.11, 15 August 2011.
 
 **************************************************************
 This is part of the brandysnap documentation.</br>
@@ -372,12 +370,19 @@ where the 'template' is specified by the --template option.  For example
 
 That format is fixed -- it is used to identify snapshots; any directory that doesn't match that pattern will be ignored.
 
+Interrupt handling
+------------------
+
+Brandysnap is designed to be robust: if it receives an interrupt signal, for example if the computer
+is shutting down, or the user has pressed ctrl-C, while rsync is running, it traps the signal and stops cleanly, 
+deleting any partially completed snapshot if possible.
+
 ***********************************************************
 
 Known Issues
 ------------
 
-As of 16 July 2011 and version 0.1.5, the following issues and bugs are known.
+As of 15 August July 2011 and version 0.1.11, the following issues and bugs are known.
 
 * The option `--remote-rsync-cmd` can only be specified once, and applies to all remote sources and directories.
 * Under certain circumstances, rsync can fail when there are files that are hard-linked together
