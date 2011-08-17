@@ -77,7 +77,12 @@ my $Script = 'brandysnap';
 my $Quitting = 0;
 # Set the process group so that we can tidy up child processes:
 setpgrp(0, 0);
-# (Note that signals are not trapped here, only in runRsync() and systemcall() where it matters)
+# Ignore signals here; see also runRsync() systemCall() 
+$SIG{HUP}  = 'IGNORE';
+$SIG{INT}  = 'IGNORE';
+$SIG{QUIT} = 'IGNORE';
+$SIG{ABRT} = 'IGNORE';
+$SIG{TERM} = 'IGNORE';
 
 # turn off buffering on STDOUT to get full error messages
 $| = 1;
