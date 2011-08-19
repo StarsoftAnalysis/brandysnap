@@ -178,7 +178,7 @@ my @AllOpt = qw(
     expire-old
     bwlimit-in bwlimit-out
     status compress restart
-    allow-restart
+    allow-restart ldcount
     );
 my %AllOpt = (map {$_ => 1} @AllOpt);
 # Required options (not including those that have a default value)
@@ -525,6 +525,7 @@ sub processOptions () {
     $defopt{mbest}          = 31;         # preferred day within a month 1-31  
     $defopt{ybest}          = 366;        # preferred day in the year
     # 
+    $defopt{'allow-restart'} = 1;   
     $defopt{'bwlimit-in'}   = 0;        
     $defopt{'bwlimit-out'}  = 0;
     $defopt{calendar}       = 1;
@@ -534,7 +535,7 @@ sub processOptions () {
     $defopt{'dry-run'}      = 0;
     $defopt{'expire-old'}   = 0;          # expire oldest S's to make room, even when not unlimited
     $defopt{help}           = 0;
-    $defopt{'allow-restart'} = 1;   
+    $defopt{ldcount}        = 1;          # no. of link-dest options to create
     $defopt{restart}        = 0;
     $defopt{'rsync-cmd'}    = 'rsync';    # Should it be '/usr/bin/rsync'?
     $defopt{'rsync-opts'}   = '--hard-links --numeric-ids --archive --one-file-system';
@@ -558,6 +559,7 @@ sub processOptions () {
         my $GOwarning = '';
         local $SIG{__WARN__} = sub { $GOwarning = "@_"; }; # or $_[0]
         my $GOok = GetOptions (\%cmdopt,
+            'allow-restart!',
             'bwlimit-in=i',
             'bwlimit-out=i',
             'calendar!',
@@ -576,7 +578,7 @@ sub processOptions () {
             'help!',
             'include-from=s@',
             'include=s@',
-            'allow-restart!',
+            'ldcount=i',
             'lockfile=s',
             'logfile=s',
             'loglevel=i',
@@ -871,6 +873,17 @@ sub processOptions () {
     $Opt{weekstart} = 1 if $Opt{weekstart} < 1;
     $Opt{weekstart} = 7 if $Opt{weekstart} > 7;
 
+    # Link-dest count -- positive integer
+    $Opt{ldcount} = int($Opt{ldcount});
+    if ($Opt{ldcount} < 0) {
+        printlog "ERROR: Invalid option: 'ldcount' must be a positive whole number, " .
+            "not '$Opt{ldcount}'\n", 1;
+        $errorcount += 1;
+    } elsif ($Opt{ldcount} == 0) {
+        printlog "WARNING: Option 'ldcount' is zero -- no hard-linking will be done, " .
+            "and the snapshot created may be much larger than expected\n", 1;
+    }
+
     # Band-width limits
     # (0 = unlimited)
     if (!looks_like_number($Opt{'bwlimit-in'}) or
@@ -999,6 +1012,7 @@ Advanced options
 --delete       yes/no    delete no-longer-required snapshots (default: yes)
 --delete-cp    yes/no    delete even in current period (default: yes)
 --expire-old   yes/no    delete oldest snapshots when disk is full (default: no)
+--ldcount      n         number of --link-dest options to created (default: 1)
 --restart      yes/no    continue previous snapshot (default: no)
 --snapshot     yes/no    create new snapshots (default: yes)
 --status       yes/no    print a status report only (default: no)
@@ -2707,14 +2721,15 @@ sub getExpirableSnapshots (\@\@\@$) {
 
     debug "gES: \@S=@S \@specs=@specs \$now=$now\n", 3;
     my @expirable;
+    # The current snapshot and any that we're linking to
+    # are never expirable, so shift them off the local copy of @S
+    for my $i (0..$Opt{ldcount}) {
+        shift @S; 
+    }
     if (!@S) {
         debug "gES: no \@S, so no expirables\n", 3;
         return @expirable;
     }
-    # The current snapshot and the previous one that we're linking to
-    # are never expirable, so shift them off the local copy of @S
-    shift @S; 
-    shift @S; 
     if ($Opt{'expire-old'}) {
         # Any snapshot is expirable so return @S in oldest-first order.
         debug "gES: expire-old: they're all expirable EXCEPT the first two\n", 3;
@@ -2760,17 +2775,16 @@ sub newSnapshotTime ($) {
 
 #---------------------------------------------------------------------------------------------------
 
-sub runRsync ($\@$$) {
-    # Run rsync
-    # - using link-dest if there's a previous snapshot to link to
+sub runRsync ($\@$\@) {
+    # Run rsync.
     # If it fails for lack of disk space, delete expirable snapshots and try again.
     # Returns 1 for successful creation of a new snapshot.
     #my $ref = shift;
     my $dest               = shift;
     my @expirableSnapshots = @{(shift)};
     my $snapshotTime       = shift;
-    my $lastSnapshot       = shift // 0;
-    debug "runRsync: \@eS='@expirableSnapshots' lastS=$lastSnapshot sTime=$snapshotTime (" . 
+    my @S                  = @{(shift)};
+    debug "runRsync: \@eS='@expirableSnapshots' sTime=$snapshotTime (" . 
         time2stamp($snapshotTime) .")\n", 3;
 
     my $snapshot = snapshotName($snapshotTime);
@@ -2830,11 +2844,17 @@ sub runRsync ($\@$$) {
             }
         }
 
-        # Set up link-dest option if there is a previous snapshot
+        # Set up link-dest options if there are any previous snapshots
         # (as a relative path, which will work whether local or remote)
-        my $linkdest = $lastSnapshot ? 
-            "--link-dest='$upDir../$Opt{template}-" . time2stamp($lastSnapshot) . "/$subDir'" : 
-            '';
+        my $ldi = 1;
+        my $linkdest = '';
+        debug "rR: ldi=$ldi ldcount=$Opt{ldcount} \$#S=$#S updDir=$upDir\n", 3;
+        debug "rR: \@S: " . join(', ', map {time2stamp($_)} @S) . "\n", 3;
+        while ($ldi <= $Opt{ldcount} and $ldi <= $#S) {
+            $linkdest .= "--link-dest='$upDir../$Opt{template}-" . 
+                time2stamp($S[$ldi]) . "/$subDir' ";
+            $ldi += 1;
+        }
 
         # Set compression option
         my $compression = '';
@@ -3030,8 +3050,7 @@ sub run ($\@) {
             printlog "NOTE: new snapshot would be immediately deleted, so rsync will NOT be run\n", 1;
         } else {
             my @expirableSnapshots = getExpirableSnapshots(@S, @specs, @cSpecs, $snapshotTime);
-            my $rsyncOK = runRsync($dest, @expirableSnapshots, $snapshotTime, $S[1]);  
-            # ($S[1] will be undefined the first time)
+            my $rsyncOK = runRsync($dest, @expirableSnapshots, $snapshotTime, @S);  
             if (!$rsyncOK) {
                 # Failed to create a new snapshot, so re-do the list of deletions
                 @S = grep {$_ != $snapshotTime} @S;

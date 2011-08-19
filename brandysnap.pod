@@ -388,6 +388,14 @@ Include the 'current period' when considering which snapshots to delete.  See th
 
 Consider _all_ snapshots (oldest first) as expirable to make room when the destination is full. (default: B<no>)
 
+=item B<ldcount I<n>>
+
+Specify the number of previous snapshots that rsync will search looking for identical files to hard-link to.  
+Normally the default value of B<1> is ideal.  Set this value to B<0> to turn off rsync's B<--link-dest> option
+completely, but be aware that this will greatly increase the size of the new snapshot, and the time
+taken to create it (especially over the network).  Values greater than B<1> can be used in conjunction
+with [options yet to be implemented] to tune the behaviour of brandysnap. (default: B<1>)
+
 =item B<restart I<yes/no>>
 
 If a previous run of brandysnap was interrupted for any reason, use this option to re-do the same snapshot (simply by relying on rsync's ability to not copy files that have not changed).  Any files in the source that have changed since the previous run _will_ be updated.  If more than one destination is being used, rsync will be run for _all_ destinations, even if some of them completed successfully before.
@@ -484,7 +492,7 @@ The option B<--remote-rsync-cmd> can only be specified once, and applies to all 
 
 =item * 
 
-Under certain circumstances, rsync can fail when there are files that are hard-linked together
+Under certain circumstances, rsync can fail if the source contains files that are hard-linked together
 and for which you do not have read permission.  This is fixed in rsync 3.0.9 and later.  You can get
 round it by specifying B<--rsync-opts> with the usual options but omitting B<--hard-links>.
 
@@ -496,6 +504,11 @@ For example, when doing one snapshot a day with calendar mode turned off, if
 yesterday's snapshot was at 11:40:03, and today's is at 11:40:01, 
 then yesterday's will be considered as part of today, 
 because it is less than 24 hours ago, so it will be deleted.  A fix is planned to address this issue.
+
+=item *
+
+When using the B<--dry-run--> option, rsync sometimes displays an error message that C<--link-dest arg does not exist>.  
+This can be safely ignored.
 
 =back
 
