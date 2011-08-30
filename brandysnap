@@ -88,7 +88,7 @@ $SIG{TERM} = 'IGNORE';
 $| = 1;
 
 # version of this script
-my $Version = '0.1.12';
+my $Version = '0.1.12-renaming';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -193,6 +193,9 @@ my @BoolOpt  = qw(safe calendar snapshot delete delete-cp dry-run
 my @StringOpt = qw(config lockfile logfile template rsync-cmd rsync-opts remote-rsync-cmd);
 # Level options (take values 0..9)
 my @LevelOpt = qw(verbose loglevel debug);
+
+# Suffix used to indicate that a snapshot is incomplete
+my $partialSuffix = 'p';
 
 # Mainline code is at the end of this file
 
@@ -1060,9 +1063,21 @@ EOT
 
 sub remote ($) {
     # Returns 'true' if the path is considered by rsync to be remote
+    # (via daemon or just ssh)
     # (See rsync's man page re the significance of ':')
     my $path = shift;
     return index($path, ':') > -1;
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub remoteDaemon ($) {
+    # Returns 'true' if the path is considered by rsync to be remote
+    # via the rsync daemon
+    # (See rsync's man page re the significance of '::' and 'rsync://')
+    my $path = shift;
+    return 1 if $path =~ m|^rsync://|;
+    return index($path, '::') > -1;
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -1624,6 +1639,54 @@ sub deleteOldSnapshots ($\@;$) {
     }
     debug "dOS: deleted $deleted oldest snapshots\n", 3;
     return $deleted;
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub renameOrDeleteSnapshot ($$) {
+    # Rename or delete a snapshot, depending on options and errors.
+    #
+    # The standard thing to do is to rename a partially-complete snapshot
+    # so that we know that it's not complete; if renaming can't be done,
+    # then delete it.
+    # It's all a balance between keeping files that have been backed up,
+    # and not relying on snapshots that are incomplete.
+    #
+    # And it depends on whether the snapshot is local or remote: 
+    # in particular there is no way to rename a snapshot via the rsync daemon.
+    #
+    # Returns ... what?
+    
+    my $dest     = shift; 
+    my $snapshot = shift; # directory name or just time?
+
+    if ($Opt{'dry-run'}) {
+        printlog "Dry run: would have renamed '$snapshot' to '$snapshot-$partialSuffix'\n", 1;
+        return 0; # FIXME
+    }
+    if (remoteDaemon($dest)) {
+        # Can't rename, just delete it
+        deleteSnapshot($dest, $snapshot); # TODO needs to be the dir
+        return 0; # FIXME
+    }
+    if (remote($dest)) {
+        # Use SSH to rename it 
+        # (as usual, we're assuming passwords are taken care of elsewhere)
+
+        # Extract the host and path parts of the destination 
+        my ($host, $path) = $dest =~ /^([^:]*):(.*)$/;
+        my ($rc, $rc2) = systemcall('ssh', "$host mv '$path/$snapshot' '$path/$snapshot-$partialSuffix'", 1,1);
+        # returns 0 for success
+        printlog "rODS: remote: rc=$rc rc2=$rc2\n", 1;
+        return 0; # FIXME
+    }
+    # ...else, it's a local destination
+    #my ($rc, $rc2) = systemcall('mv', "$dest/$snapshot/ $dest/$snapshot-$partialSuffix/", 1,1);
+    debug "rODS: local: rename '$dest/$snapshot', '$dest/$snapshot-$partialSuffix'\n", 3;
+    my $rc = rename "$dest/$snapshot", "$dest/$snapshot-$partialSuffix";
+    # returns 1 for success
+    debug "rODS: rc=$rc\n", 3;
+    return 0; # FIXME
 }
 
 #===================================================================================================
@@ -3546,6 +3609,11 @@ sub testSuite {
             displayCSpecs(@cSpecs, @S);
         }
 
+        when (16) {
+            debug "Testing renameOrDeleteSnapshot\n";
+            renameOrDeleteSnapshot("/home/chris/tmp", "test1-20110716-164234");
+            renameOrDeleteSnapshot('chris@localhost:/home/chris/tmp', "test1-20110809-170104");
+        }
     }
 }
 
