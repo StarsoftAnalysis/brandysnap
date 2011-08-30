@@ -1655,38 +1655,46 @@ sub renameOrDeleteSnapshot ($$) {
     # And it depends on whether the snapshot is local or remote: 
     # in particular there is no way to rename a snapshot via the rsync daemon.
     #
-    # Returns ... what?
+    # Returns 1 for renamed, 2 for deleted, 0 for error
     
     my $dest     = shift; 
-    my $snapshot = shift; # directory name or just time?
+    my $snapshot = shift; # directory name 
+    my $rc = 0;
 
     if ($Opt{'dry-run'}) {
         printlog "Dry run: would have renamed '$snapshot' to '$snapshot-$partialSuffix'\n", 1;
-        return 0; # FIXME
+        return 1;
     }
+
     if (remoteDaemon($dest)) {
         # Can't rename, just delete it
-        deleteSnapshot($dest, $snapshot); # TODO needs to be the dir
-        return 0; # FIXME
+        $rc = deleteSnapshot($dest, $snapshot); 
+        return $rc == 0 ? 2 : 0; 
     }
+
     if (remote($dest)) {
         # Use SSH to rename it 
         # (as usual, we're assuming passwords are taken care of elsewhere)
-
-        # Extract the host and path parts of the destination 
         my ($host, $path) = $dest =~ /^([^:]*):(.*)$/;
         my ($rc, $rc2) = systemcall('ssh', "$host mv '$path/$snapshot' '$path/$snapshot-$partialSuffix'", 1,1);
         # returns 0 for success
         printlog "rODS: remote: rc=$rc rc2=$rc2\n", 1;
-        return 0; # FIXME
+        if ($rc) {
+            # Renaming failed, try deleting
+            # (because, for example, the user may have sudo permission for rsync but not for mv)
+            $rc = deleteSnapshot($dest, $snapshot);
+            return $rc == 0 ? 2 : 0; 
+        }
+        return $rc == 0 ? 1 : 0; 
     }
+
     # ...else, it's a local destination
-    #my ($rc, $rc2) = systemcall('mv', "$dest/$snapshot/ $dest/$snapshot-$partialSuffix/", 1,1);
     debug "rODS: local: rename '$dest/$snapshot', '$dest/$snapshot-$partialSuffix'\n", 3;
     my $rc = rename "$dest/$snapshot", "$dest/$snapshot-$partialSuffix";
     # returns 1 for success
+    # If renaming fails, deleting will too, so don't try.
     debug "rODS: rc=$rc\n", 3;
-    return 0; # FIXME
+    return $rc == 1 ? 1 : 0; 
 }
 
 #===================================================================================================
@@ -1874,7 +1882,7 @@ sub processSpecs () {
 
 #===================================================================================================
 
-sub getSList ($) {
+sub getSList ($) { # obsolete!  FIXME
     # Read in the existing snapshots, 
     # returning a list of snapshot dates extracted from their directory names.
     # Uses rsync in case the destination is remote.
@@ -1902,6 +1910,37 @@ sub getSList ($) {
         }
     }
     return reverse sort @S;
+}
+
+sub getSnapshotList ($) {
+    # Read in the existing snapshots, 
+    # returning a list of snapshot dates extracted from their directory names
+    # as a hash, with flags indicating partial snapshots
+    # Uses rsync in case the destination is remote.
+    my $dir = shift;
+    my $template = $Opt{template};  
+    my %S;
+    debug "gSL: dir=$dir template=$Opt{template}\n", 9;
+    my @listing;
+    my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
+        "--bwlimit=$Opt{'bwlimit-in'} '$dir/'", 9,9, \@listing);    
+    debug "gsL: rc=$rc listing: @listing n=" . scalar @listing ."\n", 9;
+    return %S if $rc;
+    foreach (@listing) {
+        chomp;
+        # Skip over any template with an invalid date (shouldn't happen)
+        if (/($template)-(?<Y>\d{4})(?<M>\d{2})(?<D>\d{2})-(?<h>\d{2})(?<m>\d{2})(?<s>\d{2})(?<ps>-$partialSuffix)?/) {
+            next if $+{M} < 1;
+            next if $+{M} > 12;
+            next if $+{D} < 1;
+            next if $+{D} > daysInYearMonth($+{Y}, $+{M}-1);
+            next if $+{h} > 23;
+            next if $+{m} > 59;
+            next if $+{s} > 60;
+            $S{stamp2time($_)} = ($+{ps} ? 1 : 0);
+        }
+    }
+    return %S;
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -2963,6 +3002,8 @@ sub runRsync ($\@$\@) {
                 my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, $args, 2,2);
                 debug "after rsync rc=$rc rc2='$rc2'\n", 3;
                 given ($rc) {
+                    # TODO better use of when() to reduce repeated code
+                    # and split 'last SOURCE' errors from others
                     when (0) {
                         $keepTrying = 0;
                     }
@@ -2984,8 +3025,12 @@ sub runRsync ($\@$\@) {
                         if ($Opt{'allow-restart'}) {
                             printlog "ERROR: rsync was interrupted -- partial snapshot will be kept to allow restart\n", 1;
                         } else {
-                            deleteSnapshot($dest, $snapshot);
-                            printlog "ERROR: rsync was interrupted -- partial snapshot has been deleted\n", 1;
+                            my $rc = renameOrDeleteSnapshot($dest, $snapshot);
+                            if ($rc) {
+                                printlog "ERROR: rsync was interrupted -- partial snapshot has been " .
+                                    $rc == 1 ? 'renamed' : 'deleted' .
+                                    "\n", 1;
+                            }
                         } 
                         $keepTrying = 0;
                         $succeeded = 0;
@@ -3023,14 +3068,20 @@ sub runRsync ($\@$\@) {
                             continue;
                         }
                     }
-                    default {
+                    default {   # (note the 'continue's above)
                         # 11 e.g. include-from file not found
                         # 5 - failed to start rsyncd protocol
                         # 255, various, including wrong ssh password, 
                         # -1
                         printlog "ERROR: rsync reported a serious problem ($rc / '$rc2')\n", 1;
-                        deleteSnapshot($dest, $snapshot);
-                        printlog "ERROR: snapshot was not complete, and has been deleted\n", 1;
+                        #deleteSnapshot($dest, $snapshot);
+                        #printlog "ERROR: snapshot was not complete, and has been deleted\n", 1;
+                        my $rc = renameOrDeleteSnapshot($dest, $snapshot);
+                        if ($rc) {
+                            printlog "ERROR: snapshot was not complete, and has been " .
+                                $rc == 1 ? 'renamed' : 'deleted' .
+                                "\n", 1;
+                        }
                         $keepTrying = 0;
                         $succeeded = 0;
                         $ExitCode = EXITRSYNC;
@@ -3610,9 +3661,16 @@ sub testSuite {
         }
 
         when (16) {
-            debug "Testing renameOrDeleteSnapshot\n";
+            print "Testing renameOrDeleteSnapshot\n";
+            $Opt{template} = 'test1';
             renameOrDeleteSnapshot("/home/chris/tmp", "test1-20110716-164234");
             renameOrDeleteSnapshot('chris@localhost:/home/chris/tmp', "test1-20110809-170104");
+            my %S = getSnapshotList("/home/chris/tmp");
+            print "%S: ";
+            foreach my $s (reverse sort keys %S) {
+                print "$s: $S{$s} ";
+            }
+            print "\n";
         }
     }
 }
