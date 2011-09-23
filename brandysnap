@@ -56,6 +56,7 @@ use Carp;
 $SIG{__DIE__} = sub { Carp::confess(@_) };
 
 # Prototyped subs: (which of these are needed?)
+# TODO put all subs here, or get things in the right order
 use subs qw(printit logit printlog debug warning
     mergeOpts snapshotName status
     processOptions validateOptions displayOptions
@@ -1884,7 +1885,7 @@ sub processSpecs () {
 
 #===================================================================================================
 
-sub getSList ($) { # obsolete!  FIXME
+sub getSListXX ($) { # obsolete!  FIXME
     # Read in the existing snapshots, 
     # returning a list of snapshot dates extracted from their directory names.
     # Uses rsync in case the destination is remote.
@@ -2008,75 +2009,6 @@ sub arrayDiff (\@\@) {
 
 #---------------------------------------------------------------------------------------------------
 
-sub getDeleteList (\@\@;$) {
-    # Given a list S of existing snapshots as a list of timestamps,
-    # return a list of the ones to be deleted
-    # by checking against the list of cSpecs.
-    my @S      = @{(shift)};
-    my @cSpecs = @{(shift)};
-    my $plevel = shift // 3;    # optional to override print level
-
-    my @allMatches;
-    my @D;
-    my $firstbeg = MAXTIME; 
-    my $lastend = 0;
-
-    debug "\ngetDeleteList: no. of snapshots = " . @S . ", no of cspecs = " . @cSpecs . "\n", 9;
-
-    foreach my $c (@cSpecs) {
-
-        my $beg = $c->{beg};
-        my $end = $c->{end};
-        debug "\ngDL processing cSpec $c->{label} beg=$beg end=$end\n", 9;
-
-        # find S's in that period
-        my @C; # candidates, just identified by timestamp
-        foreach my $s (@S) {
-            if ($s >= $beg and
-                $s <  $end    ) {
-                push @C, $s;
-            }
-        }
-        debug " candidates: @C total: " . @C . "\n", 9;
-        if (@C) {
-            # there are snapsnots in this period, so adjust the overall range
-            $firstbeg = $beg if $beg < $firstbeg;
-            $lastend  = $end if $end > $lastend;
-        }
-        if (!@C) {
-            # no candidates found
-            debug " no candidates found to match $c->{label} for period " . 
-                time2stamp($beg) . '...' . time2stamp($end) . "\n", 9;
-        } elsif (@C <= $c->{freq}) {
-            debug " no more candidates found than required for $c->{label}\n", 9;
-            push @allMatches, @C;
-        } else {
-            my @I = getMatchingSnapshots($beg, $end, $c->{best}, $c->{freq}, \@C, \@S);
-            push @allMatches, @I;
-            push @D, arrayDiff(@C, @I);
-            debug "storing keepers and deleters:\n\@C:   " . join(' ', sort @C) . "\n\@I:   " . 
-                join(' ', sort @I) . "\ndiff: " . join(' ', sort(arrayDiff(@C, @I))) . "\n", 9;
-            debug "\@D is now: " . join(' ', sort @D) . "\n", 9;
-        }
-
-    } # foreach spec
-
-    # Summarise keepers and deleters over whole period
-    printlog "\nSummary of all existing snapshots: " . time2stamp($firstbeg) . ' - ' . 
-        time2stamp($lastend) . "\n", $plevel; 
-    printlog "--------------------------------------------------------------------\n", $plevel;
-    #printlog "Snapshots: " . @S . ": @S\n", $plevel;
-    #printlog "Keepers:   " . @allMatches . ": @allMatches\n", $plevel;
-    #printlog "Deleters:  " . @D . ": @D\n", $plevel;
-    printlog @S . ' snapshots, ' . @allMatches . ' to be kept, ' . @D . " to be deleted\n", $plevel;
-    visualise($firstbeg, $lastend, 0, 0, 'Snap' => \@S, 'Keep' => \@allMatches, 'Del' => \@D)
-        if ($Opt{verbose} >= $plevel);
-
-    return @D;  # list of timestamps of snapshots to delete
-}
-
-#---------------------------------------------------------------------------------------------------
-
 sub snapshotAfter ($$) {
     # Return the snapshot after the one given (if any)
     my $this = shift;   # the snapshot to compare 
@@ -2091,6 +2023,32 @@ sub snapshotAfter ($$) {
 
 #---------------------------------------------------------------------------------------------------
 
+sub snapshotsInPeriod (\@$$;$) {
+    # Given a list of snapshot dates in descending order,
+    # and a period (beginning and end dates),
+    # return the number of snapshots in the period
+    # or an array of said snapshots, depending on the last parameter.
+    # (Can't use wantarray, because this often gets
+    # called in list context even when just the count is needed)
+    my @S   = @{(shift)};
+    my $beg = shift;
+    my $end = shift;
+    my $returnArray = shift // 0;
+    my $count = 0;
+    my @SIP;
+    foreach my $s (@S) {
+        last if $s < $beg;
+        $count += 1 if $s < $end;
+        push @SIP, $s if ($s < $end and $returnArray);
+    }
+    debug "snapshotsInPeriod $beg..$end " . time2stamp($beg) . '..' . time2stamp($end) . 
+        " = $count\n", 9;
+    return @SIP if $returnArray;
+    return $count;
+}
+
+#---------------------------------------------------------------------------------------------------
+
 sub snapshotBefore ($$) {
     # Return the snapshot before the one given (if any)
     my $this = shift;   # the snapshot to compare 
@@ -2099,6 +2057,22 @@ sub snapshotBefore ($$) {
         return $s if $s < $this;
     }
     return 0;   # None found, return 0 which will test as false
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub nextOldestSnapshot ($\@) {
+    # Return the first snapshot before the given date
+    # or 'undef' if there is no such snapshot
+    my $time = shift;
+    my @S    = @{(shift)};
+    my $nextOldest;
+    foreach my $s (@S) {
+        debug "nOS(" . time2stamp($time) . ") returning " . time2stamp($s) . "\n", 3 if $s < $time;
+        return $s if $s < $time;
+    }
+        debug "nOS(" . time2stamp($time) . ") returning undef\n", 3;
+    return undef;
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -2371,44 +2345,73 @@ sub bestOffset {
 
 #---------------------------------------------------------------------------------------------------
 
-sub snapshotsInPeriod (\@$$;$) {
-    # Given a list of snapshot dates in descending order,
-    # and a period (beginning and end dates),
-    # return the number of snapshots in the period
-    # or an array of said snapshots, depending on the last parameter.
-    # (Can't use wantarray, because this often gets
-    # called in list context even when just the count is needed)
-    my @S = @{(shift)};
-    my $beg = shift;
-    my $end = shift;
-    my $returnArray = shift // 0;
-    my $count = 0;
-    my @SIP;
-    foreach my $s (@S) {
-        last if $s < $beg;
-        $count += 1 if $s < $end;
-        push @SIP, $s if ($s < $end and $returnArray);
-    }
-    debug "snapshotsInPeriod $beg..$end " . time2stamp($beg) . '..' . time2stamp($end) . 
-        " = $count\n", 9;
-    return @SIP if $returnArray;
-    return $count;
-}
+sub getDeleteList (\%\@;$) {
+    # Given a list S of existing snapshots as a list of timestamps,
+    # return a list of the ones to be deleted
+    # by checking against the list of cSpecs.
+    my $Sref   = shift;
+    my @S      = reverse sort keys %$Sref;
+    my @cSpecs = @{(shift)};
+    my $plevel = shift // 3;    # optional to override print level
 
-#---------------------------------------------------------------------------------------------------
+    my @allMatches;
+    my @D;
+    my $firstbeg = MAXTIME; 
+    my $lastend = 0;
 
-sub nextOldestSnapshot ($\@) {
-    # Return the first snapshot before the given date
-    # or 'undef' if there is no such snapshot
-    my $time = shift;
-    my @S    = @{(shift)};
-    my $nextOldest;
-    foreach my $s (@S) {
-        debug "nOS(" . time2stamp($time) . ") returning " . time2stamp($s) . "\n", 3 if $s < $time;
-        return $s if $s < $time;
-    }
-        debug "nOS(" . time2stamp($time) . ") returning undef\n", 3;
-    return undef;
+    debug "\ngetDeleteList: no. of snapshots = " . @S . ", no of cspecs = " . @cSpecs . "\n", 5;
+
+    foreach my $c (@cSpecs) {
+
+        my $beg = $c->{beg};
+        my $end = $c->{end};
+        debug "\ngDL processing cSpec $c->{label} beg=$beg end=$end\n", 9;
+
+        # Find candidate snapshots in that period
+        #my @C; # candidates, just identified by timestamp
+        my @C = snapshotsInPeriod(@S, $beg, $end, 1);
+        #foreach my $s (@S) {
+        #    if ($s >= $beg and
+        #        $s <  $end    ) {
+        #        push @C, $s;
+        #    }
+        #}
+        debug " candidates: @C total: " . @C . "\n", 9;
+        if (@C) {
+            # there are snapsnots in this period, so adjust the overall range
+            $firstbeg = $beg if $beg < $firstbeg;
+            $lastend  = $end if $end > $lastend;
+        }
+        if (!@C) {
+            # no candidates found
+            debug " no candidates found to match $c->{label} for period " . 
+                time2stamp($beg) . '...' . time2stamp($end) . "\n", 9;
+        } elsif (@C <= $c->{freq}) {
+            debug " no more candidates found than required for $c->{label}\n", 9;
+            push @allMatches, @C;
+        } else {
+            my @I = getMatchingSnapshots($beg, $end, $c->{best}, $c->{freq}, @C, @S); 
+            push @allMatches, @I;
+            push @D, arrayDiff(@C, @I);
+            debug "storing keepers and deleters:\n\@C:   " . join(' ', sort @C) . "\n\@I:   " . 
+                join(' ', sort @I) . "\ndiff: " . join(' ', sort(arrayDiff(@C, @I))) . "\n", 9;
+            debug "\@D is now: " . join(' ', sort @D) . "\n", 9;
+        }
+
+    } # foreach spec
+
+    # Summarise keepers and deleters over whole period
+    printlog "\nSummary of all existing snapshots: " . time2stamp($firstbeg) . ' - ' . 
+        time2stamp($lastend) . "\n", $plevel; 
+    printlog "--------------------------------------------------------------------\n", $plevel;
+    #printlog "Snapshots: " . @S . ": @S\n", $plevel;
+    #printlog "Keepers:   " . @allMatches . ": @allMatches\n", $plevel;
+    #printlog "Deleters:  " . @D . ": @D\n", $plevel;
+    printlog @S . ' snapshots, ' . @allMatches . ' to be kept, ' . @D . " to be deleted\n", $plevel;
+    visualise($firstbeg, $lastend, 0, 0, 'Snap' => \@S, 'Keep' => \@allMatches, 'Del' => \@D)
+        if ($Opt{verbose} >= $plevel);
+
+    return @D;  # list of timestamps of snapshots to delete
 }
 
 #===================================================================================================
@@ -2765,11 +2768,12 @@ sub compileSpecs ($\@\%;$) {
 
 #---------------------------------------------------------------------------------------------------
 
-sub displayCSpecs (\@;\@) {
+sub displayCSpecs (\@;\%) {
     # Display the compiled specs
     my @cSpecs = @{(shift)};
-    my @S;
-    @S         = @{(shift)} if @_; # optional
+    my $Sref;
+    $Sref      = shift if @_;   # optional
+    my @S = reverse sort keys %$Sref if $Sref;
 
     printlog "\nCompiled specs:\n", 2;  
     printlog   "---------------\n", 2;
@@ -3168,10 +3172,10 @@ sub run ($\@) {
     # 'Compile' the specs taking account of current time and existing snapshots
     my @cSpecs;
     @cSpecs = compileSpecs($snapshotTime, @specs, %S);
-    displayCSpecs(@cSpecs, @S);
+    displayCSpecs(@cSpecs, %S);
     
     # Get the list of snapshots to be deleted
-    my @D = getDeleteList(@S, @cSpecs);
+    my @D = getDeleteList(%S, @cSpecs);
 
     # See if the new snapshot would be one of the ones deleted
     my $deleteNew = grep {$_ == $snapshotTime} @D;
@@ -3185,7 +3189,8 @@ sub run ($\@) {
             if (!$rsyncOK) {
                 # Failed to create a new snapshot, so re-do the list of deletions
                 @S = grep {$_ != $snapshotTime} @S;
-                @D = getDeleteList(@S, @cSpecs, 9);
+                # FIXME redo %S too!!!
+                @D = getDeleteList(%S, @cSpecs, 9);
             }
         }
     } else {
@@ -3341,66 +3346,66 @@ sub testSuite {
         when (2) {
             # 2
             my ($warnings, $errors, @specs) = parseSpecs('3d1');
-            my @S = reverse sort(
-                stamp2time('20110508-090000'),
-                stamp2time('20110508-100000'),
-                stamp2time('20110508-120000'),
-                stamp2time('20110508-180000'),
+            my %S = (
+                stamp2time('20110508-090000'),0,
+                stamp2time('20110508-100000'),0,
+                stamp2time('20110508-120000'),0,
+                stamp2time('20110508-180000'),0,
             );
-#            my @cSpecs = compileSpecs($now, @specs, @S);
-#            displayCSpecs(@cSpecs, @S);
+            my @cSpecs = compileSpecs($now, @specs, %S);
+            displayCSpecs(@cSpecs, %S);
         }
 
         when (3) {
             # 3 
             my ($warnings, $errors, @specs) = parseSpecs('3d1');
-            my @S = reverse sort(
-                stamp2time('20110508-030000'),
-                stamp2time('20110508-060000'),
-                stamp2time('20110508-100000'),
-                stamp2time('20110508-150000'),
-                stamp2time('20110508-180000'),
+            my %S = (
+                stamp2time('20110508-030000'),0,
+                stamp2time('20110508-060000'),0,
+                stamp2time('20110508-100000'),0,
+                stamp2time('20110508-150000'),0,
+                stamp2time('20110508-180000'),0,
             );
-#            my @cSpecs = compileSpecs($now, @specs, @S);
-#            displayCSpecs(@cSpecs, @S);
+            my @cSpecs = compileSpecs($now, @specs, %S);
+            displayCSpecs(@cSpecs, %S);
         }
 
         when (4) {
             # 4 - good test for combinations etc:
             my ($warnings, $errors, @specs) = parseSpecs('6d1');
-            my @S = reverse sort(
-                stamp2time('20110508-010000'),
-                stamp2time('20110508-011000'),
-                stamp2time('20110508-012000'),
-                stamp2time('20110508-013000'),
-                stamp2time('20110508-090000'),
-                stamp2time('20110508-120000'),
-                stamp2time('20110508-150000'),
-                stamp2time('20110508-180000'),
-                stamp2time('20110508-203000'),
-                stamp2time('20110508-210000'),
+            my %S = (
+                stamp2time('20110508-010000'),0,
+                stamp2time('20110508-011000'),0,
+                stamp2time('20110508-012000'),0,
+                stamp2time('20110508-013000'),0,
+                stamp2time('20110508-090000'),0,
+                stamp2time('20110508-120000'),0,
+                stamp2time('20110508-150000'),0,
+                stamp2time('20110508-180000'),0,
+                stamp2time('20110508-203000'),0,
+                stamp2time('20110508-210000'),0,
             );
-#            my @cSpecs = compileSpecs($now, @specs, @S);
-#            displayCSpecs(@cSpecs, @S);
+            my @cSpecs = compileSpecs($now, @specs, %S);
+            displayCSpecs(@cSpecs, %S);
         }
 
         when (5) {
             # 5 - more than one day's worth
             my ($warnings, $errors, @specs) = parseSpecs('8d1,7d3,1d4');
-            my @S = reverse sort(
-                stamp2time('20110506-010000'),
-                stamp2time('20110506-011000'),
-                stamp2time('20110506-012000'),
-                stamp2time('20110507-013000'),
-                stamp2time('20110507-090000'),
-                stamp2time('20110507-120000'),
-                stamp2time('20110508-150000'),
-                stamp2time('20110508-180000'),
-                stamp2time('20110508-203000'),
-                stamp2time('20110508-210000'),
+            my %S = (
+                stamp2time('20110506-010000'),0,
+                stamp2time('20110506-011000'),0,
+                stamp2time('20110506-012000'),0,
+                stamp2time('20110507-013000'),0,
+                stamp2time('20110507-090000'),0,
+                stamp2time('20110507-120000'),0,
+                stamp2time('20110508-150000'),0,
+                stamp2time('20110508-180000'),0,
+                stamp2time('20110508-203000'),0,
+                stamp2time('20110508-210000'),0,
             );
-#            my @cSpecs = compileSpecs($now, @specs, @S);
-#            displayCSpecs(@cSpecs, @S);
+            my @cSpecs = compileSpecs($now, @specs, %S);
+            displayCSpecs(@cSpecs, %S);
             # FIXED this doesn't give ideal result -- chooses B's that are too close together
             # FIXED: 1d1 -> middle one -- because of initial spacing
             #        2d1 -> first and one near the end -- why? because of initial spacing, so that's OK
@@ -3409,69 +3414,69 @@ sub testSuite {
         when (6) {
             # Test 6 -- example of bad choice with close snapshots:  
             my ($warnings, $errors, @specs) = parseSpecs('3w1');
-            my @S = reverse sort(
-                stamp2time('20110426-050000'),
-                stamp2time('20110427-050000'),
-                stamp2time('20110428-050000'),
-                stamp2time('20110428-060000'),
+            my %S = (
+                stamp2time('20110426-050000'),0,
+                stamp2time('20110427-050000'),0,
+                stamp2time('20110428-050000'),0,
+                stamp2time('20110428-060000'),0,
             );
-#            my @cSpecs = compileSpecs($now, @specs, @S);
-#            displayCSpecs(@cSpecs, @S);
+            my @cSpecs = compileSpecs($now, @specs, %S);
+            displayCSpecs(@cSpecs, %S);
         }
 
         when (7) {
             # Test 5 - testing goodPeriods
             my ($warnings, $errors, @specs) = parseSpecs('6d1,2d4,3w1');  # note total of 5d -- not run at w/e
-            my @S = reverse sort(
-                stamp2time('20110506-010000'),
-                stamp2time('20110506-020000'),
-                stamp2time('20110506-030000'),
-                stamp2time('20110506-040000'),
-                stamp2time('20110506-044000'),
-                stamp2time('20110506-050000'),
-                stamp2time('20110505-090000'),
-                stamp2time('20110505-140000'),
-                stamp2time('20110505-180000'),
-                stamp2time('20110504-090000'),
-                stamp2time('20110504-140000'),
-                stamp2time('20110504-180000'),
-                stamp2time('20110503-090000'),
-                stamp2time('20110503-140000'),
-                stamp2time('20110503-180000'),
-                stamp2time('20110501-090000'),
-                stamp2time('20110501-140000'),
-                stamp2time('20110501-180000'),
-                stamp2time('20110428-050000'),
-                stamp2time('20110427-050000'),
-                stamp2time('20110426-060000'),
-                stamp2time('20110426-040000'),
-                #   stamp2time('20100428-0500'),
+            my %S = (
+                stamp2time('20110506-010000'),0,
+                stamp2time('20110506-020000'),0,
+                stamp2time('20110506-030000'),0,
+                stamp2time('20110506-040000'),0,
+                stamp2time('20110506-044000'),0,
+                stamp2time('20110506-050000'),0,
+                stamp2time('20110505-090000'),0,
+                stamp2time('20110505-140000'),0,
+                stamp2time('20110505-180000'),0,
+                stamp2time('20110504-090000'),0,
+                stamp2time('20110504-140000'),0,
+                stamp2time('20110504-180000'),0,
+                stamp2time('20110503-090000'),0,
+                stamp2time('20110503-140000'),0,
+                stamp2time('20110503-180000'),0,
+                stamp2time('20110501-090000'),0,
+                stamp2time('20110501-140000'),0,
+                stamp2time('20110501-180000'),0,
+                stamp2time('20110428-050000'),0,
+                stamp2time('20110427-050000'),0,
+                stamp2time('20110426-060000'),0,
+                stamp2time('20110426-040000'),0,
+                #   stamp2time('20100428-0500'),0,
             )   ;
-#            my @cSpecs = compileSpecs($now, @specs, @S);
-#            displayCSpecs(@cSpecs, @S);
+            my @cSpecs = compileSpecs($now, @specs, %S);
+            displayCSpecs(@cSpecs, %S);
         }
 
         when (8) {
             # Test 8 - wonky spec
             my ($warnings, $errors, @specs) = parseSpecs('2d7,3w1,1d1,2m1'); # 2d7,3w1,1d1,2m1
-            my @S = reverse sort(
-                stamp2time('20110529-090000'), stamp2time('20110529-120000'), stamp2time('20110529-180000'),  # current
-                stamp2time('20110528-090000'), stamp2time('20110528-120000'), stamp2time('20110528-180000'),  # 2d7...
-                stamp2time('20110527-090000'), stamp2time('20110527-120000'), stamp2time('20110527-180000'),
-                stamp2time('20110526-090000'), stamp2time('20110526-120000'), stamp2time('20110526-180000'),
-                stamp2time('20110525-090000'), stamp2time('20110525-120000'), stamp2time('20110525-180000'),
-                stamp2time('20110524-090000'), stamp2time('20110524-120000'), stamp2time('20110524-180000'),
-                stamp2time('20110523-090000'), stamp2time('20110523-120000'), stamp2time('20110523-180000'),
-                stamp2time('20110522-090000'), stamp2time('20110522-120000'), stamp2time('20110522-180000'),  
-                stamp2time('20110521-090000'), stamp2time('20110521-120000'), stamp2time('20110521-180000'),  # 3w1...
-                stamp2time('20110518-090000'), stamp2time('20110518-120000'), stamp2time('20110518-180000'),
-                stamp2time('20110515-090000'), stamp2time('20110515-120000'), stamp2time('20110515-180000'),  # 1d1
-                stamp2time('20110512-090000'), stamp2time('20110512-090100'), stamp2time('20110512-090200'),  
-                stamp2time('20110512-090300'), stamp2time('20110512-090400'), stamp2time('20110512-090400'),  
-                stamp2time('20110512-090600'), stamp2time('20110512-090700'), stamp2time('20110512-090800'),  
-                stamp2time('20110512-090900'), stamp2time('20110512-091000'), stamp2time('20110512-091100'),  
-                stamp2time('20110403-090000'), stamp2time('20110403-120000'), stamp2time('20110403-180000'),  # 4m1
-                stamp2time('20110301-125900'),
+            my %S = (
+                stamp2time('20110529-090000'),0, stamp2time('20110529-120000'),0, stamp2time('20110529-180000'),0,  # current
+                stamp2time('20110528-090000'),0, stamp2time('20110528-120000'),0, stamp2time('20110528-180000'),0,  # 2d7...
+                stamp2time('20110527-090000'),0, stamp2time('20110527-120000'),0, stamp2time('20110527-180000'),0,
+                stamp2time('20110526-090000'),0, stamp2time('20110526-120000'),0, stamp2time('20110526-180000'),0,
+                stamp2time('20110525-090000'),0, stamp2time('20110525-120000'),0, stamp2time('20110525-180000'),0,
+                stamp2time('20110524-090000'),0, stamp2time('20110524-120000'),0, stamp2time('20110524-180000'),0,
+                stamp2time('20110523-090000'),0, stamp2time('20110523-120000'),0, stamp2time('20110523-180000'),0,
+                stamp2time('20110522-090000'),0, stamp2time('20110522-120000'),0, stamp2time('20110522-180000'),0,  
+                stamp2time('20110521-090000'),0, stamp2time('20110521-120000'),0, stamp2time('20110521-180000'),0,  # 3w1...
+                stamp2time('20110518-090000'),0, stamp2time('20110518-120000'),0, stamp2time('20110518-180000'),0,
+                stamp2time('20110515-090000'),0, stamp2time('20110515-120000'),0, stamp2time('20110515-180000'),0,  # 1d1
+                stamp2time('20110512-090000'),0, stamp2time('20110512-090100'),0, stamp2time('20110512-090200'),0,  
+                stamp2time('20110512-090300'),0, stamp2time('20110512-090400'),0, stamp2time('20110512-090400'),0,  
+                stamp2time('20110512-090600'),0, stamp2time('20110512-090700'),0, stamp2time('20110512-090800'),0,  
+                stamp2time('20110512-090900'),0, stamp2time('20110512-091000'),0, stamp2time('20110512-091100'),0,  
+                stamp2time('20110403-090000'),0, stamp2time('20110403-120000'),0, stamp2time('20110403-180000'),0,  # 4m1
+                stamp2time('20110301-125900'),0,
             );
             my $now = stamp2time('20110529-230000');
             debug "\nTest run on $now " . time2stamp($now) . "\n";
@@ -3479,39 +3484,43 @@ sub testSuite {
             debug "\nsafely, calendar:\n";
             $Opt{calendar} = 1;
             $Opt{safe} = 1;
-#            @cSpecs = compileSpecs($now, @specs, @S);
-            displayCSpecs(@cSpecs, @S);
+            @cSpecs = compileSpecs($now, @specs, %S);
+            displayCSpecs(@cSpecs, %S);
             debug "\nand now unsafely, calendar:\n";
             $Opt{calendar} = 1;
             $Opt{safe} = 0;
-#            @cSpecs = compileSpecs($now, @specs, @S);
-            displayCSpecs(@cSpecs, @S);
+            @cSpecs = compileSpecs($now, @specs, %S);
+            displayCSpecs(@cSpecs, %S);
             debug "\nand now safely, non-calendar:\n";
             $Opt{calendar} = 0;
             $Opt{safe} = 1;
-#            @cSpecs = compileSpecs($now, @specs, @S);
-            displayCSpecs(@cSpecs, @S);
+            @cSpecs = compileSpecs($now, @specs, %S);
+            displayCSpecs(@cSpecs, %S);
             debug "\nand now unsafely, non-calendar:\n";
             $Opt{calendar} = 0;
             $Opt{safe} = 0;
-#            @cSpecs = compileSpecs($now, @specs, @S);
-#            displayCSpecs(@cSpecs, @S);
-            #my @D = getDeleteList(@S, @cSpecs);
+            @cSpecs = compileSpecs($now, @specs, %S);
+            displayCSpecs(@cSpecs, %S);
+            #my @D = getDeleteList(%S, @cSpecs);
         }
 
         when (9) {
             sub genTests {
-                my @S;
+                my %S;
                 my (undef, undef, @specs) = parseSpecs('6d1,2d4,3w3,8m1'); # note total of 5d -- not run at w/e
                 # need enough snapshots to fill all specs and then some
                 for (my $date = stamp2time('20110401-070000'); $date < stamp2time('20110501-000000'); $date += HOUR*3) {
+                    #for (my $date = stamp2time('20110401-070000'); $date < stamp2time('20110402-000000'); $date += HOUR*3) {
                     printlog "\n" . '-' x 80;
                     printlog "\nTest run on $date " . time2stamp($date) . "\n";
-                    unshift @S, $date;  # make snapshot
-#                    my @cSpecs = compileSpecs $date+HOUR/2, @specs, @S;
-#                    displayCSpecs(@cSpecs, @S);
-#                    my @D = getDeleteList(@S, @cSpecs);
-#                    @S = arrayDiff(@S, @D); # 'delete' them
+                    $S{$date} = 0;  # make snapshot
+                    my @cSpecs = compileSpecs($date+HOUR/2, @specs, %S);
+                    displayCSpecs(@cSpecs, %S);
+                    my @D = getDeleteList(%S, @cSpecs);
+                    #@S = arrayDiff(%S, @D); # 'delete' them
+                    foreach my $d (@D) {
+                        delete $S{$d};
+                    }
                 }   
             }
             genTests;
@@ -3523,54 +3532,54 @@ sub testSuite {
             #   -- somehow measure evenness, and then reduce endness
             $Opt{logfile} = './bstest10.log';
             my (undef, undef, @specs) = parseSpecs('1h24,4d6');
-            my @S = reverse sort(
-                stamp2time('20110530-003000'), stamp2time('20110530-013000'), stamp2time('20110530-023000'),  
-                stamp2time('20110530-033000'), stamp2time('20110530-043000'), stamp2time('20110530-053000'),  
-                stamp2time('20110530-063000'), stamp2time('20110530-073000'), stamp2time('20110530-083000'),  
-                stamp2time('20110530-093000'), stamp2time('20110530-103000'), stamp2time('20110530-113000'),  
-                stamp2time('20110530-123000'), stamp2time('20110530-133000'), stamp2time('20110530-143000'),  
-                stamp2time('20110530-153000'), stamp2time('20110530-163000'), stamp2time('20110530-173000'),  
-                stamp2time('20110530-183000'), stamp2time('20110530-193000'), stamp2time('20110530-203000'),  
-                stamp2time('20110530-213000'), stamp2time('20110530-223000'), stamp2time('20110530-233000'),  
+            my %S = (
+                stamp2time('20110530-003000'),0, stamp2time('20110530-013000'),0, stamp2time('20110530-023000'),0,  
+                stamp2time('20110530-033000'),0, stamp2time('20110530-043000'),0, stamp2time('20110530-053000'),0,  
+                stamp2time('20110530-063000'),0, stamp2time('20110530-073000'),0, stamp2time('20110530-083000'),0,  
+                stamp2time('20110530-093000'),0, stamp2time('20110530-103000'),0, stamp2time('20110530-113000'),0,  
+                stamp2time('20110530-123000'),0, stamp2time('20110530-133000'),0, stamp2time('20110530-143000'),0,  
+                stamp2time('20110530-153000'),0, stamp2time('20110530-163000'),0, stamp2time('20110530-173000'),0,  
+                stamp2time('20110530-183000'),0, stamp2time('20110530-193000'),0, stamp2time('20110530-203000'),0,  
+                stamp2time('20110530-213000'),0, stamp2time('20110530-223000'),0, stamp2time('20110530-233000'),0,  
 
-                stamp2time('20110529-003000'), stamp2time('20110529-013000'), stamp2time('20110529-023000'),  
-                stamp2time('20110529-033000'), stamp2time('20110529-043000'), stamp2time('20110529-053000'),  
-                stamp2time('20110529-063000'), stamp2time('20110529-073000'), stamp2time('20110529-083000'),  
-                stamp2time('20110529-093000'), stamp2time('20110529-103000'), stamp2time('20110529-113000'),  
-                stamp2time('20110529-123000'), stamp2time('20110529-133000'), stamp2time('20110529-143000'),  
-                stamp2time('20110529-153000'), stamp2time('20110529-163000'), stamp2time('20110529-173000'),  
-                stamp2time('20110529-183000'), stamp2time('20110529-193000'), stamp2time('20110529-203000'),  
-                stamp2time('20110529-213000'), stamp2time('20110529-223000'), stamp2time('20110529-233000'),  
+                stamp2time('20110529-003000'),0, stamp2time('20110529-013000'),0, stamp2time('20110529-023000'),0,  
+                stamp2time('20110529-033000'),0, stamp2time('20110529-043000'),0, stamp2time('20110529-053000'),0,  
+                stamp2time('20110529-063000'),0, stamp2time('20110529-073000'),0, stamp2time('20110529-083000'),0,  
+                stamp2time('20110529-093000'),0, stamp2time('20110529-103000'),0, stamp2time('20110529-113000'),0,  
+                stamp2time('20110529-123000'),0, stamp2time('20110529-133000'),0, stamp2time('20110529-143000'),0,  
+                stamp2time('20110529-153000'),0, stamp2time('20110529-163000'),0, stamp2time('20110529-173000'),0,  
+                stamp2time('20110529-183000'),0, stamp2time('20110529-193000'),0, stamp2time('20110529-203000'),0,  
+                stamp2time('20110529-213000'),0, stamp2time('20110529-223000'),0, stamp2time('20110529-233000'),0,  
 
-                stamp2time('20110528-213000'), stamp2time('20110528-223000'), stamp2time('20110528-233000'),  
+                stamp2time('20110528-213000'),0, stamp2time('20110528-223000'),0, stamp2time('20110528-233000'),0,  
             )
             ;
             my $now = stamp2time('20110531-003000');
-#            my @cSpecs = compileSpecs $now, @specs, @S;
-#            displayCSpecs(@cSpecs, @S);
-#            my @D = getDeleteList(@S, @cSpecs);
+            my @cSpecs = compileSpecs $now, @specs, %S;
+            displayCSpecs(@cSpecs, %S);
+            my @D = getDeleteList(%S, @cSpecs);
         }
 
         when (11) {
             # testing 'grouping'
             $Opt{logfile} = './bstest11.log';
             my (undef, undef, @specs) = parseSpecs('1h9,4d6');
-            my @S = reverse sort(
-                stamp2time('20110530-093000'), stamp2time('20110530-103000'), stamp2time('20110530-113000'),  
-                stamp2time('20110530-123000'), stamp2time('20110530-133000'), stamp2time('20110530-143000'),  
-                stamp2time('20110530-153000'), stamp2time('20110530-163000'), stamp2time('20110530-173000'),  
+            my %S = (
+                stamp2time('20110530-093000'),0, stamp2time('20110530-103000'),0, stamp2time('20110530-113000'),0,  
+                stamp2time('20110530-123000'),0, stamp2time('20110530-133000'),0, stamp2time('20110530-143000'),0,  
+                stamp2time('20110530-153000'),0, stamp2time('20110530-163000'),0, stamp2time('20110530-173000'),0,  
 
-                stamp2time('20110529-093000'), stamp2time('20110529-103000'), stamp2time('20110529-113000'),  
-                stamp2time('20110529-123000'), stamp2time('20110529-133000'), stamp2time('20110529-143000'),  
-                stamp2time('20110529-153000'), stamp2time('20110529-163000'), stamp2time('20110529-173000'),  
+                stamp2time('20110529-093000'),0, stamp2time('20110529-103000'),0, stamp2time('20110529-113000'),0,  
+                stamp2time('20110529-123000'),0, stamp2time('20110529-133000'),0, stamp2time('20110529-143000'),0,  
+                stamp2time('20110529-153000'),0, stamp2time('20110529-163000'),0, stamp2time('20110529-173000'),0,  
 
-                stamp2time('20110528-213000'), stamp2time('20110528-223000'), stamp2time('20110528-233000'),  
+                stamp2time('20110528-213000'),0, stamp2time('20110528-223000'),0, stamp2time('20110528-233000'),0,  
             )
             ;
             my $now = stamp2time('20110531-003000');
-#            my @cSpecs = compileSpecs($now, @specs, @S);
-#            displayCSpecs(@cSpecs, @S);
-#            my @D = getDeleteList(@S, @cSpecs);
+            my @cSpecs = compileSpecs($now, @specs, %S);
+            displayCSpecs(@cSpecs, %S);
+            my @D = getDeleteList(%S, @cSpecs);
         }
 
         when (12) {
@@ -3590,29 +3599,29 @@ sub testSuite {
             #$Opt{dry-run} = 0;
             ##$Opt{delete} = 1;
             #
-            my @S = reverse sort(
-                stamp2time('20110530-093000'), stamp2time('20110530-103000'), stamp2time('20110530-113000'),  
-                stamp2time('20110529-123000'), stamp2time('20110529-133000'), stamp2time('20110529-143000'),  
-                stamp2time('20110528-153000'), stamp2time('20110528-163000'), stamp2time('20110528-173000'),  
+            my %S = (
+                stamp2time('20110530-093000'),0, stamp2time('20110530-103000'),0, stamp2time('20110530-113000'),0,  
+                stamp2time('20110529-123000'),0, stamp2time('20110529-133000'),0, stamp2time('20110529-143000'),0,  
+                stamp2time('20110528-153000'),0, stamp2time('20110528-163000'),0, stamp2time('20110528-173000'),0,  
 
-                stamp2time('20110527-093000'), stamp2time('20110527-103000'), stamp2time('20110527-113000'),  
-                stamp2time('20110526-123000'), stamp2time('20110526-133000'), stamp2time('20110526-143000'),  
-                stamp2time('20110525-153000'), stamp2time('20110525-163000'), stamp2time('20110525-173000'),  
+                stamp2time('20110527-093000'),0, stamp2time('20110527-103000'),0, stamp2time('20110527-113000'),0,  
+                stamp2time('20110526-123000'),0, stamp2time('20110526-133000'),0, stamp2time('20110526-143000'),0,  
+                stamp2time('20110525-153000'),0, stamp2time('20110525-163000'),0, stamp2time('20110525-173000'),0,  
 
-                stamp2time('20110524-213000'), stamp2time('20110524-223000'), stamp2time('20110524-233000'),  
+                stamp2time('20110524-213000'),0, stamp2time('20110524-223000'),0, stamp2time('20110524-233000'),0,  
             )
             ;
             my $dest = ${$Opt{destination}}[0];
             # generate initial state
-            foreach my $s (@S) {
+            foreach my $s (keys %S) {
                 #        debug " mkdir snapshotPath($dest, $s)\n";
                 mkdir snapshotPath($dest, $s);
             }
             my $now = stamp2time('20110531-003000');
             my ($warnings, $errors, @specs) = parseSpecs('2d'); 
-#            my @cSpecs = compileSpecs($now, @specs, @S);
-#            displayCSpecs(@cSpecs, @S);
-#            my @D = getDeleteList(@S, @cSpecs);
+            my @cSpecs = compileSpecs($now, @specs, %S);
+            displayCSpecs(@cSpecs, %S);
+            my @D = getDeleteList(%S, @cSpecs);
             #run($dest, @specs);
         }
 
@@ -3636,16 +3645,16 @@ sub testSuite {
             $Opt{debug} = 5;
             $Opt{calendar} = 1;
             #
-            my @S = reverse sort(
+            my %S = reverse sort(
                 # just one will do
-                stamp2time('20110627-093000'),
+                stamp2time('20110627-093000'),0,
             )
             ;
             my $dest = ${$Opt{destination}}[0];
             my $now = stamp2time('20110627-133000');
             my ($warnings, $errors, @specs) = parseSpecs($Opt{spec}); 
-#            my @cSpecs = compileSpecs($now, @specs, @S);
-#            displayCSpecs(@cSpecs, @S);
+            my @cSpecs = compileSpecs($now, @specs, %S);
+            displayCSpecs(@cSpecs, %S);
         }
 
         when (15) {
@@ -3656,25 +3665,25 @@ sub testSuite {
             $Opt{loglevel} = 3;
             $Opt{calendar} = 0;
             #
-            my @S = reverse sort(
+            my %S = (
                 # a good day, then space, then a good day
-                stamp2time('20110627-093000'), stamp2time('20110627-103000'), stamp2time('20110627-113000'),  
-                stamp2time('20110626-123000'), stamp2time('20110625-133000'), stamp2time('20110624-143000'),  
-                stamp2time('20110623-153000'), stamp2time('20110623-163000'), stamp2time('20110623-173000'),  
+                stamp2time('20110627-093000'),0, stamp2time('20110627-103000'),0, stamp2time('20110627-113000'),0,  
+                stamp2time('20110626-123000'),0, stamp2time('20110625-133000'),0, stamp2time('20110624-143000'),0,  
+                stamp2time('20110623-153000'),0, stamp2time('20110623-163000'),0, stamp2time('20110623-173000'),0,
 
                 # then space, then a good week
 #                stamp2time('20110622-093000'), stamp2time('20110619-103000'), stamp2time('20110612-113000'),  
-                stamp2time('20110604-143000'), stamp2time('20110604-133000'), stamp2time('20110604-123000'),  
+                stamp2time('20110604-143000'),0, stamp2time('20110604-133000'),0, stamp2time('20110604-123000'),0,
 
                 # then space forever...
-                stamp2time('20110524-213000'), stamp2time('20110424-223000'), stamp2time('20110324-233000'),  
+                stamp2time('20110524-213000'),0, stamp2time('20110424-223000'),0, stamp2time('20110324-233000'),0,
             )
             ;
             my $dest = ${$Opt{destination}}[0];
             my $now = stamp2time('20110627-133000');
             my ($warnings, $errors, @specs) = parseSpecs($Opt{spec}); 
-#            my @cSpecs = compileSpecs($now, @specs, @S);
-#            displayCSpecs(@cSpecs, @S);
+            my @cSpecs = compileSpecs($now, @specs, %S);
+            displayCSpecs(@cSpecs, %S);
         }
 
         when (16) {
