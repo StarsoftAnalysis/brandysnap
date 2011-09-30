@@ -1,5 +1,4 @@
 #!/usr/bin/perl
-# vim:tabstop=4 softtabstop=4 shiftwidth=4 expandtab 
 
 #########################################################################
 # brandysnap: rsync-based backup snapshot creation and management       #
@@ -131,7 +130,6 @@ my @PrevP = (
     '-0:0:-0:1:0:0:0',  # d
     '-0:0:-1:0:0:0:0',  # w
     '-0:1:-0:0:0:0:0',  # m
-#   '-0:3:-0:0:0:0:0',  # q
     '-1:0:-0:0:0:0:0',  # y
 );
 
@@ -180,6 +178,7 @@ my @AllOpt = qw(
     bwlimit-in bwlimit-out
     status compress restart
     allow-restart ldcount
+    all-failed some-failed
     );
 my %AllOpt = (map {$_ => 1} @AllOpt);
 # Required options (not including those that have a default value)
@@ -191,12 +190,13 @@ my %MultiOpt = qw(source 1  include 1  include-from 1
 my @BoolOpt  = qw(safe calendar snapshot delete delete-cp dry-run 
     stacktrace version expire-old status compress restart allow-restart);
 # String options (NOT the multi-value ones)
-my @StringOpt = qw(config lockfile logfile template rsync-cmd rsync-opts remote-rsync-cmd);
+my @StringOpt = qw(config lockfile logfile template rsync-cmd rsync-opts remote-rsync-cmd
+    all-failed some-failed);
 # Level options (take values 0..9)
 my @LevelOpt = qw(verbose loglevel debug);
 
 # Suffix used to indicate that a snapshot is incomplete
-my $partialSuffix = 'p';
+my $PartialSuffix = 'x';
 
 # Mainline code is at the end of this file
 
@@ -275,6 +275,21 @@ sub stripQuotes ($) {
     $string =~ s/\\#/#/g;               # UNescape # that had to be escaped for Config::General
     debug "sQ: |$temp| -> |$string|\n", 9;
     return $string;
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub dumpSnapshots (@) {
+    # return a list of snapshots as a string for printing
+    my @S = @_; #{(shift)};
+    return join(', ', map {time2stamp($_)} @S);
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub rsort (@) {
+    # Simple numeric reverse sort
+    return sort {$b <=> $a} @_;
 }
 
 #===================================================================================================
@@ -529,6 +544,7 @@ sub processOptions () {
     $defopt{mbest}          = 31;         # preferred day within a month 1-31  
     $defopt{ybest}          = 366;        # preferred day in the year
     # 
+    $defopt{'all-failed'}   = 'delete';
     $defopt{'allow-restart'} = 1;   
     $defopt{'bwlimit-in'}   = 0;        
     $defopt{'bwlimit-out'}  = 0;
@@ -545,6 +561,7 @@ sub processOptions () {
     $defopt{'rsync-opts'}   = '--hard-links --numeric-ids --archive --one-file-system';
     $defopt{safe}           = 1;        
     $defopt{snapshot}       = 1;
+    $defopt{'some-failed'}  = 'rename';
     $defopt{stacktrace}     = 1;
     $defopt{status}         = 0;
     $defopt{strict}         = 0;
@@ -563,6 +580,7 @@ sub processOptions () {
         my $GOwarning = '';
         local $SIG{__WARN__} = sub { $GOwarning = "@_"; }; # or $_[0]
         my $GOok = GetOptions (\%cmdopt,
+            'all-failed=s',
             'allow-restart!',
             'bwlimit-in=i',
             'bwlimit-out=i',
@@ -593,6 +611,7 @@ sub processOptions () {
             'remote-rsync-cmd=s',
             'safe!',
             'snapshot!',
+            'some-failed=s',
             'source=s@',
             'spec=s',
             'stacktrace!',
@@ -760,8 +779,9 @@ sub processOptions () {
                 $readableSources += 1; 
                 push @{$Opt{source}}, $src;
             } else {
-                printlog "WARNING: Source '$src' (option 'source') can not be read\n", 1;
+                printlog "WARNING: Source '$src' (option 'source') can not be read -- it will be ignored\n", 1;
                 $warningcount += 1;
+                # (and don't copy it to the final array)
             }
         }
         if ($readableSources == 0) {
@@ -906,8 +926,27 @@ sub processOptions () {
     } else {
         $Opt{'bwlimit-out'} = floor($Opt{'bwlimit-out'});
     }
+
+    # Actions to take if some or all sources are not backed up
+    foreach my $opt (qw(all-failed some-failed)) {
+        if (index('keep', lc($Opt{$opt})) == 0) {
+            $Opt{$opt} = 'keep';
+        } elsif (index('rename', lc($Opt{$opt})) == 0) {
+            $Opt{$opt} = 'rename';
+            if (anyDestRemoteDaemon()) {
+                printlog "ERROR: Invalid option: '$opt' can not be 'rename' when any\n", 1;
+                printlog "       of the destinations are using an rsync daemon\n", 1;
+                $errorcount += 1;
+            }
+        } elsif (index('delete', lc($Opt{$opt})) == 0) {
+            $Opt{$opt} = 'delete';
+        } else {
+            printlog "ERROR: Invalid option: '$opt' must be one of 'keep', 'rename', or 'delete'\n", 1;
+            $errorcount += 1;
+        }
+    }
     
-    # include, include-from, exclude, exclude-from
+    # Options 'include', 'include-from', 'exclude', 'exclude-from'
     # - these are not checked at all, just passed to rsync
 
     # spec is checked later
@@ -1013,6 +1052,14 @@ Rsync options
 --remote-rsync-cmd file  location of the rsync programme on the remote
                           computer (optional, no default)
 Advanced options
+--all-failed   keep|rename|delete   (default: delete)
+--some-failed  keep|rename|delete   (default: rename)
+                         what to do with the snapshot if all or some of the 
+                          sources are not copied successfully
+                          (values can be abbreviated)
+--allow-restart yes/no   keep the unfinished snapshot if brandysnap was
+                          interrupted (e.g. by ctrl-C or system shutdown)
+                          (default: yes)
 --delete       yes/no    delete no-longer-required snapshots (default: yes)
 --delete-cp    yes/no    delete even in current period (default: yes)
 --expire-old   yes/no    delete oldest snapshots when disk is full (default: no)
@@ -1021,9 +1068,6 @@ Advanced options
 --snapshot     yes/no    create new snapshots (default: yes)
 --status       yes/no    print a status report only (default: no)
 --strict       yes/no    use strict mode (default: no)
---allow-restart yes/no   keep the unfinished snapshot if brandysnap was
-                          interrupted (e.g. by ctrl-C or system shutdown)
-                          (default: yes)
 Development options
 --debug        0..3      amount of debugging information (default: 0)
 --stacktrace   yes/no    print a stack trace on error (default: yes)
@@ -1079,6 +1123,16 @@ sub remoteDaemon ($) {
     my $path = shift;
     return 1 if $path =~ m|^rsync://|;
     return index($path, '::') > -1;
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub anyDestRemoteDaemon () {
+    # Returns 'true' if any of the destinations are using an rsync daemon
+    foreach my $dest (@{$Opt{destination}}) {
+        return 1 if remoteDaemon($dest);
+    }
+    return 0;
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -1303,6 +1357,242 @@ sub snapshotInfoRemote ($$) {
 
 #===================================================================================================
 
+# Snapshot stuff 
+
+sub snapshotName ($\%) {
+    # Derive the snapshot name from its date
+    my $stamp = shift;
+    my %S     = %{(shift)};
+    my $suffix = $S{$stamp} ? "-$PartialSuffix" : '';
+    return "$Opt{template}-" . time2stamp($stamp) . $suffix;
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub snapshotPath ($$) {
+    # Derive the full snapshot path name from its date
+    # (NOT using catdir because that would mess up remote rsync paths)
+    my $dest     = shift;
+    my $snapshot = shift;   # either name or Unix date
+    my %emptyS; #        = %{(shift)};
+    return "$dest/" . snapshotName($snapshot, %emptyS) if (looks_like_number($snapshot));
+    return "$dest/$snapshot";
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub deleteSnapshot ($$) {
+    # Delete a snapshot directory, returning
+    # the number of errors encountered.
+    my $dest     = shift; 
+    my $snapshot = shift; # directory name
+    debug "deleteSnapshot: doing $dest/$snapshot\n", 3;
+    if ($Opt{'dry-run'}) {
+        printlog "Dry run: would have deleted '$snapshot'\n", 1;
+        return 0;
+    }
+    if (!$Opt{delete}) {
+        printlog "Not deleting snapshot $snapshot' because of option 'delete=no'\n", 1;
+        return 0;
+    }
+    if (remote($dest)) {
+        # Destination is remote -- use some rsync trickery to delete the snapshot
+        # (gleaned from http://lists.samba.org/archive/rsync/2010-October/025723.html)
+        # This involves copying an empty directory onto the snapshot, and
+        # removing the snapshot directory itself with filter cleverness.
+        my @output;
+        debug "dS: deleting snapshot the new way\n", 3;
+        #my $cmd = "$Opt{'rsync-cmd'} --dirs -f 'R /$snapshot/**' -f '-!r /$snapshot' --delete $EmptyDir/ $dest/";
+        my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
+            " --dirs -f 'R /$snapshot/**' -f '-!r /$snapshot' --delete $EmptyDir/ $dest/", 9,9, \@output);
+        #debug "dS: delete cmd: '$cmd'\n", 3;
+        #my $output = `$cmd`;
+        debug "dS: rsync output: \n@output", 3;
+        debug "dS: rsync returned $rc, $rc2\n", 3;
+        # This returns no error if the snapshot didn't exist, which is fine
+        if ($rc) {
+            printlog "ERROR: failed to delete remote snapshot '$snapshot' from '$dest' (code $rc)", 1,1;
+            return 1;
+        }
+        return 0;
+    }
+    # From here on, we're dealing with a local destination
+    my $snapshotPath = catdir($dest, $snapshot);
+    if (!-e $snapshotPath) {
+        # doesn't exist - no worries
+        return 0;
+    } 
+    if (!-d $snapshotPath) {    
+        debug " it's not a directory!\n", 3;
+        return 1;
+    }
+    remove_tree($snapshotPath, {error => \my $err});
+    if (@$err) {
+        printlog "ERROR: failed to delete snapshot $snapshot\n", 1,1;
+        for my $diag (@$err) {
+            my ($file, $message) = %$diag;
+            if ($file eq '') {
+                printlog "  general error: $message\n", 1,1;
+            }
+            else {
+                printlog "  problem unlinking $file: $message\n", 1,1;
+            }
+        }
+        # Rename the directory so that it's not considered in future runs
+        rename($snapshotPath, "$snapshotPath-part-deleted");  
+        return scalar @$err;
+    }
+    return 0;
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub deleteSnapshots ($\@\%\@$) {
+    # Delete the snapshots from the given list (latest first)
+    my $dest      = shift;
+    my @D         = @{(shift)}; # list of snapshots to delete
+    my %S         = %{(shift)}; # hash of all snapshots
+    my @cSpecs    = @{(shift)};
+    my $deleteNew = shift;
+    my $ci = 0; # index into @cSpecs
+    my $errors = 0;
+    debug "dS: list is: " . (join(' ', map {time2stamp($_)} @D)) . "\n";
+    foreach my $di (0..$#D) {
+        my $d = $D[$di];
+        # Find the cSpec matching this snapshot (just for the log message)
+        while (@cSpecs and $cSpecs[$ci]->{beg} > $d) { 
+            $ci += 1; 
+        }; 
+        if ($di == 0 and $deleteNew) {
+            # Don't need to delete the new snapshot because we avoided creating it
+            debug "dS: not deleting newest snapshot because it was not created\n", 3;
+        } else {
+           printlog "Deleting snapshot " . snapshotName($d, %S) . 
+                " because there are too many for spec " . $cSpecs[$ci]->{label} . "\n", 2;
+           $errors += deleteSnapshot($dest, snapshotName($d, %S));
+        }
+    }
+    #printlog "Total of $errors errors while deleting snapshots!\n", 1; 
+    return $errors;
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub deleteOldSnapshots ($\@\%;$) {
+    # Delete $n snapshots from the list of old ones
+    # (oldest ones first)
+    my $dest        = shift;
+    my $expirablesR = shift;      # use ref, don't copy array, so that it gets popped
+    my %S           = %{(shift)}; # hash of all snapshots
+    my $n           = shift // 1;
+    my $deleted = 0;
+    debug "dOS: n=$n  expirables=@$expirablesR\n";
+    while (@$expirablesR and $n > 0) {
+        my $e = pop @$expirablesR;
+        $n -= 1;
+        my $snapshotName = snapshotName($e, %S);
+        printlog "Expiring old snapshot $snapshotName\n", 2;
+        if (deleteDirectory($dest, $snapshotName) == 0) {
+            $deleted += 1;
+        }
+    }
+    debug "dOS: deleted $deleted oldest snapshots\n", 3;
+    return $deleted;
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub renameOrDeleteSnapshot ($$$) {
+    # Rename or delete a snapshot, depending on options and errors.
+    #
+    # The standard thing to do is to rename a partially-complete snapshot
+    # so that we know that it's not complete; if renaming can't be done,
+    # then delete it.
+    # It's all a balance between keeping files that have been backed up,
+    # and not relying on snapshots that are incomplete.
+    #
+    # And it depends on whether the snapshot is local or remote: 
+    # in particular there is no way to rename a snapshot via the rsync daemon.
+    #
+    # Returns 1 for renamed, 2 for deleted, 3 for kept, 0 for error     # FIXME is this required?
+    my $dest     = shift; 
+    my $snapshot = shift; # as directory name 
+    my $sourcesCompleted = shift;
+
+    my $rc = 0;
+
+    my $action;
+    if ($sourcesCompleted == 0) {
+        $action = $Opt{'all-failed'};
+        printlog "WARNING: all sources failed, will $action snapshot\n", 1;
+    } else {
+        $action = $Opt{'some-failed'};
+        printlog "WARNING: some sources failed, will $action snapshot\n", 1;
+    }
+
+    if ($action eq 'keep') {
+        printlog "NOTE: snapshot has been kept despite being incomplete\n", 1;
+        return 3;
+    }
+
+    if ($Opt{'dry-run'}) {
+        if ($action eq 'rename') {
+            printlog "Dry run: would have renamed incomplete snapshot '$snapshot' to '$snapshot-$PartialSuffix'\n", 1;
+            return 1;
+        } else {
+            printlog "Dry run: would have deleted incomplete snapshot '$snapshot'\n", 1;
+            return 2;
+        }
+    }
+
+    if (remoteDaemon($dest)) {
+        # Can't rename, just delete it (see all-failed/some-failed option validation)
+        $rc = deleteSnapshot($dest, $snapshot);
+        return $rc == 0 ? 2 : 0; 
+    }
+
+    if (remote($dest)) {
+        my ($rc, $rc2);
+        if ($action eq 'rename') {
+            # Use SSH to rename it 
+            # (as usual, we're assuming passwords are taken care of elsewhere)
+            my ($host, $path) = $dest =~ /^([^:]*):(.*)$/;
+            ($rc, $rc2) = systemcall('ssh', "$host mv '$path/$snapshot' '$path/$snapshot-$PartialSuffix'", 1,1);
+            #my ($rc, $rc2) = (1,'');
+            # returns 0 for success
+            debug "rODS: remote: rc=$rc rc2=$rc2\n", 1;
+            printlog "WARNING: snapshot could not be renamed -- it will be deleted instead\n", 1;
+        }
+        if ($action eq 'delete' or $rc) {
+            # Delete requested, or renaming failed
+            # (because, for example, the user may have sudo permission for rsync but not for mv)
+            printlog "NOTE: snapshot deleted\n", 1;
+            $rc = deleteSnapshot($dest, $snapshot);
+            return $rc == 0 ? 2 : 0; 
+        }
+        printlog "NOTE: snapshot renamed to '$dest/$snapshot-$PartialSuffix'\n", 1;
+        return $rc == 0 ? 1 : 0; 
+    }
+
+    # ...else, it's a local destination
+    if ($action eq 'rename') {
+        printlog "NOTE: snapshot renamed to '$dest/$snapshot-$PartialSuffix'\n", 1;
+        $rc = rename "$dest/$snapshot", "$dest/$snapshot-$PartialSuffix";
+        # returns 1 for success
+        # If renaming fails, deleting will too, so don't try.
+        debug "rODS: rc=$rc\n", 1;
+        return $rc == 1 ? 1 : 0; 
+    }
+    if ($action eq 'delete') {
+        debug "rODS: local: delete\n", 1;
+        $rc = deleteSnapshot($dest, $snapshot);
+        debug "rODS: rc=$rc\n", 1;
+        return $rc == 0 ? 2 : 0; 
+    }
+}
+
+#===================================================================================================
+
 sub status ($\%;\@) {
     # Print a status report on existing snapshots
     my $dest   = shift;
@@ -1328,22 +1618,23 @@ sub status ($\%;\@) {
         printlog "No snapshots found\n", $plevel,$llevel;
     }
     else {
-        #my $nameLength = max(length(snapshotName($S[0])), 35);
+        #my $nameLength = max(length(snapshotName($S[0]), %S), 35);
         my $nameLength = max(length($Opt{template}) + 18, 35);
         printlog sprintf("%-*s   %13s %13s   %s\n", $nameLength, 'Snapshot (most recent first)', 
             'Delete Size', 'Real Size', @cSpecs ? 'Spec' : ''), $plevel,$llevel;
         printlog sprintf("%-*s   %13s %13s   %s\n", $nameLength, '-'x$nameLength, 
-            '-----------', '-----------', @cSpecs ? '-----' : ''), $plevel,$llevel;
-        foreach my $s (reverse sort keys %S) {
-            my $name = snapshotName($s);
-            $name .= "-$partialSuffix" if $S{$s};
+            '-----------', '-----------', @cSpecs ? '--------' : ''), $plevel,$llevel;
+        foreach my $s (rsort keys %S) {
+            my $name = snapshotName($s, %S);
             my ($dsize, $asize) = snapshotInfo($dest, $name);
-            # find which cSpec applies
-            while (@cSpecs and $cSpecs[$ci]->{beg} > $s) { 
-                $ci += 1; 
-            }; 
             my $label = '';
-            $label = $cSpecs[$ci]->{label} if @cSpecs;
+            if (!$S{$s}) {
+                # find which cSpec applies (complete snapshots only)
+                while (@cSpecs and $cSpecs[$ci]->{beg} > $s) { 
+                    $ci += 1; 
+                }; 
+                $label = $cSpecs[$ci]->{label} if @cSpecs;
+            }
             printlog sprintf("%-*s   %13s %13s   %s\n", $nameLength, $name, 
                 bytes($dsize), bytes($asize), $label), $plevel,$llevel;
             $count += 1;
@@ -1503,201 +1794,6 @@ sub countPeriods ($$$) {
     my $delta = DateCalc(time2date($beg), time2date($end));
     my $count = Delta_Format($delta, "%$DMperiod[$periodn]ys");
     return sprintf(($count == floor($count)) ? "%d" : "%.1f", $count);  # 1dp if not an integer
-}
-
-#===================================================================================================
-
-# Filing system stuff 
-
-sub snapshotName ($) {
-    # Derive the snapshot name from its date
-    my $stamp = shift;
-    return "$Opt{template}-" . time2stamp($stamp);
-}
-
-#---------------------------------------------------------------------------------------------------
-
-sub snapshotPath ($$) {
-    # Derive the full snapshot path name from its date
-    # (NOT using catdir because that would mess up remote rsync paths)
-    my $dest     = shift;
-    my $snapshot = shift;   # either name or Unix date
-    return "$dest/" . snapshotName($snapshot) if (looks_like_number($snapshot));
-    return "$dest/$snapshot";
-}
-
-#---------------------------------------------------------------------------------------------------
-
-sub deleteSnapshot ($$) {
-    # Delete a snapshot directory, returning
-    # the number of errors encountered.
-    my $dest     = shift; 
-    my $snapshot = shift; # directory name
-    debug "deleteSnapshot: doing $dest/$snapshot\n", 3;
-    if ($Opt{'dry-run'}) {
-        printlog "Dry run: would have deleted '$snapshot'\n", 1;
-        return 0;
-    }
-    if (!$Opt{delete}) {
-        printlog "Not deleting snapshot $snapshot' because of option 'delete=no'\n", 1;
-        return 0;
-    }
-    if (remote($dest)) {
-        # Destination is remote -- use some rsync trickery to delete the snapshot
-        # (gleaned from http://lists.samba.org/archive/rsync/2010-October/025723.html)
-        # This involves copying an empty directory onto the snapshot, and
-        # removing the snapshot directory itself with filter cleverness.
-        my @output;
-        debug "dS: deleting snapshot the new way\n", 3;
-        #my $cmd = "$Opt{'rsync-cmd'} --dirs -f 'R /$snapshot/**' -f '-!r /$snapshot' --delete $EmptyDir/ $dest/";
-        my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
-            " --dirs -f 'R /$snapshot/**' -f '-!r /$snapshot' --delete $EmptyDir/ $dest/", 9,9, \@output);
-        #debug "dS: delete cmd: '$cmd'\n", 3;
-        #my $output = `$cmd`;
-        debug "dS: rsync output: \n@output", 3;
-        debug "dS: rsync returned $rc, $rc2\n", 3;
-        # This returns no error if the snapshot didn't exist, which is fine
-        if ($rc) {
-            printlog "ERROR: failed to delete remote snapshot '$snapshot' from '$dest' (code $rc)", 1,1;
-            return 1;
-        }
-        return 0;
-    }
-    # From here on, we're dealing with a local destination
-    my $snapshotPath = catdir($dest, $snapshot);
-    if (!-e $snapshotPath) {
-        # doesn't exist - no worries
-        return 0;
-    } 
-    if (!-d $snapshotPath) {    
-        debug " it's not a directory!\n", 3;
-        return 1;
-    }
-    remove_tree($snapshotPath, {error => \my $err});
-    if (@$err) {
-        printlog "ERROR: failed to delete snapshot $snapshot\n", 1,1;
-        for my $diag (@$err) {
-            my ($file, $message) = %$diag;
-            if ($file eq '') {
-                printlog "  general error: $message\n", 1,1;
-            }
-            else {
-                printlog "  problem unlinking $file: $message\n", 1,1;
-            }
-        }
-        # Rename the directory so that it's not considered in future runs
-        rename($snapshotPath, "$snapshotPath-part-deleted");  
-        return scalar @$err;
-    }
-    return 0;
-}
-
-#---------------------------------------------------------------------------------------------------
-
-sub deleteSnapshots ($\@\@$) {
-    # Delete the snapshots from the given list (latest first)
-    my $dest      = shift;
-    my @D         = @{(shift)};
-    my @cSpecs    = @{(shift)};
-    my $deleteNew = shift;
-    my $ci = 0; # index into @cSpecs
-    my $errors = 0;
-    debug "dS: list is: " . (join(' ', map {time2stamp($_)} @D)) . "\n";
-    foreach my $di (0..$#D) {
-        my $d = $D[$di];
-        while (@cSpecs and $cSpecs[$ci]->{beg} > $d) { 
-            $ci += 1; 
-        }; 
-        if ($di == 0 and $deleteNew) {
-            # Don't need to delete the new snapshot because we avoided creating it
-            debug "dS: not deleting newest snapshot because it was not created\n", 3;
-        } else {
-           printlog "Deleting snapshot " . snapshotName($d) . 
-                " because there are too many for spec " . $cSpecs[$ci]->{label} . "\n", 2;
-           $errors += deleteSnapshot($dest, snapshotName($d));
-        }
-    }
-    #printlog "Total of $errors errors while deleting snapshots!\n", 1; 
-    return $errors;
-}
-
-#---------------------------------------------------------------------------------------------------
-
-sub deleteOldSnapshots ($\@;$) {
-    # Delete $n snapshots from the list of old ones
-    # (oldest ones first)
-    my $dest        = shift;
-    my $expirablesR = shift;    # use ref, don't copy array, so that it gets popped
-    my $n           = shift // 1;
-    my $deleted = 0;
-    debug "dOS: n=$n  expirables=@$expirablesR\n";
-    while (@$expirablesR and $n > 0) {
-        my $e = pop @$expirablesR;
-        $n -= 1;
-        my $snapshotName = snapshotName($e);
-        printlog "Expiring old snapshot $snapshotName\n", 2;
-        if (deleteSnapshot($dest, $snapshotName) == 0) {
-            $deleted += 1;
-        }
-    }
-    debug "dOS: deleted $deleted oldest snapshots\n", 3;
-    return $deleted;
-}
-
-#---------------------------------------------------------------------------------------------------
-
-sub renameOrDeleteSnapshot ($$) {
-    # Rename or delete a snapshot, depending on options and errors.
-    #
-    # The standard thing to do is to rename a partially-complete snapshot
-    # so that we know that it's not complete; if renaming can't be done,
-    # then delete it.
-    # It's all a balance between keeping files that have been backed up,
-    # and not relying on snapshots that are incomplete.
-    #
-    # And it depends on whether the snapshot is local or remote: 
-    # in particular there is no way to rename a snapshot via the rsync daemon.
-    #
-    # Returns 1 for renamed, 2 for deleted, 0 for error
-    
-    my $dest     = shift; 
-    my $snapshot = shift; # directory name 
-    my $rc = 0;
-
-    if ($Opt{'dry-run'}) {
-        printlog "Dry run: would have renamed '$snapshot' to '$snapshot-$partialSuffix'\n", 1;
-        return 1;
-    }
-
-    if (remoteDaemon($dest)) {
-        # Can't rename, just delete it
-        $rc = deleteSnapshot($dest, $snapshot); 
-        return $rc == 0 ? 2 : 0; 
-    }
-
-    if (remote($dest)) {
-        # Use SSH to rename it 
-        # (as usual, we're assuming passwords are taken care of elsewhere)
-        my ($host, $path) = $dest =~ /^([^:]*):(.*)$/;
-        my ($rc, $rc2) = systemcall('ssh', "$host mv '$path/$snapshot' '$path/$snapshot-$partialSuffix'", 1,1);
-        # returns 0 for success
-        printlog "rODS: remote: rc=$rc rc2=$rc2\n", 1;
-        if ($rc) {
-            # Renaming failed, try deleting
-            # (because, for example, the user may have sudo permission for rsync but not for mv)
-            $rc = deleteSnapshot($dest, $snapshot);
-            return $rc == 0 ? 2 : 0; 
-        }
-        return $rc == 0 ? 1 : 0; 
-    }
-
-    # ...else, it's a local destination
-    debug "rODS: local: rename '$dest/$snapshot', '$dest/$snapshot-$partialSuffix'\n", 3;
-    $rc = rename "$dest/$snapshot", "$dest/$snapshot-$partialSuffix";
-    # returns 1 for success
-    # If renaming fails, deleting will too, so don't try.
-    debug "rODS: rc=$rc\n", 3;
-    return $rc == 1 ? 1 : 0; 
 }
 
 #===================================================================================================
@@ -1885,36 +1981,6 @@ sub processSpecs () {
 
 #===================================================================================================
 
-sub getSListXX ($) { # obsolete!  FIXME
-    # Read in the existing snapshots, 
-    # returning a list of snapshot dates extracted from their directory names.
-    # Uses rsync in case the destination is remote.
-    my $dir = shift;
-    my $template = $Opt{template};  
-    my @S;
-    debug "gSL: dir=$dir template=$Opt{template}\n", 9;
-    my @listing;
-    my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
-        "--bwlimit=$Opt{'bwlimit-in'} '$dir/'", 9,9, \@listing);    
-    debug "gsL: rc=$rc listing: @listing n=" . scalar @listing ."\n", 9;
-    return @S if $rc;
-    foreach (@listing) {
-        chomp;
-        #debug "_: $_\n";
-        if (/($template)-(?<Y>\d{4})(?<M>\d{2})(?<D>\d{2})-(?<h>\d{2})(?<m>\d{2})(?<s>\d{2})/) {
-            next if $+{M} < 1;
-            next if $+{M} > 12;
-            next if $+{D} < 1;
-            next if $+{D} > daysInYearMonth($+{Y}, $+{M}-1);
-            next if $+{h} > 23;
-            next if $+{m} > 59;
-            next if $+{s} > 59;
-            push @S, stamp2time($_);
-        }
-    }
-    return reverse sort @S;
-}
-
 sub getSnapshotList ($) {
     # Read in the existing snapshots, 
     # returning a list of snapshot dates extracted from their directory names
@@ -1932,7 +1998,7 @@ sub getSnapshotList ($) {
     foreach (@listing) {
         chomp;
         # Skip over any template with an invalid date (shouldn't happen)
-        if (/($template)-(?<Y>\d{4})(?<M>\d{2})(?<D>\d{2})-(?<h>\d{2})(?<m>\d{2})(?<s>\d{2})(?<ps>-$partialSuffix)?/) {
+        if (/($template)-(?<Y>\d{4})(?<M>\d{2})(?<D>\d{2})-(?<h>\d{2})(?<m>\d{2})(?<s>\d{2})(?<ps>-$PartialSuffix)?/) {
             next if $+{M} < 1;
             next if $+{M} > 12;
             next if $+{D} < 1;
@@ -2009,16 +2075,31 @@ sub arrayDiff (\@\@) {
 
 #---------------------------------------------------------------------------------------------------
 
-sub snapshotAfter ($$) {
-    # Return the snapshot after the one given (if any)
+sub snapshotBefore ($$) {
+    # Return the good snapshot before the one given (if any)
     my $this = shift;   # the snapshot to compare 
-    my $sR   = shift;   # array ref of all snapshots in descending order
+    my $sR   = shift;   # hash ref of all snapshots 
+    foreach my $s (rsort keys %$sR) {
+        next if $$sR{$s}; # skip the bad ones
+        return $s if $s < $this;
+    }
+    return 0;   # None found, return 0 which will test as false
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub snapshotAfter ($$) {
+    # Return the good snapshot after the one given (if any)
+    my $this = shift;   # the snapshot to compare 
+    my $sR   = shift;   # hash ref of all snapshots 
     my $prevs = 0; # If none found, return 0 which will test as false
-    foreach my $s (@$sR) {
+    foreach my $s (rsort keys %$sR) {
+        next if $$sR{$s}; # skip the bad ones
         return $prevs if $s <= $this;
         $prevs = $s;
     }
-    return $$sR[-1];
+    return $$sR{$prevs} ? 0 : $prevs; # all snapshots are after the date given, 
+                                      # so return the first one (if it's good)
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -2049,18 +2130,6 @@ sub snapshotsInPeriod (\@$$;$) {
 
 #---------------------------------------------------------------------------------------------------
 
-sub snapshotBefore ($$) {
-    # Return the snapshot before the one given (if any)
-    my $this = shift;   # the snapshot to compare 
-    my $sR   = shift;   # array ref of all snapshots in descending order
-    foreach my $s (@$sR) {
-        return $s if $s < $this;
-    }
-    return 0;   # None found, return 0 which will test as false
-}
-
-#---------------------------------------------------------------------------------------------------
-
 sub nextOldestSnapshot ($\@) {
     # Return the first snapshot before the given date
     # or 'undef' if there is no such snapshot
@@ -2077,7 +2146,7 @@ sub nextOldestSnapshot ($\@) {
 
 #---------------------------------------------------------------------------------------------------
 
-sub getMatchingSnapshots ($$$$\@\@) {
+sub getMatchingSnapshots ($$$$\@\%) {
     # Get a list of snapshots in the given period that
     # are the best match for the ideal/expected snapshots
     my $beg    = shift;         # beginning of period 
@@ -2086,11 +2155,10 @@ sub getMatchingSnapshots ($$$$\@\@) {
     my $freq   = shift;         # number of snapshots in period
     my @S      = @{(shift)};    # array of timestamps of existing snapshots (just those in range)
                                 # in descending order
-    my $allSR  = shift;         # array ref of ALL existing snapshots
-                                # also in descending order
+    my $allSR  = shift;         # hash ref of ALL existing snapshots
 
     my $range  = $end - $beg;   # the length of the period in seconds
-    debug "getMatchingSnapshots: beg=$beg end=$end best=$best freq=$freq\n", 4;
+    debug "getMatchingSnapshots: beg=$beg end=$end range=$range best=$best freq=$freq\n", 3;
     debug " (first S = $S[0]    last S = $S[-1]  -- in descending order)\n", 9;
 
     # Special case: if freq is zero, delete all snapshots (i.e. keep none)
@@ -2116,22 +2184,32 @@ sub getMatchingSnapshots ($$$$\@\@) {
     #       - could even make it an option
     my @closeness;
     my $endfactor1 = 0.5;
-    my $endfactor2 = 0.5; #20;
+    my $endfactor2 = 0.5; 
+    #my $badfactor = $range * 1.0; # treat incomplete snapshots as less influential  # Tuning
+    # FIXME what would be better here is to only consider closeness to good snapshots
+    #  - i.e. when considering a good one, measure closeness to other good ones
+    #         - if there are none -- no, just ignore the bad ones
+    #         when considering a bad one, do the same
+    #         DONE - this is now handled by snapshotBefore/After
     my $totalC = 0;
     for my $s (0..$#S) {
-        # Get distance to previous/next snapshot 
+        # Get distance to previous/next good snapshot 
         # (may be beyond current period)
         my $previous = snapshotBefore($S[$s], $allSR);
         my $next     = snapshotAfter($S[$s], $allSR);
         # If previous/next don't exist, calculate a closeness value
         # that is scaled to $range with a tuning factor
+        # And if previous or next are incomplete, 
+        # pretend their further away.
         my $p = $previous ? abs($S[$s] - $previous) : $range * $endfactor1;
         my $n = $next     ? abs($next  - $S[$s])    : $range * $endfactor2;
-        debug "gMS: previous=$previous next=$next p=$p n=$n\n", 6;
         # Check if they're infinitely close! 
         # (shouldn't happen because snapshots can't share a date)
-        push @closeness, ($p+$n == 0) ? 9999999999 : $range/($p+$n);
-        $totalC += $closeness[-1];
+        my $closeness = ($p+$n == 0) ? 9999999999 : $range/($p+$n);
+        debug "gMS: this=" . time2stamp($S[$s]) . " previous=" . time2stamp($previous) . 
+            " next=" . time2stamp($next) . " p=$p n=$n c=$closeness\n", 1;
+        push @closeness, $closeness;
+        $totalC += $closeness;
     }
     my $averageC = $totalC / scalar @S;
     
@@ -2178,6 +2256,15 @@ sub getMatchingSnapshots ($$$$\@\@) {
         $sbFactor1 = 0;
     }
 
+    # Further adjustment to weighting of incomplete snapshots
+    # as a 'distance' in time -- makes incomplete snapshots always a bad match
+    # Factor '1.0' may need tuning
+    my @badoffset;
+    foreach my $s (@S) {
+        push @badoffset, ($$allSR{$s} ? $range * 1.0 : 0);
+    }
+    debug "gMS: badoffsets: @badoffset\n", 3;
+
     # Make sure best isn't out of range
     # (this is needed sometimes even if the closeness adjustment above isn't used)
     # (the -1 is to make sure $best is IN the range)
@@ -2202,7 +2289,7 @@ sub getMatchingSnapshots ($$$$\@\@) {
     @I = ();
     # put the best one in first
     $I[0] = $bestTime;
-    debug "gMB: best=$I[0]\n", 8;
+    debug "gMS: best=$I[0]\n", 8;
     if ($freq > 1) {  # more than one ideal to place, not just the best one
         my $strategy = 1;
         #my $offset = $best % $interval;
@@ -2263,7 +2350,7 @@ sub getMatchingSnapshots ($$$$\@\@) {
     debug " ideals: @I total: " . @I . "\n";
 
     # Generate all combinations of the ideal number of snapshots
-    # out of the existing snapshots, then calculate a score for each
+    # out of the existing snapshots, then calculate a score for each combination
     # and choose the one with the best score
     # FIXME -- maybe we should leave first and last fixed if they're already aligned
     my @combs = combinations(scalar @I, 0..$#S); 
@@ -2275,14 +2362,12 @@ sub getMatchingSnapshots ($$$$\@\@) {
         # Note: ideals are already in ascending order, need to sort the comb
         # (in descending order of indexes, i.e. ascending order of dates)
         @$comb = sort {$b <=> $a} @$comb;
-        if ($ci < 2) {
-            debug "comparing these ideals: \n", 9;
-            debug "  @I\n", 9;
-            debug " with these snapshots:\n", 9;
-            debug "  " . join(' ', map {$S[$_]} @$comb) . "\n", 9;
-        }
         foreach my $i (0..$#I) {
-            $combtotal += abs($I[$i] - $S[$$comb[$i]]) * $closeness[$$comb[$i]];
+            my $c = $$comb[$i];
+            my $score = abs($I[$i] - $S[$c]) * $closeness[$c] + $badoffset[$c];
+            debug "gMS: i=$i comb[i]=$c I[i]=$I[$i] S[c]=$S[$c] I-S=". abs($I[$i]-$S[$c]) .
+                " clo=$closeness[$c] bo=$badoffset[$c] score=$score\n", 3;
+            $combtotal += $score;
         }
         if ($combtotal < $minct) {
             $minct = $combtotal;
@@ -2290,14 +2375,12 @@ sub getMatchingSnapshots ($$$$\@\@) {
         }
         $ci += 1;
     }
-    debug " " . @combs . " combinations tested\n", 3;
-    #debug "    best combination, with total $minct/$combtotal[$mincti], is " . 
-    #   join(' ', sort {$combs[$mincti]}) . "\n";
-    debug " best combination, with total $minct, is " . 
+    debug "gMS: " . @combs . " combinations tested\n", 3;
+    debug "gMS: best combination, with total $minct, is " . 
         join(' ', sort {$b <=> $a} @{$combs[$mincti]}) . "\n", 3;
     my @bestMatches = sort(map {$S[$_]} @{$combs[$mincti]});    # convert indexes back to snapshots 
-    debug " best matches: @bestMatches total: " . @bestMatches . "\n", 3;
-    debug " closeness (old to new): " . join(' ', (map {sprintf("%.2f", $_)} reverse @closeness)) . 
+    debug "gMS: best matches: @bestMatches total: " . @bestMatches . "\n", 3;
+    debug "gMS: closeness (old to new): " . join(' ', (map {sprintf("%.2f", $_)} reverse @closeness)) . 
         ", average: $averageC\n", 3;
     visualise($oldBeg, $oldEnd, 1, $bestTime, 
         'Snap'  => \@S, 
@@ -2349,66 +2432,98 @@ sub getDeleteList (\%\@;$) {
     # Given a list S of existing snapshots as a list of timestamps,
     # return a list of the ones to be deleted
     # by checking against the list of cSpecs.
-    my $Sref   = shift;
-    my @S      = reverse sort keys %$Sref;
+    # Plan 
+    # - get separate lists of good and incomplete S's
+    # - for each cSpec
+    # -   if there are enough good ones, delete all the bad ones
+    # -   if more than enough (good+bad), choose as before, but with extra weighting on the bad
+    #       
+    my %S      = %{(shift)};
+    #my @S      = rsort keys %S;
     my @cSpecs = @{(shift)};
     my $plevel = shift // 3;    # optional to override print level
+
+    # Separate the complete ('good') from the incomplete ('bad') snapshots
+    my @Sgood;
+    my @Sbad;
+    foreach my $s (rsort keys %S) {
+        if ($S{$s}) {
+            push @Sbad, $s;
+        } else {
+            push @Sgood, $s;
+        }
+    }
 
     my @allMatches;
     my @D;
     my $firstbeg = MAXTIME; 
     my $lastend = 0;
 
-    debug "\ngetDeleteList: no. of snapshots = " . @S . ", no of cspecs = " . @cSpecs . "\n", 5;
+    debug "\ngetDeleteList: Sgood: " . dumpSnapshots(@Sgood) . "\n", 3;
+    debug   "               Sbad:  " . dumpSnapshots(@Sbad)  . "\n", 3;
+    debug   "               no of cspecs = " . @cSpecs . "\n", 3;
 
     foreach my $c (@cSpecs) {
 
         my $beg = $c->{beg};
         my $end = $c->{end};
-        debug "\ngDL processing cSpec $c->{label} beg=$beg end=$end\n", 9;
+        debug "\ngDL processing cSpec $c->{label} freq=$c->{freq} range " . pair2range($beg, $end) . "\n", 3;
 
         # Find candidate snapshots in that period
-        #my @C; # candidates, just identified by timestamp
-        my @C = snapshotsInPeriod(@S, $beg, $end, 1);
-        #foreach my $s (@S) {
-        #    if ($s >= $beg and
-        #        $s <  $end    ) {
-        #        push @C, $s;
-        #    }
-        #}
-        debug " candidates: @C total: " . @C . "\n", 9;
-        if (@C) {
+        my @Cgood = snapshotsInPeriod(@Sgood, $beg, $end, 1);
+        my @Cbad  = snapshotsInPeriod(@Sbad , $beg, $end, 1);
+        debug "gDL: good candidates: " . dumpSnapshots(@Cgood) . " total: " . @Cgood . "\n", 3;
+        debug "gDL: bad  candidates: " . dumpSnapshots(@Cbad) . " total: " . @Cbad . "\n", 3;
+        if (@Cgood or @Cbad) {
             # there are snapsnots in this period, so adjust the overall range
             $firstbeg = $beg if $beg < $firstbeg;
             $lastend  = $end if $end > $lastend;
         }
-        if (!@C) {
+        if (!@Cgood and !@Cbad) {
             # no candidates found
-            debug " no candidates found to match $c->{label} for period " . 
-                time2stamp($beg) . '...' . time2stamp($end) . "\n", 9;
-        } elsif (@C <= $c->{freq}) {
-            debug " no more candidates found than required for $c->{label}\n", 9;
-            push @allMatches, @C;
+            debug "gDL: no candidates found to match $c->{label} for period " . 
+                time2stamp($beg) . '...' . time2stamp($end) . "\n", 3;
+        } elsif (@Cgood + @Cbad <= $c->{freq}) {
+            debug "gDL: no more candidates found than required for $c->{label}\n", 3;
+            push @allMatches, rsort (@Cgood, @Cbad);
         } else {
-            my @I = getMatchingSnapshots($beg, $end, $c->{best}, $c->{freq}, @C, @S); 
-            push @allMatches, @I;
-            push @D, arrayDiff(@C, @I);
-            debug "storing keepers and deleters:\n\@C:   " . join(' ', sort @C) . "\n\@I:   " . 
-                join(' ', sort @I) . "\ndiff: " . join(' ', sort(arrayDiff(@C, @I))) . "\n", 9;
-            debug "\@D is now: " . join(' ', sort @D) . "\n", 9;
+            if (@Cgood >= $c->{freq}) {
+                # enough good candidates: start by deleting all the bad ones
+                debug "gDL: enough good -- deleting all bad\n", 3;
+                push @D, @Cbad;
+                @Cbad = ();
+            }
+            if (@Cgood + @Cbad > $c->{freq}) {
+                # more than enough candidates (including bad ones)
+                # - choose the ones to delete
+                my @Call = rsort(@Cgood, @Cbad);
+                my @I = getMatchingSnapshots($beg, $end, $c->{best}, $c->{freq}, @Call, %S); 
+                push @allMatches, @I;
+                push @D, arrayDiff(@Call, @I);
+                debug "gDL: storing keepers and deleters:\n\@Call:   " . dumpSnapshots(@Call) . "\n\@I:   " . 
+                    dumpSnapshots(@I) . "\ndiff: " . dumpSnapshots(arrayDiff(@Call, @I)) . "\n", 3;
+                debug "gDL: \@D is now: " . dumpSnapshots(@D) . "\n", 3;
+            } else {
+                debug "gDL:  no more than required after deleting bad ones\n", 3;
+            }
         }
 
     } # foreach spec
+
+    # sort @D cos may not have been added in order
+    @D = rsort @D;
 
     # Summarise keepers and deleters over whole period
     printlog "\nSummary of all existing snapshots: " . time2stamp($firstbeg) . ' - ' . 
         time2stamp($lastend) . "\n", $plevel; 
     printlog "--------------------------------------------------------------------\n", $plevel;
-    #printlog "Snapshots: " . @S . ": @S\n", $plevel;
-    #printlog "Keepers:   " . @allMatches . ": @allMatches\n", $plevel;
-    #printlog "Deleters:  " . @D . ": @D\n", $plevel;
-    printlog @S . ' snapshots, ' . @allMatches . ' to be kept, ' . @D . " to be deleted\n", $plevel;
-    visualise($firstbeg, $lastend, 0, 0, 'Snap' => \@S, 'Keep' => \@allMatches, 'Del' => \@D)
+    printlog((@Sgood+@Sbad) . ' snapshots, ' . @allMatches . ' to be kept, ' . @D . " to be deleted\n", 
+        $plevel);
+    visualise($firstbeg, $lastend, 0, 0, 
+        'SnapG' => \@Sgood, 
+        'SnapB' => \@Sbad, 
+        'Keep' => \@allMatches, 
+        'Del' => \@D)
         if ($Opt{verbose} >= $plevel);
 
     return @D;  # list of timestamps of snapshots to delete
@@ -2579,21 +2694,25 @@ sub compileSpecs ($\@\%;$) {
     # 'Compile' the specs into a list that takes into account
     # the current date and existing snapshots.
     # Works backwards in time from 'now'.
-    # TODO use the partial flags in %S
     my $now        = shift;
     my @specs      = @{(shift)};
     my %S          = %{(shift)};    
-    my @S          = reverse sort keys %S;    # most recent first
-    my $precompile = shift // 0;
+    my $quiet       = shift // 0;   
+
+    # Make @S here just contain the good ones
+    my @S;
+    foreach my $s (rsort keys %S) {
+        push @S, $s if !$S{$s};
+    }
 
     my $pl = 2;
-    if ($precompile and !$Opt{debug}) {
-        # In 'pre-compile' mode, override the print and log levels
+    if ($quiet and !$Opt{debug}) {
+        # In 'quiet' mode, override the print and log levels
         # so that the user doesn't see unnecessary messages
         # (there may only be debug messages here later) TODO
         $pl = 9;
     }    
-    debug "compileSpecs: now=" . time2stamp($now) . " precompile=$precompile\n", 3;
+    debug "compileSpecs: now=" . time2stamp($now) . " quiet=$quiet\n", 3;
 
     my $firstSpec = 1;  # first spec applies to the current period
     my @cSpecs;
@@ -2610,7 +2729,7 @@ sub compileSpecs ($\@\%;$) {
         my $gpCount = 0;
 
         if ($Opt{calendar}) {
-            # beginning of period containing (end-1)  getPeriod(end, period)
+            # beginning of period containing (end-1)
             ($beg, undef) = getPeriod($end - 1, $spec->{periodn});
         } else {
             # period that ends now
@@ -2773,7 +2892,13 @@ sub displayCSpecs (\@;\%) {
     my @cSpecs = @{(shift)};
     my $Sref;
     $Sref      = shift if @_;   # optional
-    my @S = reverse sort keys %$Sref if $Sref;
+    my @S;
+    if ($Sref) {
+        # create array of only the good snapshots
+        foreach my $s (rsort keys %$Sref) {
+            push @S, $s if !$$Sref{$s};
+        }
+    }
 
     printlog "\nCompiled specs:\n", 2;  
     printlog   "---------------\n", 2;
@@ -2825,7 +2950,7 @@ sub getExpirableSnapshots (\%\@\@$) {
     # because they fall within range of the last 'unlimited' spec,
     # or because the expire-old option allows it
     my %S      = %{(shift)};
-    my @S      = reverse sort keys %S;
+    my @S      = rsort keys %S;
     my @specs  = @{(shift)};
     my @cSpecs = @{(shift)};
     my $now    = shift;
@@ -2849,7 +2974,7 @@ sub getExpirableSnapshots (\%\@\@$) {
         }
     }
     debug "gES: expiring partials: " . join(' ', map {time2stamp($_)} @expirable) . "\n", 3;
-    @S = reverse sort keys %S;  # now with no partial snapshots
+    @S = rsort keys %S;  # now with no partial snapshots
     # Return if there are none left
     return @expirable if !@S;
     if ($Opt{'expire-old'}) {
@@ -2897,7 +3022,7 @@ sub newSnapshotTime ($) {
 
 #---------------------------------------------------------------------------------------------------
 
-sub runRsync ($\@$\@) {
+sub runRsync ($\@$\%) {
     # Run rsync.
     # If it fails for lack of disk space, delete expirable snapshots and try again.
     # Returns 1 for successful creation of a new snapshot.
@@ -2905,11 +3030,12 @@ sub runRsync ($\@$\@) {
     my $dest               = shift;
     my @expirableSnapshots = @{(shift)};
     my $snapshotTime       = shift;
-    my @S                  = @{(shift)};
+    my %S                  = %{(shift)};
+    my @S = rsort keys %S;
     debug "runRsync: \@eS='@expirableSnapshots' sTime=$snapshotTime (" . 
         time2stamp($snapshotTime) .")\n", 3;
 
-    my $snapshot = snapshotName($snapshotTime);
+    my $snapshot = snapshotName($snapshotTime, %S);
 
     # Set up verbosity option
     my $verbose = '';
@@ -2927,8 +3053,10 @@ sub runRsync ($\@$\@) {
     my $remoteDest = remote($dest);
 
     my $succeeded = 1;  # stays true if ALL sources are copied successfully
+    my $sourcesSucceeded = 0;   # count of successfully backed-up sources
 
     my $deletionsAllSources = 0;
+    my $destSuffix = '';    # gets set to "-$PartialSuffix" if necessary
 
     # Loop through sources one at a time
     SOURCE:
@@ -2936,8 +3064,8 @@ sub runRsync ($\@$\@) {
 
         printlog "\nCopying from source $source\n", 1;
         my $remoteSource = remote($source);
-        my $destDir = "$dest/$snapshot";    # can't use catdir because it nobbles rsync:// URLs
-        debug "dest '$dest'  destdir '$destDir'\n", 3;
+        my $destDir = "$dest/$snapshot$destSuffix";    # can't use catdir because it nobbles rsync:// URLs
+        debug "rR: dest '$dest'  destdir '$destDir'\n", 1;
 
         # Source and destination can not both be remote (rsync limitation)
         if ($remoteDest and $remoteSource) {
@@ -2953,17 +3081,17 @@ sub runRsync ($\@$\@) {
             # Destination directory includes a sub-directory if the source is remote
             $subDir = sourceDir($source);
             $upDir  = '../';
-            $destDir = "$destDir/$subDir";  # can't use catdir because it nobbles rsync:// URLs
-            # That extra directory level won't be created by rsync normally,
-            # so we'll have to do one of them manually
+            # The extra directory level won't be created by rsync normally,
+            # so we'll have to do it manually
             # (It may already be there if there is more than one destination)
             # Destination is local, so just we can just use mkdir
             if (!$Opt{'dry-run'}) {
-                if (!-e "$dest/$snapshot" and !mkdir("$dest/$snapshot", 0755)) {
-                    printlog "ERROR: Unable to create directory '$dest/$snapshot' ($!)\n";
+                if (!-e "$destDir" and !mkdir("$destDir", 0755)) {
+                    printlog "ERROR: Unable to create directory '$destDir' ($!)\n";
                     # rsync will also fail
                 }
             }
+            $destDir = "$destDir/$subDir";  # can't use catdir because it nobbles rsync:// URLs
         }
 
         # Set up link-dest options if there are any previous snapshots
@@ -2971,10 +3099,9 @@ sub runRsync ($\@$\@) {
         my $ldi = 1;
         my $linkdest = '';
         debug "rR: ldi=$ldi ldcount=$Opt{ldcount} \$#S=$#S updDir=$upDir\n", 3;
-        debug "rR: \@S: " . join(', ', map {time2stamp($_)} @S) . "\n", 3;
+        #debug "rR: \@S: " . join(', ', map {time2stamp($_)} @S) . "\n", 3;
         while ($ldi <= $Opt{ldcount} and $ldi <= $#S) {
-            $linkdest .= "--link-dest='$upDir../$Opt{template}-" . 
-                time2stamp($S[$ldi]) . "/$subDir' ";
+            $linkdest .= "--link-dest='$upDir../" . snapshotName($S[$ldi], %S) . "/$subDir' ";
             $ldi += 1;
         }
 
@@ -3002,8 +3129,8 @@ sub runRsync ($\@$\@) {
         { 
             # Wrap the call to rsync and associated houskeeping into a block
             # and trap interrupts so that the block becomes (sort of) atomic,
-            # i.e. if rsync fails, the partial snapshot will be deleted
-            # before we give up completely.
+            # i.e. if rsync fails, the partial snapshot will be deleted or 
+            # renamed before we give up completely.
             local $SIG{INT}  = sub { $Quitting = 1; };
             local $SIG{QUIT} = sub { $Quitting = 1; };
             local $SIG{ABRT} = sub { $Quitting = 1; };
@@ -3013,103 +3140,66 @@ sub runRsync ($\@$\@) {
             my $keepTrying = $maxTries;  
             my $deletions = 0;
             my $tries = 0;
-            # Run rsync.
-            # If it fails for lack of space, delete an old snapshot and try again
+            # Run rsync, dealing with various types of error
             while ($keepTrying and !$Quitting) {
                 $tries += 1;
-                $keepTrying -= 1;
                 printlog "Running rsync -- try $tries of $maxTries\n", 2;
                 my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, $args, 2,2);
                 debug "after rsync rc=$rc rc2='$rc2'\n", 3;
                 given ($rc) {
-                    # TODO better use of when() to reduce repeated code
-                    # and split 'last SOURCE' errors from others
+                    #* success
                     when (0) {
-                        $keepTrying = 0;
+                        # when ($_ == 0 and !($source =~ /cache/)) { # for debugging!
+                        debug "rR: success\n", 1;
+                        $keepTrying = 0;    # no need to try this source again
+                        $sourcesSucceeded += 1;
                     }
-                    when (1) {
-                        printlog "ERROR: rsync failed complaining about options / usage\n", 1;
-                        $snapshotTime = undef;
-                        $keepTrying = 0;
-                        $succeeded = 0;
-                        last SOURCE;
-                    }
-                    when ([22, 23, 24]) {
+                    #* errors that can be ignored, treat as successful (but perhaps a warning)
+                    when ([22, 23, 24]) {   
+                        debug "rR: ignored errors, so success\n", 1;
                         # Errors on some files such as problems with permissions,
                         # or files that have vanished -- carry on
+                        printlog "NOTE: some errors from rsync have been ignored\n", 2;
                         $keepTrying = 0;
+                        $sourcesSucceeded += 1;
                     }
-                    when ($_ >= 1000) { # 1000 + signal
-                        # rsync was interrupted -- don't delete the partial snapshot
-                        # unless requested by the relevant option
-                        if ($Opt{'allow-restart'}) {
-                            printlog "ERROR: rsync was interrupted -- partial snapshot will be kept to allow restart\n", 1;
+                    #* errors that can be recovered from -- i.e. lack of space (sometimes)
+                    when (($_ == 12) and ($rc2 eq 'diskfull') and ($keepTrying > 0)) {
+                        # Try to make some space before having another go
+                        printlog "WARNING: destination '$dest' is full -- will delete an old snapshot and try again\n";
+                        debug "rR: _=$_ rc=$rc rc2=$rc2 keepTrying=$keepTrying\n", 1;
+                        my $deleted = deleteOldSnapshots($dest, @expirableSnapshots, %S, 1);
+                        if ($deleted >= 1) {
+                            # More space freed, so try again
+                            printlog "NOTE: Old snapshot deleted successfully -- continuing\n";
+                            $deletions += $deleted;
+                            $deletionsAllSources += $deleted;
+                            $keepTrying -= $deleted;
                         } else {
-                            my $rc = renameOrDeleteSnapshot($dest, $snapshot);
-                            if ($rc) {
-                                printlog "ERROR: rsync was interrupted -- partial snapshot has been " .
-                                    $rc == 1 ? 'renamed' : 'deleted' .
-                                    "\n", 1;
-                            }
-                        } 
-                        $keepTrying = 0;
-                        $succeeded = 0;
-                        $ExitCode = EXITINT;
-                        last SOURCE;
-                    }
-                    when ([12]) {
-                        # 12 e.g. snapshot dir not found or disk is full.
-                        # See if the target disk is full, in which case
-                        # delete some snapshots and try again
-                        if ($rc2 eq 'diskfull') { 
-                            if (!$keepTrying) {
-                                # No space, and no more tries
-                                debug "rR: no space and no more retries\n", 3;
-                                continue;
-                            } else {
-                                # Try to make some space before having another go
-                                printlog "WARNING: destination '$dest' is full -- will delete an old snapshot and try again\n";
-                                my $deleted = deleteOldSnapshots($dest, @expirableSnapshots, 1);
-                                if ($deleted < 1) {
-                                    # No snapshots deleted, so stop trying
-                                    printlog "ERROR: unable to delete old snapshot to make space\n", 1;
-                                    continue;
-                                } else {
-                                    # More space freed, so try again
-                                    printlog "NOTE: Old snapshot deleted successfully -- continuing\n";
-                                    $deletions += $deleted;
-                                    $deletionsAllSources += $deleted;
-                                }
-                            }
-                        } else {
-                            debug "rR: Disk is not full, apparently -- some other error\n", 3;
-                            #printlog "ERROR: rsync reported a serious problem (3: $rc $rc2)\n", 1;
-                            #$keepTrying = 0;
-                            continue;
+                            # No snapshots deleted, so stop trying
+                            printlog "ERROR: unable to delete old snapshot to make space\n", 1;
+                            $keepTrying = 0;
+                            $succeeded = 0;
+                            $ExitCode = EXITRSYNC;
+                            last SOURCE;
                         }
                     }
-                    default {   # (note the 'continue's above)
+                    #* error that means rename/delete/abandon whole destination
                         # 11 e.g. include-from file not found
                         # 5 - failed to start rsyncd protocol
                         # 255, various, including wrong ssh password, 
                         # -1
+                    default {
                         printlog "ERROR: rsync reported a serious problem ($rc / '$rc2')\n", 1;
-                        #deleteSnapshot($dest, $snapshot);
-                        #printlog "ERROR: snapshot was not complete, and has been deleted\n", 1;
-                        my $rc = renameOrDeleteSnapshot($dest, $snapshot);
-                        if ($rc) {
-                            printlog "ERROR: snapshot was not complete, and has been " .
-                                $rc == 1 ? 'renamed' : 'deleted' .
-                                "\n", 1;
-                        }
                         $keepTrying = 0;
                         $succeeded = 0;
-                        $ExitCode = EXITRSYNC;
+                        $ExitCode = $rc >= 1000 ? EXITINT : EXITRSYNC;
                         last SOURCE;
                     }
-                }
-                debug "No more tries\n", 4 if $keepTrying <= 0;
-            } # while
+                } # given
+
+                debug "rR: No more tries\n", 4 if $keepTrying <= 0;
+            } # while keep trying for this source
 
             if ($deletions) {
                 printlog "NOTE: $deletions expirable snapshots were deleted while processing source '$source'\n", 2;
@@ -3128,7 +3218,11 @@ sub runRsync ($\@$\@) {
             printlog "(dry run: no snapshots actually deleted)\n", 2 if $Opt{'dry-run'};
         }
     } else {
-        printlog "\nWARNING: rsync did NOT create a new snapshot on destination '$dest'\n", 1;
+        printlog "\nWARNING: rsync did NOT create a complete new snapshot on destination '$dest'\n", 1;
+        printlog   "         $sourcesSucceeded out of " . @{$Opt{source}} . " sources were completed\n", 1;
+        if ($sourcesSucceeded < @{$Opt{source}}) {
+           my $rc = renameOrDeleteSnapshot($dest, $snapshot, $sourcesSucceeded);
+        } 
     }
 
     return $succeeded;
@@ -3143,7 +3237,7 @@ sub run ($\@) {
 
     # Get list of existing snapshots
     my %S = getSnapshotList($dest);
-    my @S = reverse sort keys %S;
+    my @S = rsort keys %S;
 
     # If there are no previous snapshots, ignore the 'restart' option
     if ($Opt{restart} and !%S) {
@@ -3155,7 +3249,7 @@ sub run ($\@) {
     if ($Opt{restart}) {
         # Restarting the previous snapshot
         $snapshotTime = $S[0];
-        printlog "NOTE: Restarting snapshot " . snapshotName($snapshotTime) . "\n", 1;
+        printlog "NOTE: Restarting snapshot " . snapshotName($snapshotTime, %S) . "\n", 1;
     } else {
         # Normal run, creating a new snapshot.
         # Get time stamp for this run...
@@ -3166,7 +3260,7 @@ sub run ($\@) {
     }
     debug "run: got list of " . @S . " snapshots\n", 4;
 
-    printlog "\nCreating snapshot " . snapshotName($snapshotTime) . " on destination $dest\n", 1;
+    printlog "\nCreating snapshot " . snapshotName($snapshotTime, %S) . " on destination $dest\n", 1;
     printlog '-' x (50 + length($dest) + length($Opt{template})) . "\n", 1;
 
     # 'Compile' the specs taking account of current time and existing snapshots
@@ -3185,11 +3279,11 @@ sub run ($\@) {
             printlog "NOTE: new snapshot would be immediately deleted, so rsync will NOT be run\n", 1;
         } else {
             my @expirableSnapshots = getExpirableSnapshots(%S, @specs, @cSpecs, $snapshotTime);
-            my $rsyncOK = runRsync($dest, @expirableSnapshots, $snapshotTime, @S);  
+            my $rsyncOK = runRsync($dest, @expirableSnapshots, $snapshotTime, %S);  
             if (!$rsyncOK) {
                 # Failed to create a new snapshot, so re-do the list of deletions
                 @S = grep {$_ != $snapshotTime} @S;
-                # FIXME redo %S too!!!
+                %S = getSnapshotList($dest);   # is this enough or too much?
                 @D = getDeleteList(%S, @cSpecs, 9);
             }
         }
@@ -3200,7 +3294,7 @@ sub run ($\@) {
     return if ($Quitting);
 
     if ($Opt{delete}) {
-        deleteSnapshots($dest, @D, @cSpecs, $deleteNew);
+        deleteSnapshots($dest, @D, %S, @cSpecs, $deleteNew);
         # Get new snapshot list after deletions
         %S = getSnapshotList($dest);
     } else {
@@ -3208,6 +3302,8 @@ sub run ($\@) {
     }
 
     # Display the current situation
+    # after recompiling the specs to allow for errors
+    @cSpecs = compileSpecs($snapshotTime, @specs, %S, 1);
     status($dest, %S, @cSpecs);
 
 }
@@ -3645,7 +3741,7 @@ sub testSuite {
             $Opt{debug} = 5;
             $Opt{calendar} = 1;
             #
-            my %S = reverse sort(
+            my %S = rsort(
                 # just one will do
                 stamp2time('20110627-093000'),0,
             )
@@ -3694,7 +3790,7 @@ sub testSuite {
             #renameOrDeleteSnapshot('chris@localhost:/home/chris/tmp', "test1-20110809-170104");
             my %S = getSnapshotList("/home/chris/tmp");
             print "%S: ";
-            foreach my $s (reverse sort keys %S) {
+            foreach my $s (rsort keys %S) {
                 print "$s: $S{$s} ";
             }
             print "\n";
