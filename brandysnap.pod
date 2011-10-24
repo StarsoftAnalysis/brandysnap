@@ -151,7 +151,7 @@ B<1h24,4d6,3w3,4m11> - one an hour for the first day, then 4 a day for the rest 
 
 =back
 
-Snapshots also get deleted as time passes.  If a day with four snapshots gets to old enough to fall within a B<3w> spec, then the extra snapshots will be deleted.
+Snapshots also get deleted as time passes.  If a day with four snapshots gets to be old enough to fall within a B<3w> spec, then the extra snapshots will be deleted.
 
 
 =head2 Definition of 'snapshot' vs full/incremental backups

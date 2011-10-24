@@ -1,7 +1,4 @@
-#!/usr/bin/perl
-
-# TODO for renaming:
-#  change status
+!/usr/bin/perl
 
 #########################################################################
 # brandysnap: rsync-based backup snapshot creation and management       #
@@ -1661,10 +1658,10 @@ sub status ($\%;\@) {
         }
         printlog sprintf("%-*s   %13s %13s\n", $nameLength, '-'x$nameLength, 
             '-----------', '-----------'), $plevel,$llevel;
-    	#printlog sprintf("%8s %*d   %13s %13s\n", 'Totals: ', $nameLength-9, $count, 
-    	#        '', bytes($totala)), $plevel,$llevel;
-    	my $incomplete = '';
-	$incomplete = "(+$xcount incomplete)" if $xcount;
+        #printlog sprintf("%8s %*d   %13s %13s\n", 'Totals: ', $nameLength-9, $count, 
+        ##        '', bytes($totala)), $plevel,$llevel;
+        my $incomplete = '';
+        $incomplete = "(+$xcount incomplete)" if $xcount;
         printlog sprintf("%8s %s %-16s %3d   %13s %13s\n", 'Totals: ', ' 'x($nameLength-30), 
             $incomplete, $count, '', bytes($totala)), $plevel,$llevel;
         if ($count > 0) {
@@ -2383,8 +2380,8 @@ sub getMatchingSnapshots ($$$$\@\%) {
         @$comb = sort {$b <=> $a} @$comb;
         foreach my $i (0..$#I) {
             my $c = $$comb[$i];
-	    # The score for each existing snapshot is:
-	    #    (distance to ideal * closeness) + offset for being bad
+            # The score for each existing snapshot is:
+            #    (distance to ideal * closeness) + offset for being bad
             my $score = abs($I[$i] - $S[$c]) * $closeness[$c] + $badoffset[$c];
             debug "gMS: i=$i comb[i]=$c I[i]=$I[$i] S[c]=$S[$c] I-S=". abs($I[$i]-$S[$c]) .
                 " clo=$closeness[$c] bo=$badoffset[$c] score=$score\n", 3;
@@ -2515,10 +2512,8 @@ sub getDeleteList (\%\@;$) {
                 @Cbad = ();
             }
             if (@Cgood + @Cbad > $c->{freq}) {
-                # more than enough candidates (including bad ones)
-                # - choose the ones to delete (on the assumption that bad ones will get chosen first)
-		# TODO ?? that doesn't quite work, so need to choose the
-		# bad ones first.
+                # More than enough candidates (including bad ones)
+                # - choose the ones to delete (because ones will get chosen first)
                 my $extras = $c->{freq} - (@Cgood + @Cbad);
                 my @Call = rsort(@Cgood, @Cbad);
                 my @I = getMatchingSnapshots($beg, $end, $c->{best}, $c->{freq}, @Call, %S); 
@@ -3120,16 +3115,16 @@ sub runRsync ($\@$\%) {
 
         # Set up link-dest options if there are any previous snapshots
         # (as a relative path, which will work whether local or remote).
-	# Loop to create as many link-dests as required.
-	# Previous 'bad' snapshots are linked in case they contain useful
-	# files, but don't count towards the total.
-	my $ld = 0;	# number of 'good' link-dests created
-        my $s = 1;	# start at snapshot 1
+        # Loop to create as many link-dests as required.
+        # Previous 'bad' snapshots are linked in case they contain useful
+        # files, but don't count towards the total.
+        my $ld = 0; # number of 'good' link-dests created
+        my $s = 1;  # start at snapshot 1
         my $linkdest = '';
         while ($ld < $Opt{ldcount} and $s <= $#S) {
             $linkdest .= "--link-dest='$upDir../" . snapshotName($S[$s], %S) . "/$subDir' ";
             $ld += 1 if !$S{$S[$s]};
-	    $s += 1;
+            $s += 1;
         }
 
         # Set compression option
