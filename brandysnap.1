@@ -124,7 +124,7 @@
 .\" ========================================================================
 .\"
 .IX Title "BRANDYSNAP 1"
-.TH BRANDYSNAP 1 "2011-10-24" "perl v5.10.1" "User Contributed Perl Documentation"
+.TH BRANDYSNAP 1 "2011-10-25" "perl v5.10.1" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -349,17 +349,22 @@ Example:
 .Vb 1
 \&        template docs
 .Ve
-.IP "\fBspec \f(BIstring\fB\fR ! The snapshot-keeping specification.  See the [Keeping Snapshots section](#keepingSnapshots) for full details." 4
-.IX Item "spec string ! The snapshot-keeping specification.  See the [Keeping Snapshots section](#keepingSnapshots) for full details."
-.PD 0
-.IP "\fBlockfile \f(BIfile\fB\fR ! To prevent separate runs of brandysnap using the same destinations at the same time, you need to give the name of temporary file which will be created and locked while brandysnap is running. The user running brandysnap must have permission to create and delete this file.  For example:" 4
-.IX Item "lockfile file ! To prevent separate runs of brandysnap using the same destinations at the same time, you need to give the name of temporary file which will be created and locked while brandysnap is running. The user running brandysnap must have permission to create and delete this file.  For example:"
-.PD
+.IP "\fBspec \f(BIstring\fB\fR !" 4
+.IX Item "spec string !"
+The snapshot-keeping specification.  See the [Keeping Snapshots section](#keepingSnapshots) for full details.
+.IP "\fBlockfile \f(BIfile\fB\fR !" 4
+.IX Item "lockfile file !"
+To prevent separate runs of brandysnap using the same destinations at the same time, you need to give 
+the name of temporary file which will be created and locked while brandysnap is running.
+The user running brandysnap must have permission to create and delete this file.  For example:
+.Sp
 .Vb 1
 \&        lockfile /tmp/brandysnap\-docs.lock
 .Ve
-.IP "\fBlogfile \f(BIfile\fB\fR The name of a file which will be used to log the output from brandysnap.  Examples:" 4
-.IX Item "logfile file The name of a file which will be used to log the output from brandysnap.  Examples:"
+.IP "\fBlogfile \f(BIfile\fB\fR" 4
+.IX Item "logfile file"
+The name of a file which will be used to log the output from brandysnap.  Examples:
+.Sp
 .Vb 2
 \&        logfile /var/log/brandysnap.log
 \&        logfile ~/bs\-docs.log
@@ -447,9 +452,9 @@ What to do with the snapshot if none of the sources are copied successfully.
 means that it will not be considered as a proper snapshot when making future
 decisions about what keep.
 If you specify \fB\f(BIdelete\fB\fR, the incomplete snapshot will be deleted immediately, in the expectation
-that future snapshots will be more successfull.
-(default: \fBdelete\fR)
+that future snapshots will be more successful.
 See also \fB\-\-some\-failed\fR.
+(default: \fBdelete\fR)
 .IP "\fBdelete \f(BIyes/no\fB\fR" 4
 .IX Item "delete yes/no"
 Delete no-longer-required snapshots.  If this option is turned off, brandysnap will create new snapshots but not delete any old ones. (default: \fByes\fR)
@@ -472,19 +477,18 @@ If a previous run of brandysnap was interrupted for any reason, use this option 
 .IP "\fBsnapshot \f(BIyes/no\fB\fR" 4
 .IX Item "snapshot yes/no"
 Create a new snapshot.  If this option is turned off, no new snapshot will be created during this run of brandysnap but old snapshots may be deleted. (default: \fByes\fR)
-.IP "\fBsome-failed \f(BIkeep|rename|delete\fB\fR What to do with the snapshot if some of the sources are not copied successfully.  See \fB\-\-all\-failed\fR for details. (default: \fBrename\fR)" 4
-.IX Item "some-failed keep|rename|delete What to do with the snapshot if some of the sources are not copied successfully.  See --all-failed for details. (default: rename)"
-.PD 0
+.IP "\fBsome-failed \f(BIkeep/rename/delete\fB\fR" 4
+.IX Item "some-failed keep/rename/delete"
+What to do with the snapshot if some of the sources are not copied successfully.  See \fB\-\-all\-failed\fR for details. (default: \fBrename\fR)
 .IP "\fBstatus \f(BIyes/no\fB\fR" 4
 .IX Item "status yes/no"
-.PD
 Print a status report only, with no snapshots being created or deleted. (default: \fBno\fR)
 .IP "\fBstrict \f(BIyes/no\fB\fR" 4
 .IX Item "strict yes/no"
 Use strict mode \*(-- see the [Strict Mode section](#strictMode). (default: \fBno\fR)
 .SS "Development options"
 .IX Subsection "Development options"
-These options are use by developers only.
+These options are for use by developers only.
 .IP "\fBdebug \f(BI0..3\fB\fR" 4
 .IX Item "debug 0..3"
 Print and log debugging information. (default: \fB0\fR)
@@ -542,7 +546,7 @@ is shutting down, or the user has pressed ctrl-C, while rsync is running, it tra
 deleting any partially completed snapshot if possible.
 .SH "KNOWN ISSUES"
 .IX Header "KNOWN ISSUES"
-As of 15 August July 2011 and version 0.1.11, the following issues and bugs are known.
+As of 25 October 2011 and version 0.1.13, the following issues and bugs are known.
 .IP "\(bu" 4
 The option \fB\-\-remote\-rsync\-cmd\fR can only be specified once, and applies to all remote sources and directories.
 .IP "\(bu" 4

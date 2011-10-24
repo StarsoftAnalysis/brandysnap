@@ -254,9 +254,11 @@ Example:
 	template docs
 
 =item B<spec I<string>> !   
+
 The snapshot-keeping specification.  See the [Keeping Snapshots section](#keepingSnapshots) for full details.
 
 =item B<lockfile I<file>> !
+
 To prevent separate runs of brandysnap using the same destinations at the same time, you need to give 
 the name of temporary file which will be created and locked while brandysnap is running.
 The user running brandysnap must have permission to create and delete this file.  For example:
@@ -264,6 +266,7 @@ The user running brandysnap must have permission to create and delete this file.
 	lockfile /tmp/brandysnap-docs.lock
 
 =item B<logfile I<file>>
+
 The name of a file which will be used to log the output from brandysnap.  Examples:
 
 	logfile /var/log/brandysnap.log
@@ -385,9 +388,9 @@ B<I<rename>> will cause the incomplete snapshot to be renamed with a 'B<-x>' suf
 means that it will not be considered as a proper snapshot when making future
 decisions about what keep.
 If you specify B<I<delete>>, the incomplete snapshot will be deleted immediately, in the expectation
-that future snapshots will be more successfull.
-(default: B<delete>)
+that future snapshots will be more successful.
 See also B<--some-failed>.
+(default: B<delete>)
 
 =item B<delete I<yes/no>>
 
@@ -417,7 +420,8 @@ If a previous run of brandysnap was interrupted for any reason, use this option 
 
 Create a new snapshot.  If this option is turned off, no new snapshot will be created during this run of brandysnap but old snapshots may be deleted. (default: B<yes>)
 
-=item B<some-failed I<keep|rename|delete>>
+=item B<some-failed I<keep/rename/delete>>
+
 What to do with the snapshot if some of the sources are not copied successfully.  See B<--all-failed> for details. (default: B<rename>)
 
 =item B<status I<yes/no>>
@@ -432,7 +436,7 @@ Use strict mode -- see the [Strict Mode section](#strictMode). (default: B<no>)
 
 =head2 Development options
 
-These options are use by developers only.
+These options are for use by developers only.
 
 =over
 
@@ -498,7 +502,7 @@ deleting any partially completed snapshot if possible.
 
 =head1 KNOWN ISSUES
 
-As of 15 August July 2011 and version 0.1.11, the following issues and bugs are known.
+As of 25 October 2011 and version 0.1.13, the following issues and bugs are known.
 
 =over
 
@@ -531,5 +535,4 @@ This can be safely ignored.
 =head1 AUTHOR
 
 Chris Dennis, chris@starsoftanalysis.co.uk
-
 

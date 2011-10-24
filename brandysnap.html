@@ -253,22 +253,24 @@ Example:</p>
 <pre>
         template docs</pre>
 </dd>
-<dt><strong><a name="spec_string_the_snapshot_keeping_specification_see_the_keeping_snapshots_section_keepingsnapshots_for_full_details" class="item"><strong>spec <em>string</em></strong> !   
-The snapshot-keeping specification.  See the [Keeping Snapshots section](#keepingSnapshots) for full details.</a></strong></dt>
-
-<dt><strong><a name="lockfile_file_to_prevent_separate_runs_of_brandysnap_using_the_same_destinations_at_the_same_time_you_need_to_give_the_name_of_temporary_file_which_will_be_created_and_locked_while_brandysnap_is_running_the_user_running_brandysnap_must_have_permission_to_create_and_delete_this_file_for_example" class="item"><strong>lockfile <em>file</em></strong> !
-To prevent separate runs of brandysnap using the same destinations at the same time, you need to give 
-the name of temporary file which will be created and locked while brandysnap is running.
-The user running brandysnap must have permission to create and delete this file.  For example:</a></strong></dt>
+<dt><strong><a name="spec_string" class="item"><strong>spec <em>string</em></strong> !</a></strong></dt>
 
 <dd>
+<p>The snapshot-keeping specification.  See the [Keeping Snapshots section](#keepingSnapshots) for full details.</p>
+</dd>
+<dt><strong><a name="lockfile_file" class="item"><strong>lockfile <em>file</em></strong> !</a></strong></dt>
+
+<dd>
+<p>To prevent separate runs of brandysnap using the same destinations at the same time, you need to give 
+the name of temporary file which will be created and locked while brandysnap is running.
+The user running brandysnap must have permission to create and delete this file.  For example:</p>
 <pre>
         lockfile /tmp/brandysnap-docs.lock</pre>
 </dd>
-<dt><strong><a name="logfile_file_the_name_of_a_file_which_will_be_used_to_log_the_output_from_brandysnap_examples" class="item"><strong>logfile <em>file</em></strong>
-The name of a file which will be used to log the output from brandysnap.  Examples:</a></strong></dt>
+<dt><strong><a name="logfile_file" class="item"><strong>logfile <em>file</em></strong></a></strong></dt>
 
 <dd>
+<p>The name of a file which will be used to log the output from brandysnap.  Examples:</p>
 <pre>
         logfile /var/log/brandysnap.log
         logfile ~/bs-docs.log</pre>
@@ -402,9 +404,9 @@ The name of a file which will be used to log the output from brandysnap.  Exampl
 means that it will not be considered as a proper snapshot when making future
 decisions about what keep.
 If you specify <strong><em>delete</em></strong>, the incomplete snapshot will be deleted immediately, in the expectation
-that future snapshots will be more successfull.
-(default: <strong>delete</strong>)
-See also <strong>--some-failed</strong>.</p>
+that future snapshots will be more successful.
+See also <strong>--some-failed</strong>.
+(default: <strong>delete</strong>)</p>
 </dd>
 <dt><strong><a name="delete_yes_no" class="item"><strong>delete <em>yes/no</em></strong></a></strong></dt>
 
@@ -440,9 +442,11 @@ with [options yet to be implemented] to tune the behaviour of brandysnap. (defau
 <dd>
 <p>Create a new snapshot.  If this option is turned off, no new snapshot will be created during this run of brandysnap but old snapshots may be deleted. (default: <strong>yes</strong>)</p>
 </dd>
-<dt><strong><a name="some_failed_keep_rename_delete_what_to_do_with_the_snapshot_if_some_of_the_sources_are_not_copied_successfully_see_all_failed_for_details_default_rename" class="item"><strong>some-failed <em>keep|rename|delete</em></strong>
-What to do with the snapshot if some of the sources are not copied successfully.  See <strong>--all-failed</strong> for details. (default: <strong>rename</strong>)</a></strong></dt>
+<dt><strong><a name="some_failed_keep_rename_delete" class="item"><strong>some-failed <em>keep/rename/delete</em></strong></a></strong></dt>
 
+<dd>
+<p>What to do with the snapshot if some of the sources are not copied successfully.  See <strong>--all-failed</strong> for details. (default: <strong>rename</strong>)</p>
+</dd>
 <dt><strong><a name="status_yes_no" class="item"><strong>status <em>yes/no</em></strong></a></strong></dt>
 
 <dd>
@@ -457,7 +461,7 @@ What to do with the snapshot if some of the sources are not copied successfully.
 <p>
 </p>
 <h2><a name="development_options">Development options</a></h2>
-<p>These options are use by developers only.</p>
+<p>These options are for use by developers only.</p>
 <dl>
 <dt><strong><a name="debug_0_3" class="item"><strong>debug <em>0..3</em></strong></a></strong></dt>
 
@@ -523,7 +527,7 @@ deleting any partially completed snapshot if possible.</p>
 </p>
 <hr />
 <h1><a name="known_issues">KNOWN ISSUES</a></h1>
-<p>As of 15 August July 2011 and version 0.1.11, the following issues and bugs are known.</p>
+<p>As of 25 October 2011 and version 0.1.13, the following issues and bugs are known.</p>
 <ul>
 <li>
 <p>The option <strong>--remote-rsync-cmd</strong> can only be specified once, and applies to all remote sources and directories.</p>
