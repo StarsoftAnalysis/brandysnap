@@ -21,6 +21,7 @@ brandysnap --conf brandysnap.conf [OTHER OPTIONS...]
 Brandysnap is (yet another) script that uses rsync to create snapshot backups of files and directories.
 
 It is still being developed, and should be considered very experimental software.  Use it at your own risk!
+On the other hand, it's getting better: the author already uses it 'in production'.
 
 It is designed to be flexible and robust.  In particular, it copes well with situations where snapshots are not created as regularly as they should be.  This can be for a variety of reasons -- hardware failure, operator failure, weekends, holidays, someone forgot to plug in the external USB drive...
 
@@ -376,6 +377,18 @@ Options to pass to rsync, in addition to those that brandysnap will always use (
 
 =over
 
+=item B<all-failed I<keep/rename/delete>>
+
+What to do with the snapshot if none of the sources are copied successfully.
+B<I<keep>> will mean that the incomplete snapshot will be considered complete, and is not recommended.
+B<I<rename>> will cause the incomplete snapshot to be renamed with a 'B<-x>' suffix: this
+means that it will not be considered as a proper snapshot when making future
+decisions about what keep.
+If you specify B<I<delete>>, the incomplete snapshot will be deleted immediately, in the expectation
+that future snapshots will be more successfull.
+(default: B<delete>)
+See also B<--some-failed>.
+
 =item B<delete I<yes/no>>
 
 Delete no-longer-required snapshots.  If this option is turned off, brandysnap will create new snapshots but not delete any old ones. (default: B<yes>)
@@ -403,6 +416,9 @@ If a previous run of brandysnap was interrupted for any reason, use this option 
 =item B<snapshot I<yes/no>>
 
 Create a new snapshot.  If this option is turned off, no new snapshot will be created during this run of brandysnap but old snapshots may be deleted. (default: B<yes>)
+
+=item B<some-failed I<keep|rename|delete>>
+What to do with the snapshot if some of the sources are not copied successfully.  See B<--all-failed> for details. (default: B<rename>)
 
 =item B<status I<yes/no>>
 

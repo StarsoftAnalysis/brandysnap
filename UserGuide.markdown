@@ -1,3 +1,4 @@
+(brandysnap.pod is now the definitive source of documentation)
 
 Brandysnap User Guide
 =====================

@@ -1,3 +1,28 @@
+Changelog for Brandysnap
+ 
+0.1.13	24/10/11 
+* adjustments to signal handling 
+* multiple link-dests via --ldcount option 
+* rename incomplete backups, with new options --all-failed, --some-failed,
+  and associated changes to getDeleteList, getMatchingSnapshots etc.
+
+0.1.12 
+* added 'allow-restart' option 
+* better exit code handling 
+* simplified return code checking in runRsync 
+* fix bugs in getExpirableSnapshots 
+* other debugging 
+ 
+0.1.11 
+* add signal handling 
+ 
+0.1.10 
+* treat rsync error 24 as minor (files vanished) 
+
+0.1.9 
+* corrections re getDeleteList if rsync failed 
+* add 'restart' option 
+
 0.1.8	9/8/11
 * oops! There are 12 months in a year, not 52. 
   (Only affected specs that auto-padded months to fill a year)

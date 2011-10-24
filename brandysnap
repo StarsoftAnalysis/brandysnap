@@ -22,8 +22,7 @@
 # CONSTANTS in upper case
 # Globals with a leading capital
 # otherVariables in camelCase (except for some frequently used things like @S)
-# Formatting this file:
-# vim: tabstop=4 softtabstop=4 shiftwidth=4 expandtab 
+# Formatting this file -- see the 'vim:' line at the end,
 # and limit lines to 100 characters
 # Keep it neat and tidy!
 
@@ -88,7 +87,7 @@ $SIG{TERM} = 'IGNORE';
 $| = 1;
 
 # version of this script
-my $Version = '0.1.12-renaming';
+my $Version = '0.1.13';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -3908,3 +3907,4 @@ exit $ExitCode;
 
 #===================================================================================================
 
+# vim: tabstop=4 softtabstop=4 shiftwidth=4 expandtab

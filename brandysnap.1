@@ -124,7 +124,7 @@
 .\" ========================================================================
 .\"
 .IX Title "BRANDYSNAP 1"
-.TH BRANDYSNAP 1 "2011-08-16" "perl v5.10.1" "User Contributed Perl Documentation"
+.TH BRANDYSNAP 1 "2011-10-24" "perl v5.10.1" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -149,6 +149,7 @@ brandysnap \-\-conf brandysnap.conf [\s-1OTHER\s0 \s-1OPTIONS\s0...]
 Brandysnap is (yet another) script that uses rsync to create snapshot backups of files and directories.
 .PP
 It is still being developed, and should be considered very experimental software.  Use it at your own risk!
+On the other hand, it's getting better: the author already uses it 'in production'.
 .PP
 It is designed to be flexible and robust.  In particular, it copes well with situations where snapshots are not created as regularly as they should be.  This can be for a variety of reasons \*(-- hardware failure, operator failure, weekends, holidays, someone forgot to plug in the external \s-1USB\s0 drive...
 .PP
@@ -258,7 +259,7 @@ More spec examples:
 .IP "\(bu" 4
 \&...
 .PP
-Snapshots also get deleted as time passes.  If a day with four snapshots gets to old enough to fall within a \fB3w\fR spec, then the extra snapshots will be deleted.
+Snapshots also get deleted as time passes.  If a day with four snapshots gets to be old enough to fall within a \fB3w\fR spec, then the extra snapshots will be deleted.
 .SS "Definition of 'snapshot' vs full/incremental backups"
 .IX Subsection "Definition of 'snapshot' vs full/incremental backups"
 Lots of snapshots don't make a file more secure: if the file hasn't changed, and is the same in all snapshots, 
@@ -438,6 +439,17 @@ Band-width limit for sending in kbps. Set it to 0 for no limit.  (default: \fB0\
 Options to pass to rsync, in addition to those that brandysnap will always use (i.e. \-\-relative and \-\-link\-dest). Use this only if you know what you are doing.  (default: \-aHx \-\-numeric\-ids)
 .SS "Advanced options"
 .IX Subsection "Advanced options"
+.IP "\fBall-failed \f(BIkeep/rename/delete\fB\fR" 4
+.IX Item "all-failed keep/rename/delete"
+What to do with the snapshot if none of the sources are copied successfully.
+\&\fB\f(BIkeep\fB\fR will mean that the incomplete snapshot will be considered complete, and is not recommended.
+\&\fB\f(BIrename\fB\fR will cause the incomplete snapshot to be renamed with a '\fB\-x\fR' suffix: this
+means that it will not be considered as a proper snapshot when making future
+decisions about what keep.
+If you specify \fB\f(BIdelete\fB\fR, the incomplete snapshot will be deleted immediately, in the expectation
+that future snapshots will be more successfull.
+(default: \fBdelete\fR)
+See also \fB\-\-some\-failed\fR.
 .IP "\fBdelete \f(BIyes/no\fB\fR" 4
 .IX Item "delete yes/no"
 Delete no-longer-required snapshots.  If this option is turned off, brandysnap will create new snapshots but not delete any old ones. (default: \fByes\fR)
@@ -447,14 +459,25 @@ Include the 'current period' when considering which snapshots to delete.  See th
 .IP "\fBexpire-old \f(BIyes/no\fB\fR" 4
 .IX Item "expire-old yes/no"
 Consider _all_ snapshots (oldest first) as expirable to make room when the destination is full. (default: \fBno\fR)
+.IP "\fBldcount \f(BIn\fB\fR" 4
+.IX Item "ldcount n"
+Specify the number of previous snapshots that rsync will search looking for identical files to hard-link to.  
+Normally the default value of \fB1\fR is ideal.  Set this value to \fB0\fR to turn off rsync's \fB\-\-link\-dest\fR option
+completely, but be aware that this will greatly increase the size of the new snapshot, and the time
+taken to create it (especially over the network).  Values greater than \fB1\fR can be used in conjunction
+with [options yet to be implemented] to tune the behaviour of brandysnap. (default: \fB1\fR)
 .IP "\fBrestart \f(BIyes/no\fB\fR" 4
 .IX Item "restart yes/no"
 If a previous run of brandysnap was interrupted for any reason, use this option to re-do the same snapshot (simply by relying on rsync's ability to not copy files that have not changed).  Any files in the source that have changed since the previous run _will_ be updated.  If more than one destination is being used, rsync will be run for _all_ destinations, even if some of them completed successfully before.
 .IP "\fBsnapshot \f(BIyes/no\fB\fR" 4
 .IX Item "snapshot yes/no"
 Create a new snapshot.  If this option is turned off, no new snapshot will be created during this run of brandysnap but old snapshots may be deleted. (default: \fByes\fR)
+.IP "\fBsome-failed \f(BIkeep|rename|delete\fB\fR What to do with the snapshot if some of the sources are not copied successfully.  See \fB\-\-all\-failed\fR for details. (default: \fBrename\fR)" 4
+.IX Item "some-failed keep|rename|delete What to do with the snapshot if some of the sources are not copied successfully.  See --all-failed for details. (default: rename)"
+.PD 0
 .IP "\fBstatus \f(BIyes/no\fB\fR" 4
 .IX Item "status yes/no"
+.PD
 Print a status report only, with no snapshots being created or deleted. (default: \fBno\fR)
 .IP "\fBstrict \f(BIyes/no\fB\fR" 4
 .IX Item "strict yes/no"
@@ -523,7 +546,7 @@ As of 15 August July 2011 and version 0.1.11, the following issues and bugs are 
 .IP "\(bu" 4
 The option \fB\-\-remote\-rsync\-cmd\fR can only be specified once, and applies to all remote sources and directories.
 .IP "\(bu" 4
-Under certain circumstances, rsync can fail when there are files that are hard-linked together
+Under certain circumstances, rsync can fail if the source contains files that are hard-linked together
 and for which you do not have read permission.  This is fixed in rsync 3.0.9 and later.  You can get
 round it by specifying \fB\-\-rsync\-opts\fR with the usual options but omitting \fB\-\-hard\-links\fR.
 .IP "\(bu" 4
@@ -533,6 +556,9 @@ For example, when doing one snapshot a day with calendar mode turned off, if
 yesterday's snapshot was at 11:40:03, and today's is at 11:40:01, 
 then yesterday's will be considered as part of today, 
 because it is less than 24 hours ago, so it will be deleted.  A fix is planned to address this issue.
+.IP "\(bu" 4
+When using the \fB\-\-dry\-run\*(--\fR option, rsync sometimes displays an error message that \f(CW\*(C`\-\-link\-dest arg does not exist\*(C'\fR.  
+This can be safely ignored.
 .SH "AUTHOR"
 .IX Header "AUTHOR"
 Chris Dennis, chris@starsoftanalysis.co.uk
