@@ -1,5 +1,8 @@
 #!/usr/bin/perl
 
+# TODO for renaming:
+#  change status
+
 #########################################################################
 # brandysnap: rsync-based backup snapshot creation and management       #
 # Copyright (C) 2011  Chris Dennis, chris@starsoftanalysis.co.uk        #
@@ -111,7 +114,8 @@ $Opt{loglevel} = 1;
 
 # Template for snapshot directory names --  the date part:
 # (if you change this, existing snapshots will not be found!)
-use constant STAMPFMT => "%Y%m%d-%H%M%S";
+use constant STAMPFMT  => "%Y%m%d-%H%M%S";
+use constant STAMPFMT0 => '00000000-000000';
 
 # Date/time constants and globals 
 
@@ -196,7 +200,7 @@ my @StringOpt = qw(config lockfile logfile template rsync-cmd rsync-opts remote-
 my @LevelOpt = qw(verbose loglevel debug);
 
 # Suffix used to indicate that a snapshot is incomplete
-my $PartialSuffix = 'x';
+my $PartialSuffix = 'x';  # FIXME rename this
 
 # Mainline code is at the end of this file
 
@@ -281,8 +285,18 @@ sub stripQuotes ($) {
 
 sub dumpSnapshots (@) {
     # return a list of snapshots as a string for printing
-    my @S = @_; #{(shift)};
+    my @S = @_; 
     return join(', ', map {time2stamp($_)} @S);
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub dumpSnapshots2 (\@\%) {
+    # return a list of snapshots as a string for printing
+    # This version also uses %s to mark snapshots as good or bad
+    my @S = @{(shift)};
+    my %S = %{(shift)};
+    return join(', ', map {time2stamp($_) . ($S{$_} ? 'b' : 'g')} @S);
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -470,6 +484,7 @@ sub stamp2time ($) {
 sub time2stamp ($) {
     # convert Unix time to filename timestamp
     my $time = shift;
+    return STAMPFMT0 if $time == 0;
     my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime($time);
     return strftime(STAMPFMT, localtime($time));
 }
@@ -1468,7 +1483,7 @@ sub deleteSnapshots ($\@\%\@$) {
             debug "dS: not deleting newest snapshot because it was not created\n", 3;
         } else {
            printlog "Deleting snapshot " . snapshotName($d, %S) . 
-                " because there are too many for spec " . $cSpecs[$ci]->{label} . "\n", 2;
+                " because there are too many for spec '" . $cSpecs[$ci]->{label} . "'\n", 2;
            $errors += deleteSnapshot($dest, snapshotName($d, %S));
         }
     }
@@ -1599,7 +1614,8 @@ sub status ($\%;\@) {
     my %S      = %{(shift)};
     my @cSpecs;
     @cSpecs    = @{(shift)} if @_;
-    my $count  = 0;
+    my $count  = 0; # complete
+    my $xcount = 0; # incomplete
     my $totald = 0;
     my $totala = 0;
     my $ci = 0; # index into @cSpecs
@@ -1634,10 +1650,12 @@ sub status ($\%;\@) {
                     $ci += 1; 
                 }; 
                 $label = $cSpecs[$ci]->{label} if @cSpecs;
+                $count += 1;
+            } else {
+                $xcount += 1;
             }
             printlog sprintf("%-*s   %13s %13s   %s\n", $nameLength, $name, 
                 bytes($dsize), bytes($asize), $label), $plevel,$llevel;
-            $count += 1;
             $totald += $dsize;
             $totala += $asize;
         }
@@ -1645,6 +1663,8 @@ sub status ($\%;\@) {
             '-----------', '-----------'), $plevel,$llevel;
         printlog sprintf("%8s %*d   %13s %13s\n", 'Totals: ', $nameLength-9, $count, 
             '', bytes($totala)), $plevel,$llevel;
+        printlog sprintf("%8s %s (%3d incomplete) %3d   %13s %13s\n", 'Totals: ', ' 'x($nameLength-30), 
+            $xcount, $count, '', bytes($totala)), $plevel,$llevel;
         if ($count > 0) {
             my $averaged = floor($totald/$count);
             my $averagea = floor($totala/$count);
@@ -2185,12 +2205,8 @@ sub getMatchingSnapshots ($$$$\@\%) {
     my @closeness;
     my $endfactor1 = 0.5;
     my $endfactor2 = 0.5; 
-    #my $badfactor = $range * 1.0; # treat incomplete snapshots as less influential  # Tuning
-    # FIXME what would be better here is to only consider closeness to good snapshots
-    #  - i.e. when considering a good one, measure closeness to other good ones
-    #         - if there are none -- no, just ignore the bad ones
-    #         when considering a bad one, do the same
-    #         DONE - this is now handled by snapshotBefore/After
+    # Note that only good snapshots are considered when calculating closeness
+    # -- this is handled by snapshotBefore/After
     my $totalC = 0;
     for my $s (0..$#S) {
         # Get distance to previous/next good snapshot 
@@ -2199,8 +2215,6 @@ sub getMatchingSnapshots ($$$$\@\%) {
         my $next     = snapshotAfter($S[$s], $allSR);
         # If previous/next don't exist, calculate a closeness value
         # that is scaled to $range with a tuning factor
-        # And if previous or next are incomplete, 
-        # pretend their further away.
         my $p = $previous ? abs($S[$s] - $previous) : $range * $endfactor1;
         my $n = $next     ? abs($next  - $S[$s])    : $range * $endfactor2;
         # Check if they're infinitely close! 
@@ -2258,10 +2272,11 @@ sub getMatchingSnapshots ($$$$\@\%) {
 
     # Further adjustment to weighting of incomplete snapshots
     # as a 'distance' in time -- makes incomplete snapshots always a bad match
-    # Factor '1.0' may need tuning
+    # Factor may need tuning -- currently it's large at 10000 to make sure 
+    # bad snapshots are deleted first.
     my @badoffset;
     foreach my $s (@S) {
-        push @badoffset, ($$allSR{$s} ? $range * 1.0 : 0);
+        push @badoffset, ($$allSR{$s} ? $range * 10000 : 0);
     }
     debug "gMS: badoffsets: @badoffset\n", 3;
 
@@ -2364,6 +2379,8 @@ sub getMatchingSnapshots ($$$$\@\%) {
         @$comb = sort {$b <=> $a} @$comb;
         foreach my $i (0..$#I) {
             my $c = $$comb[$i];
+	    # The score for each existing snapshot is:
+	    #    (distance to ideal * closeness) + offset for being bad
             my $score = abs($I[$i] - $S[$c]) * $closeness[$c] + $badoffset[$c];
             debug "gMS: i=$i comb[i]=$c I[i]=$I[$i] S[c]=$S[$c] I-S=". abs($I[$i]-$S[$c]) .
                 " clo=$closeness[$c] bo=$badoffset[$c] score=$score\n", 3;
@@ -2495,14 +2512,21 @@ sub getDeleteList (\%\@;$) {
             }
             if (@Cgood + @Cbad > $c->{freq}) {
                 # more than enough candidates (including bad ones)
-                # - choose the ones to delete
+                # - choose the ones to delete (on the assumption that bad ones will get chosen first)
+		# TODO ?? that doesn't quite work, so need to choose the
+		# bad ones first.
+                my $extras = $c->{freq} - (@Cgood + @Cbad);
+		#if (@Cbad) {
+		#    # choose bad ones first
+		#    EEEEKKKK   need gMS to return delete list, not matching list
+		#     = dont be silly, THIS is getDeleteList: its our problem
                 my @Call = rsort(@Cgood, @Cbad);
                 my @I = getMatchingSnapshots($beg, $end, $c->{best}, $c->{freq}, @Call, %S); 
                 push @allMatches, @I;
                 push @D, arrayDiff(@Call, @I);
                 debug "gDL: storing keepers and deleters:\n\@Call:   " . dumpSnapshots(@Call) . "\n\@I:   " . 
                     dumpSnapshots(@I) . "\ndiff: " . dumpSnapshots(arrayDiff(@Call, @I)) . "\n", 3;
-                debug "gDL: \@D is now: " . dumpSnapshots(@D) . "\n", 3;
+                debug "gDL: \@D is now: " . dumpSnapshots2(@D, %S) . "\n", 3;
             } else {
                 debug "gDL:  no more than required after deleting bad ones\n", 3;
             }
@@ -3148,8 +3172,8 @@ sub runRsync ($\@$\%) {
                 debug "after rsync rc=$rc rc2='$rc2'\n", 3;
                 given ($rc) {
                     #* success
-                    when (0) {
-                        # when ($_ == 0 and !($source =~ /cache/)) { # for debugging!
+                    #when (0) {
+                    when ($_ == 0 and (!($source =~ /cache/) or rand()>0.5 )) { # for debugging!
                         debug "rR: success\n", 1;
                         $keepTrying = 0;    # no need to try this source again
                         $sourcesSucceeded += 1;
@@ -3284,7 +3308,7 @@ sub run ($\@) {
                 # Failed to create a new snapshot, so re-do the list of deletions
                 @S = grep {$_ != $snapshotTime} @S;
                 %S = getSnapshotList($dest);   # is this enough or too much?
-                @D = getDeleteList(%S, @cSpecs, 9);
+                @D = getDeleteList(%S, @cSpecs, 3); # 3 should be 9 FIXME
             }
         }
     } else {
