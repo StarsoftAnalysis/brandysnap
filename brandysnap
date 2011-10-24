@@ -26,7 +26,7 @@
 # Globals with a leading capital
 # otherVariables in camelCase (except for some frequently used things like @S)
 # Formatting this file:
-# vim:tabstop=4 softtabstop=4 shiftwidth=4 expandtab 
+# vim: tabstop=4 softtabstop=4 shiftwidth=4 expandtab 
 # and limit lines to 100 characters
 # Keep it neat and tidy!
 
@@ -284,7 +284,7 @@ sub stripQuotes ($) {
 #---------------------------------------------------------------------------------------------------
 
 sub dumpSnapshots (@) {
-    # return a list of snapshots as a string for printing
+    # Return a list of snapshots as a string for printing
     my @S = @_; 
     return join(', ', map {time2stamp($_)} @S);
 }
@@ -292,11 +292,11 @@ sub dumpSnapshots (@) {
 #---------------------------------------------------------------------------------------------------
 
 sub dumpSnapshots2 (\@\%) {
-    # return a list of snapshots as a string for printing
-    # This version also uses %s to mark snapshots as good or bad
+    # Return a list of snapshots as a string for printing
+    # This version also uses %S to mark snapshots as good or bad
     my @S = @{(shift)};
     my %S = %{(shift)};
-    return join(', ', map {time2stamp($_) . ($S{$_} ? 'b' : 'g')} @S);
+    return join(', ', map {time2stamp($_) . ($S{$_} ? '-b' : '-g')} @S);
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -1078,7 +1078,7 @@ Advanced options
 --delete       yes/no    delete no-longer-required snapshots (default: yes)
 --delete-cp    yes/no    delete even in current period (default: yes)
 --expire-old   yes/no    delete oldest snapshots when disk is full (default: no)
---ldcount      n         number of --link-dest options to created (default: 1)
+--ldcount      n         number of --link-dest options to create (default: 1)
 --restart      yes/no    continue previous snapshot (default: no)
 --snapshot     yes/no    create new snapshots (default: yes)
 --status       yes/no    print a status report only (default: no)
@@ -1661,10 +1661,12 @@ sub status ($\%;\@) {
         }
         printlog sprintf("%-*s   %13s %13s\n", $nameLength, '-'x$nameLength, 
             '-----------', '-----------'), $plevel,$llevel;
-        printlog sprintf("%8s %*d   %13s %13s\n", 'Totals: ', $nameLength-9, $count, 
-            '', bytes($totala)), $plevel,$llevel;
-        printlog sprintf("%8s %s (%3d incomplete) %3d   %13s %13s\n", 'Totals: ', ' 'x($nameLength-30), 
-            $xcount, $count, '', bytes($totala)), $plevel,$llevel;
+    	#printlog sprintf("%8s %*d   %13s %13s\n", 'Totals: ', $nameLength-9, $count, 
+    	#        '', bytes($totala)), $plevel,$llevel;
+    	my $incomplete = '';
+	$incomplete = "(+$xcount incomplete)" if $xcount;
+        printlog sprintf("%8s %s %-16s %3d   %13s %13s\n", 'Totals: ', ' 'x($nameLength-30), 
+            $incomplete, $count, '', bytes($totala)), $plevel,$llevel;
         if ($count > 0) {
             my $averaged = floor($totald/$count);
             my $averagea = floor($totala/$count);
@@ -2096,11 +2098,13 @@ sub arrayDiff (\@\@) {
 #---------------------------------------------------------------------------------------------------
 
 sub snapshotBefore ($$) {
-    # Return the good snapshot before the one given (if any)
+    # Return the snapshot before the one given (if any)
+    # For good snapshots, only consider the previous good one.
+    # For bad snapshots, any previous one will do.
     my $this = shift;   # the snapshot to compare 
     my $sR   = shift;   # hash ref of all snapshots 
     foreach my $s (rsort keys %$sR) {
-        next if $$sR{$s}; # skip the bad ones
+        next if !$$sR{$this} and $$sR{$s}; # skip the bad ones if this one is good
         return $s if $s < $this;
     }
     return 0;   # None found, return 0 which will test as false
@@ -2114,7 +2118,7 @@ sub snapshotAfter ($$) {
     my $sR   = shift;   # hash ref of all snapshots 
     my $prevs = 0; # If none found, return 0 which will test as false
     foreach my $s (rsort keys %$sR) {
-        next if $$sR{$s}; # skip the bad ones
+        next if !$$sR{$this} and $$sR{$s}; # skip the bad ones if this one is good
         return $prevs if $s <= $this;
         $prevs = $s;
     }
@@ -2272,8 +2276,8 @@ sub getMatchingSnapshots ($$$$\@\%) {
 
     # Further adjustment to weighting of incomplete snapshots
     # as a 'distance' in time -- makes incomplete snapshots always a bad match
-    # Factor may need tuning -- currently it's large at 10000 to make sure 
-    # bad snapshots are deleted first.
+    # Factor may need tuning -- currently it's arbitrarily large at 10000 to make 
+    # sure that bad snapshots are deleted first.
     my @badoffset;
     foreach my $s (@S) {
         push @badoffset, ($$allSR{$s} ? $range * 10000 : 0);
@@ -2516,10 +2520,6 @@ sub getDeleteList (\%\@;$) {
 		# TODO ?? that doesn't quite work, so need to choose the
 		# bad ones first.
                 my $extras = $c->{freq} - (@Cgood + @Cbad);
-		#if (@Cbad) {
-		#    # choose bad ones first
-		#    EEEEKKKK   need gMS to return delete list, not matching list
-		#     = dont be silly, THIS is getDeleteList: its our problem
                 my @Call = rsort(@Cgood, @Cbad);
                 my @I = getMatchingSnapshots($beg, $end, $c->{best}, $c->{freq}, @Call, %S); 
                 push @allMatches, @I;
@@ -3119,14 +3119,17 @@ sub runRsync ($\@$\%) {
         }
 
         # Set up link-dest options if there are any previous snapshots
-        # (as a relative path, which will work whether local or remote)
-        my $ldi = 1;
+        # (as a relative path, which will work whether local or remote).
+	# Loop to create as many link-dests as required.
+	# Previous 'bad' snapshots are linked in case they contain useful
+	# files, but don't count towards the total.
+	my $ld = 0;	# number of 'good' link-dests created
+        my $s = 1;	# start at snapshot 1
         my $linkdest = '';
-        debug "rR: ldi=$ldi ldcount=$Opt{ldcount} \$#S=$#S updDir=$upDir\n", 3;
-        #debug "rR: \@S: " . join(', ', map {time2stamp($_)} @S) . "\n", 3;
-        while ($ldi <= $Opt{ldcount} and $ldi <= $#S) {
-            $linkdest .= "--link-dest='$upDir../" . snapshotName($S[$ldi], %S) . "/$subDir' ";
-            $ldi += 1;
+        while ($ld < $Opt{ldcount} and $s <= $#S) {
+            $linkdest .= "--link-dest='$upDir../" . snapshotName($S[$s], %S) . "/$subDir' ";
+            $ld += 1 if !$S{$S[$s]};
+	    $s += 1;
         }
 
         # Set compression option
