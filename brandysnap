@@ -1,4 +1,4 @@
-!/usr/bin/perl
+#!/usr/bin/perl
 
 #########################################################################
 # brandysnap: rsync-based backup snapshot creation and management       #
@@ -155,7 +155,8 @@ use constant WEEK   => DAY * 7;
 # months and years aren't fixed in terms of seconds!
 
 # Total number of snapshots required by specs
-my $TotalSnapshots = 0; 
+my $TotalSnapshotsMin = 0; 
+my $TotalSnapshotsMax = 0; 
 
 # An empty temporary directory for use in deleteSnapshot() and mkdirRsync()
 # (yes, I know, this is a bit of a kludge)
@@ -1839,7 +1840,7 @@ sub calcPadding ($$$) {
 
 sub parseSpecs ($) {
     # Parse the user's requested snapshot regime, 
-    # e.g. '4d7,1d7,2w,1m6'
+    # e.g. '0-4d7,1d7,2-7w,1m6'
     #
     # The letter specifies a period, and can be
     #   h - hour 
@@ -1849,6 +1850,7 @@ sub parseSpecs ($) {
     #   y - year
     # The first number ('freq') specifies how many snapshots should occur
     # within the period, the second how many periods.
+    # The frequency can also be specified as a minimum-maximum range.
     # If the second number ('count') is omitted, it fills up the time
     # until the next spec; on the last spec, omitting the count
     # requests an 'unlimited' number of backups -- i.e. until the
@@ -1863,14 +1865,24 @@ sub parseSpecs ($) {
     my $errorcount   = 0;
 
     foreach my $spec (@rawspecs) {
-        if ($spec =~ /^\s*(?<freq>\d+)\s*(?<period>[hdwmy])\s*(?<count>\d*)\s*$/) {
-            my $freq = int($+{freq});
-            my $period = $+{period};
+        if ($spec =~ /^\s*(?<freq0>\d+)\s*(-\s*(?<freq>\d+))?\s*(?<period>[hdwmy])\s*(?<count>\d*)\s*$/) {
+            # FIXME  for now, min freq is freq0, max is freq, because old freq is really the max
+            my $freq0 = int($+{freq0});
+            my $freq = $freq0;
+            if ($+{freq}) {
+                # min-max freq specified
+                $freq = int($+{freq});
+            }
             if ($freq == 0) {
                 printlog "ERROR: Frequency 0 in spec '$spec' does not make sense\n", 1;
                 $errorcount += 1;
                 next;
             }
+            if ($freq < $freq0) {
+                printlog "ERROR: Maximum frequency must be greater than minimum: '$freq0-$freq' in spec '$spec' does not make sense\n", 1;
+                $errorcount += 1;
+            }
+            my $period = $+{period};
             my $count; 
             if ($+{count} ne '') { 
                 $count = int($+{count});
@@ -1885,6 +1897,7 @@ sub parseSpecs ($) {
             }   
             push @specs, {
                 rawspec => $spec, 
+                freq0   => $freq0, 
                 freq    => $freq, 
                 period  => $period, 
                 periodn => $Level{$period}, # store $Level{$2} as well as $2 to avoid repeated look-ups
@@ -1898,14 +1911,15 @@ sub parseSpecs ($) {
 
     return ($warningcount, $errorcount, @specs) if $errorcount;
 
-    debug "Parsed spec:  " . join(',', map {$_->{freq}.$_->{period}.$_->{count}} @specs) . "\n", 3;
+    debug "Parsed spec:  " . join(',', 
+        map {$_->{freq0}.'-'.$_->{freq}.$_->{period}.$_->{count}} @specs) . "\n", 3;
 
     # Check that the specs make sense
     debug "Checking specs...\n", 3;
     my $timesofar = 0; # in hours
     my $i = 0; # index into @specs
     foreach my $spec (@specs) {
-        debug "Spec0: $spec->{freq} $spec->{period} $spec->{count}     \n", 4;
+        debug "Spec0: $spec->{freq0}-$spec->{freq} $spec->{period} $spec->{count}     \n", 4;
         if ($spec->{count} == 0) {
             # Pad spec to fill next period
             # e.g. 1d,1w4 -- the daily period gets padded to a week, i.e. 1d7,1w4
@@ -1935,7 +1949,7 @@ sub parseSpecs ($) {
                 }
             }
         }
-        debug "Spec1: $spec->{freq} $spec->{period} $spec->{count}\n", 9;
+        debug "Spec1: $spec->{freq0}-$spec->{freq} $spec->{period} $spec->{count}\n", 9;
         # Check alignment
         if (!aligned($timesofar, $spec->{periodn})) {
             printlog "WARNING: Spec at $LevelName[$spec->{periodn}] level is not aligned - " 
@@ -1949,7 +1963,7 @@ sub parseSpecs ($) {
     my $lastint  = 0;
     $i = 0;
     foreach my $spec (@specs) {
-        my $int = $Hours[$spec->{periodn}] / $spec->{freq};
+        my $int = $Hours[$spec->{periodn}] / $spec->{freq};  # yes, use max
         if ($int < $lastint) {
             printlog "WARNING: Interval is smaller for spec " . ($i+2) . 
                 " ($spec->{rawspec}) than for " .  "previous one ($specs[$i-1]->{rawspec})\n", 3;
@@ -1961,15 +1975,22 @@ sub parseSpecs ($) {
 
     if (!$errorcount) {
         printlog "Validated specs: " . join(',', 
-            map {$_->{freq}.$_->{period}.$_->{count}} @specs) . "\n", 3;
-        $TotalSnapshots = 0; 
+            map {$_->{freq0}.'-'.$_->{freq}.$_->{period}.$_->{count}} @specs) . "\n", 3;
+        $TotalSnapshotsMin = 0; 
+        $TotalSnapshotsMax = 0; 
         foreach my $spec (@specs) {
-            $TotalSnapshots += $spec->{freq} * $spec->{count};
+            $TotalSnapshotsMin += $spec->{freq0} * $spec->{count};
+            $TotalSnapshotsMax += $spec->{freq}  * $spec->{count};
         }
         if ($specs[-1]->{count} == UNLIMITED) {
             printlog "which will create an unlimited number of snapshots\n", 3;
         } else {
-            printlog "which will create a total of $TotalSnapshots snapshots\n", 3;
+            # TODO print min and max number of snapshots
+            if ($TotalSnapshotsMin == $TotalSnapshotsMax) {
+                printlog "which will create a total of $TotalSnapshotsMax snapshots\n", 3;
+            } else {
+                printlog "which will create a total of between $TotalSnapshotsMin and $TotalSnapshotsMax snapshots\n", 3;
+            }
         }
     }
     debug "Frequencies: " . join(', ', map {$_->{freq} / $Hours[$_->{periodn}]} @specs) . "\n", 9;
@@ -3444,9 +3465,12 @@ sub testSuite {
             '4d2,1d,1m6',
             '2h6,1h,1d,1w',
             '1d7,2h3,1d,1w1',
+            '0-1d,3-7w,4-4m1',
             '2h3,1d,1w1',  # problem -- doesn't line up hours before lining up days
             '2h3,1w,1m1',  # likewise...
             '1h1,1d1,1h4,1w1,1d1,1h19,1d,1w1', # silly but valid
+            '0-0d1',
+            '4-3w1',
             '1d1,1w0',
             '1d1,0w1',
             '1d1,1w',
