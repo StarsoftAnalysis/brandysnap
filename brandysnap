@@ -1,4 +1,4 @@
-!/usr/bin/perl
+#!/usr/bin/perl
 
 #########################################################################
 # brandysnap: rsync-based backup snapshot creation and management       #
