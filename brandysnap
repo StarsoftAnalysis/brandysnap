@@ -3169,8 +3169,8 @@ sub runRsync ($\@$\%) {
                 debug "after rsync rc=$rc rc2='$rc2'\n", 3;
                 given ($rc) {
                     #* success
-                    #when (0) {
-                    when ($_ == 0 and (!($source =~ /cache/) or rand()>0.5 )) { # for debugging!
+                    when (0) {
+                    #when ($_ == 0 and (!($source =~ /cache/) or rand()>0.5 )) { # for debugging!
                         debug "rR: success\n", 1;
                         $keepTrying = 0;    # no need to try this source again
                         $sourcesSucceeded += 1;
