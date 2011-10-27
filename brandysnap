@@ -197,7 +197,7 @@ my @StringOpt = qw(config lockfile logfile template rsync-cmd rsync-opts remote-
 my @LevelOpt = qw(verbose loglevel debug);
 
 # Suffix used to indicate that a snapshot is incomplete
-my $PartialSuffix = 'x';  # FIXME rename this
+my $PartialSuffix = 'x';  
 
 # Mainline code is at the end of this file
 
@@ -205,6 +205,7 @@ my $PartialSuffix = 'x';  # FIXME rename this
 
 # Useful stuff
 
+# Simple min/max routines for use with numbers
 sub min ($$) {
     my $a = shift;
     my $b = shift;
@@ -676,6 +677,13 @@ sub processOptions () {
     # Merge options, so that config file options override the defaults,
     # and command-line options override everything else;
     %Opt = mergeOpts \%defopt, \%confopt, \%cmdopt;
+
+    # Make sure multiple options really are arrays
+    foreach my $opt (keys %MultiOpt) {
+        if ($Opt{$opt} and !(ref($Opt{$opt}) eq 'ARRAY')) {
+            $Opt{$opt} = [$Opt{$opt}];
+        }
+    }
     
     debug "Unvalidated final options: " . join(' ', 
         map {$_ . '=' . $Opt{$_}} sort keys %Opt) . "\n", 9;
@@ -714,11 +722,6 @@ sub processOptions () {
     # Multi-value options
     foreach my $opt (sort keys %Opt) {
         if ($MultiOpt{$opt}) {
-            # Make sure multiple options are always arrays (if they exist at all)
-            #debug "$mopt is of type " . ref($Opt{$mopt}) . "\n";;
-            if (!ref($Opt{$opt})) {
-                $Opt{$opt} = [$Opt{$opt}];
-            }
             # All multi-value options happen to be string options,
             # so strip any unnecessary quotes
             debug "mv option '$opt'...\n", 9;
@@ -740,12 +743,13 @@ sub processOptions () {
         $Opt{$opt} = stripQuotes($Opt{$opt}) if $Opt{$opt};
     }
 
-    # Stop here after first phase of check 
-    return $errorcount if $errorcount;
+    # FIXME why?
+    ## Stop here after first phase of checking
+    #return $errorcount if $errorcount;
+    #
+    ## Validate options more thoroughly
 
-    # Validate options more thoroughly
-
-    # Logging (check this first, so that we can log later errors)
+    # Logging (check this first, so that we can log later errors).
     # logfile must be local
     $Opt{logfile} = $Opt{'logfile-temp'};
     delete $Opt{'logfile-temp'};
@@ -991,7 +995,7 @@ sub printableOption ($) {
     # Return a printable version of an option
     my $opt = shift;
     if (ref($Opt{$opt}) eq 'ARRAY') {
-        # multiple option -- which happen to be all strings
+        # multiple option -- which happen to be all strings, so add quotes
         return join(', ', map {"'$_'"} @{$Opt{$opt}}); 
     }
     if (grep {$_ eq $opt} @BoolOpt) {
@@ -999,10 +1003,10 @@ sub printableOption ($) {
         return $Opt{$opt} ? 'yes' : 'no';
     }
     if (grep {$_ eq $opt} @StringOpt) {
-        # string option
+        # string option, add quotes
         return "'$Opt{$opt}'";
     }
-    # else it's numeric
+    # else it's numeric, no quotes
     return "$Opt{$opt}";
 }
 
@@ -2047,8 +2051,8 @@ sub getSnapshotList ($) {
     return %S if $rc;
     foreach (@listing) {
         chomp;
-        # Skip over any template with an invalid date (shouldn't happen)
         if (/($template)-(?<Y>\d{4})(?<M>\d{2})(?<D>\d{2})-(?<h>\d{2})(?<m>\d{2})(?<s>\d{2})(?<ps>-$PartialSuffix)?/) {
+            # Skip over any template with an invalid date (should not happen)
             next if $+{M} < 1;
             next if $+{M} > 12;
             next if $+{D} < 1;
@@ -2056,6 +2060,7 @@ sub getSnapshotList ($) {
             next if $+{h} > 23;
             next if $+{m} > 59;
             next if $+{s} > 60;
+            # Store the suffix to indicate good or bad snapshot
             $S{stamp2time($_)} = ($+{ps} ? 1 : 0);
         }
     }
@@ -2597,11 +2602,11 @@ sub findGoodPeriods ($$$\@) {
 
     my $gpCount = 0;
     my @good;
-    if (!@S) {
-        # No snapshots, so no good periods
-        debug "fGP: \@S is empty!\n", 3;
-        return ($gpCount, @good);
-    }
+    #if (!@S) {    - no longer works, because freqmin can be 0!!    FIXME reinstate?
+    #    # No snapshots, so no good periods
+    #    debug "fGP: \@S is empty!\n", 3;
+    #    return ($gpCount, @good);
+    #}
     my $oldestSnapshot = $S[-1];
     debug "fGP: range=" . pair2range($beg, $end) . " freqmin=$spec->{freqmin} periodn=$spec->{periodn} " . 
         "count=$spec->{count} oldestS=" . time2stamp($oldestSnapshot) . "\n", 3;
@@ -2657,11 +2662,11 @@ sub findGoodPeriodsNoCal ($$$\@) {
 
     my $gpCount = 0;
     my @good;
-    if (!@S) {
-        # No snapshots, so no good periods
-        debug "fGPnC: \@S is empty!\n", 3;
-        return ($gpCount, @good);
-    }
+    #if (!@S) { # no longer valid, can have freqmin==0 !      FIXME reinstate?
+    #    # No snapshots, so no good periods
+    #    debug "fGPnC: \@S is empty!\n", 3;
+    #    return ($gpCount, @good);
+    #}
     my $oldestS = $S[-1];
     debug "\nfGPnC: range=" . pair2range($beg, $end) . " freqmin=$spec->{freqmin} periodn=$spec->{periodn} " . 
     "count=$spec->{count} oldestS=" . time2stamp($oldestS) . "\n", 3;
@@ -2807,7 +2812,7 @@ sub compileSpecs ($\@\%;$) {
                     count     => $spec->{count},
                     period    => $spec->{period},
                     best      => min(bestOffset($spec->{period}, $beg), $end-$beg-1),  # limit best to partial period
-                    label     => $spec->{rawspec} . ($firstSpec ? '-current' : '-partial'),
+                    label     => $spec->{rawspec} . ($firstSpec ? '.current' : '.partial'),
                     snapshots => $sip,
                 };  
                 # If $end>$oldestS, we should append 'empty' to the label 
@@ -2828,7 +2833,7 @@ sub compileSpecs ($\@\%;$) {
                 ($gpCount, @goodPeriods) = findGoodPeriodsNoCal($beg, $end, $spec, @S);
             }
         } else {
-            # no-safe mode, with or without calendar mode
+            # unsafe mode, with or without calendar mode
             ($gpCount, @goodPeriods) = findAllPeriods($beg, $end, $spec, @S);
         }
 
@@ -2861,10 +2866,10 @@ sub compileSpecs ($\@\%;$) {
                     period    => $spec->{period},
                     count     => $spec->{count},
                     best      => bestOffset($spec->{period}, $beg),
-                    label     => $spec->{rawspec} . "-$p",
+                    label     => $spec->{rawspec} . ".$p",
                     snapshots => $sip, 
                 };  
-                debug "cS: created cSpec [4] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) . " freq=$cSpecs[-1]=>{freqmin}-$cSpecs[-1]->{freqmax} count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . time2stamp($cSpecs[-1]->{beg}+$cSpecs[-1]->{best}) . " label=$cSpecs[-1]->{label} snapshots=$cSpecs[-1]->{snapshots}\n", 3;
+                debug "cS: created cSpec [4] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) . " freq=$cSpecs[-1]->{freqmin}-$cSpecs[-1]->{freqmax} count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . time2stamp($cSpecs[-1]->{beg}+$cSpecs[-1]->{best}) . " label=$cSpecs[-1]->{label} snapshots=$cSpecs[-1]->{snapshots}\n", 3;
                 $p += 1;
             }
             # Move back a period beyond @goodPeriods
@@ -2889,7 +2894,7 @@ sub compileSpecs ($\@\%;$) {
                 period    => $spec->{period},
                 count     => $spec->{count},    # or 0,  ?
                 best      => 0,
-                label     => $spec->{rawspec} . "-$p empty",
+                label     => $spec->{rawspec} . ".$p empty",
                 snapshots => snapshotsInPeriod(@S, $beg, $end), # should always be 0 -- we'll check
             };  
             debug "cS: 'empty' cSpec is not empty!!!!!!!!!!!!!!!!!!!!\n", 1 if snapshotsInPeriod(@S, $beg, $end) > 0 ;
@@ -2921,7 +2926,7 @@ sub compileSpecs ($\@\%;$) {
             label     => "old",
             snapshots => snapshotsInPeriod(@S, $oldestS, $end), 
         };  
-        debug "cS: created cSpec [6] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) . " freq=$cSpecs[-1]->{freqmin}-$cSpecs[-1]->{freqmax} count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . time2stamp($cSpecs[-1]->{beg}+$cSpecs[-1]->{best}) . " label=$cSpecs[-1]->{label} snapshots=$cSpecs[-1]->{snapshots}\n", 3;
+        debug "cS: created cSpec [6] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) . " freq=$cSpecs[-1]->{freqmax} count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . time2stamp($cSpecs[-1]->{beg}+$cSpecs[-1]->{best}) . " label=$cSpecs[-1]->{label} snapshots=$cSpecs[-1]->{snapshots}\n", 3;
     }
 
     # Double check that it's ok
@@ -2963,7 +2968,7 @@ sub displayCSpecs (\@;\%) {
 
     # e.g.  From              To                F  P      C  Comment               Ss    Ds
     #       20080101-111122 - 20090101-221111   0  d  99999  6d7.............30  9999  9999
-    printlog sprintf("%-15s - %-15s  %2s  %1s  %5s  %-30s  %4s  %4s\n",
+    printlog sprintf("%-15s - %-15s  %5s  %1s  %5s  %-30s  %4s  %4s\n",
         'From', 'To', 'Freq', 'P', 'C', 'Comment', 'Ss', 'Ds'), 2;
     printlog sprintf("%-15s - %-15s  %2s  %1s  %5s  %-30s  %4s  %4s\n",
         '-'x15, '-'x15, '-----', '-', '-----', '-'x30, '----', '----'), 2;
@@ -2973,7 +2978,7 @@ sub displayCSpecs (\@;\%) {
         printlog sprintf("%s - %s  %2d-%2d  %1s  %5s  %-30s  %4s  %4s\n",
             time2stamp($c->{beg}), 
             time2stamp($c->{end}),
-            $c->{freqmin}, 
+            $c->{freqmin} // -9, 
             $c->{freqmax}, 
             $c->{period}, 
             $c->{count} eq UNLIMITED ? 'all' : $c->{count},
@@ -3212,8 +3217,8 @@ sub runRsync ($\@$\%) {
                 debug "after rsync rc=$rc rc2='$rc2'\n", 3;
                 given ($rc) {
                     #* success
-                    #when (0) {
-                    when ($_ == 0 and (!($source =~ /cache/) or rand()>0.5 )) { # for debugging!
+                    when (0) {
+                    #when ($_ == 0 and (!($source =~ /cache/) or rand()>0.5 )) { # for debugging!
                         debug "rR: success\n", 1;
                         $keepTrying = 0;    # no need to try this source again
                         $sourcesSucceeded += 1;
@@ -3464,7 +3469,7 @@ sub systemcall ($$$$;$$) {
 
 # Test suite
 # Code here can be called by running the script with the '--test n' option.
-# This if for developers (i.e. me) only!
+# This is for developers (i.e. me) only!
 
 sub testSuite { 
 
@@ -3472,8 +3477,9 @@ sub testSuite {
     printlog   "===============\n";
 
     # Default options for testing
-    $Opt{source}[0]      = '~/tmp/bstestsource';
-    $Opt{destination}[0] = '~/tmp/bstestdest';
+    printlog "source: " . ref($Opt{source}) . "\n";
+    ${$Opt{source}}[0]      = '~/tmp/bstestsource';
+    ${$Opt{destination}}[0] = '~/tmp/bstestdest';
     $Opt{lockfile}       = '~/tmp/bstest.lock';
     $Opt{verbose}        = 3;
     my $now = stamp2time('20110529-230000');
@@ -3862,6 +3868,26 @@ sub testSuite {
             }
             print "\n";
             status('/home/chris/tmp', %S);
+        }
+
+        when (17) {
+            print "Testing min/max frequencies\n";
+            $Opt{spec} = '1-2d3';
+            $Opt{verbose} = 2;
+            $Opt{loglevel} = 3;
+            $Opt{calendar} = 1;
+            my $now = stamp2time('20111027-224500');
+            my %S = (
+                # days with 0,1,2,3 snapshots 
+                stamp2time('20111026-093000'),0, 
+                stamp2time('20111025-093000'),0, stamp2time('20111025-103000'),0, 
+                stamp2time('20111024-093000'),0, stamp2time('20111024-103000'),0, stamp2time('20111024-113000'),0,  
+            )
+            ;
+            my $dest = ${$Opt{destination}}[0];
+            my ($warnings, $errors, @specs) = parseSpecs($Opt{spec}); 
+            my @cSpecs = compileSpecs($now, @specs, %S);
+            displayCSpecs(@cSpecs, %S);
         }
     }
 }
