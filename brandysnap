@@ -87,7 +87,7 @@ $SIG{TERM} = 'IGNORE';
 $| = 1;
 
 # version of this script
-my $Version = '0.1.13';
+my $Version = '0.1.13hacked';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -196,7 +196,7 @@ my @StringOpt = qw(config lockfile logfile template rsync-cmd rsync-opts remote-
 my @LevelOpt = qw(verbose loglevel debug);
 
 # Suffix used to indicate that a snapshot is incomplete
-my $PartialSuffix = 'x';  # FIXME rename this
+my $PartialSuffix = 'x';  
 
 # Mainline code is at the end of this file
 
@@ -313,7 +313,7 @@ sub printit ($;$) {
     print $text if $Opt{verbose} >= $level;
 }
 
-# logit --------------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------------------
 
 sub logit ($;$) {
     # Simple logging to a text file,
@@ -334,7 +334,7 @@ sub logit ($;$) {
     select $oldfh;
 }
 
-# printlog -----------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------------------
 
 sub printlog ($;$$) {
     # Print and log depending on the level of verbose
@@ -346,7 +346,7 @@ sub printlog ($;$$) {
     logit $text, $llevel;
 }
 
-# debug --------------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------------------
 
 sub debug ($;$) {
     # Print debugging information to STDOUT and log
@@ -361,7 +361,7 @@ sub debug ($;$) {
     }   
 }
 
-# warning ------------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------------------
     
 sub warning ($) {
     # Output a warning to STDERR and log
@@ -505,19 +505,20 @@ sub pair2range ($$) {
 # - then validate
 
 sub readConfig ($) {
+    # Read in options from the given filename
     my $cfile = shift;
     my %confopt = ();
     my $warning = '';
-    if (-f -r $cfile) {
-        local $SIG{__WARN__} = sub { $warning = "@_"; }; # or $_[0]
-        %confopt = ParseConfig(
-            -ConfigFile => $cfile,
-            -LowerCaseNames => 1,
-            -AutoTrue => 1,     # convert true,yes,on to 1; false,no,off to 0
-        );
-    }
-    debug "readConfig WARNING: '$warning'\n", 9;
-    debug "read options: " . join(' ', map {$_ . '=' . $confopt{$_}} sort keys %confopt) . "\n", 9;
+    # Trap any warnings from ParseConfig
+    local $SIG{__WARN__} = sub { $warning = "@_"; }; # or $_[0]
+    # Parse the config file, and store the results in %confopt
+    %confopt = ParseConfig(
+        -ConfigFile => $cfile,
+        -LowerCaseNames => 1,
+        -AutoTrue => 1,     # convert true,yes,on to 1; false,no,off to 0
+    );
+    debug "readConfig WARNING: '$warning'\n", 0;
+    debug "read options: " . join(' ', map {$_ . '=' . $confopt{$_}} sort keys %confopt) . "\n", 0;
     return %confopt;
 }
 
@@ -641,6 +642,7 @@ sub processOptions () {
     }
 
     debug "\%cmdopt: " . join(' ', map {$_ . '=>' . $cmdopt{$_}} sort keys %cmdopt) . "\n", 9;
+debug "what? 2\n", 1;
 
     # If config file specified, make sure it's readable, and read it
     if ($cmdopt{config}) {
@@ -658,10 +660,15 @@ sub processOptions () {
         map {$_ . '=' . $confopt{$_}} sort keys %confopt) . "\n", 9;
     debug "cmd  options: " . join(' ', 
         map {$_ . '=' . $cmdopt{$_}}  sort keys %cmdopt)  . "\n", 9;
+debug "what? 3\n", 1;
     
     # Merge options, so that config file options override the defaults,
     # and command-line options override everything else;
     %Opt = mergeOpts \%defopt, \%confopt, \%cmdopt;
+
+    # Sneaky trick to avoid trying to use logfile before it's been validated:
+    $Opt{'logfile-temp'} = $Opt{logfile} if defined $Opt{logfile};
+    delete $Opt{logfile};
     
     debug "Unvalidated final options: " . join(' ', 
         map {$_ . '=' . $Opt{$_}} sort keys %Opt) . "\n", 9;
@@ -674,10 +681,6 @@ sub processOptions () {
     
     my $errorcount = 0;
     my $warningcount = 0;
-
-    # Sneaky trick to avoid trying to use logfile before it's been validated:
-    $Opt{'logfile-temp'} = $Opt{logfile} if defined $Opt{logfile};
-    delete $Opt{logfile};
 
     # Check for missing options
     foreach my $ropt (@ReqOpt) {
@@ -3826,25 +3829,31 @@ sub testSuite {
 
 # Display basic info -- logging will happen later
 printit "\n$Script version $Version starting at " . (strftime "%H:%M:%S", localtime) . "\n", 1;
-printit "Command line: $0 @ARGV\n", 3;
+printit "Command line: $0 @ARGV\n", 1;
 
 # No options supplied -- display help and exit
 if (@ARGV == 0) {
+    printit "ERROR: No options given\n"; 
     showHelp;
     exit EXITCONFIG;
 }
 
+print "XXXX 1\n";
 # Get and validate options
 if (processOptions() > 0) {
+print "XXXX 2\n";
     printlog "ERROR: Problems found in configuration -- stopping\n", 1;
     printlog "Try '$Script --help' or 'man $Script' for help.\n", 1;
     logit '-' x 80, 1;
     exit EXITCONFIG;
 }
+print "XXXX 3\n";
 
 # Help requested - display and exit
 if ($Opt{help}) {
-    showHelp;
+print "XXXX 4\n";
+# FIXME   showHelp;
+print "XXXX 5\n";
     exit EXITOK;
 }
 
