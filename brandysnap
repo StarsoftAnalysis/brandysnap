@@ -3,6 +3,7 @@
 # TODO for minmax
 # - check whether cSpec's freqmin is ever used
 #   - apparently not, so just have freq in cspec
+# - documentation
 
 #########################################################################
 # brandysnap: rsync-based backup snapshot creation and management       #
@@ -91,7 +92,7 @@ $SIG{TERM} = 'IGNORE';
 $| = 1;
 
 # version of this script
-my $Version = '0.1.13';
+my $Version = '0.1.14-testing';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -328,7 +329,7 @@ sub printit ($;$) {
     print $text if $Opt{verbose} >= $level;
 }
 
-# logit --------------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------------------
 
 sub logit ($;$) {
     # Simple logging to a text file,
@@ -349,7 +350,7 @@ sub logit ($;$) {
     select $oldfh;
 }
 
-# printlog -----------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------------------
 
 sub printlog ($;$$) {
     # Print and log depending on the level of verbose
@@ -361,7 +362,7 @@ sub printlog ($;$$) {
     logit $text, $llevel;
 }
 
-# debug --------------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------------------
 
 sub debug ($;$) {
     # Print debugging information to STDOUT and log
@@ -376,7 +377,7 @@ sub debug ($;$) {
     }   
 }
 
-# warning ------------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------------------
     
 sub warning ($) {
     # Output a warning to STDERR and log
@@ -678,15 +679,21 @@ sub processOptions () {
     # and command-line options override everything else;
     %Opt = mergeOpts \%defopt, \%confopt, \%cmdopt;
 
+    debug "what??\n", 1;
     # Make sure multiple options really are arrays
     foreach my $opt (keys %MultiOpt) {
+            debug "setting $opt as array\n", 3;
         if ($Opt{$opt} and !(ref($Opt{$opt}) eq 'ARRAY')) {
+            debug "setting $opt as array\n", 3;
             $Opt{$opt} = [$Opt{$opt}];
         }
     }
     
-    debug "Unvalidated final options: " . join(' ', 
-        map {$_ . '=' . $Opt{$_}} sort keys %Opt) . "\n", 9;
+    debug "Unvalidated final options: \n", 1;
+    displayOptions();
+    #foreach my $opt 
+    #. join(' ', 
+    #    map {$_ . '=' . $Opt{$_}} sort keys %Opt) . "\n", 1;
     
     # If user asked for help or version, or is running test mode,
     # don't do any more validation
@@ -2522,7 +2529,7 @@ sub getDeleteList (\%\@;$) {
 
         my $beg = $c->{beg};
         my $end = $c->{end};
-        debug "\ngDL processing cSpec $c->{label} freq=$c->{freqmin}-$c->{freqmax} range " 
+        debug "\ngDL processing cSpec $c->{label} freq=" . fmtFreq($c->{freqmin},$c->{freqmax}) . " range " 
             . pair2range($beg, $end) . "\n", 3;
 
         # Find candidate snapshots in that period
