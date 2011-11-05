@@ -935,8 +935,8 @@ sub processOptions () {
             "not '$Opt{ldcount}'\n", 1;
         $errorcount += 1;
     } elsif ($Opt{ldcount} == 0) {
-        printlog "WARNING: Option 'ldcount' is zero -- no hard-linking will be done, " .
-            "and the snapshot created may be much larger than expected\n", 1;
+        printlog "WARNING: Option 'ldcount' is zero -- no hard-linking will be done,\n", 1;
+        printlog "         and the snapshot created may be much larger than expected\n", 1;
     }
 
     # Band-width limits
