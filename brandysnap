@@ -92,7 +92,7 @@ $SIG{TERM} = 'IGNORE';
 $| = 1;
 
 # version of this script
-my $Version = '0.1.14-testing';
+my $Version = '0.1.14';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -677,7 +677,7 @@ sub processOptions () {
     
     # Merge options, so that config file options override the defaults,
     # and command-line options override everything else;
-    %Opt = mergeOpts \%defopt, \%confopt, \%cmdopt;
+    %Opt = mergeOpts(\%defopt, \%confopt, \%cmdopt);
     
     my $errorcount = 0;
     my $warningcount = 0;
@@ -745,12 +745,6 @@ sub processOptions () {
     foreach my $opt (@StringOpt) {
         $Opt{$opt} = stripQuotes($Opt{$opt}) if $Opt{$opt};
     }
-
-    # FIXME why?
-    ## Stop here after first phase of checking
-    #return $errorcount if $errorcount;
-    #
-    ## Validate options more thoroughly
 
     # Logging (check this first, so that we can log later errors).
     # logfile must be local
@@ -1356,7 +1350,7 @@ sub snapshotInfoRemote ($$) {
     my @items;
     my ($fh, $filename) = tempfile(UNLINK => 1);
     my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
-        "--recursive --bwlimit=$Opt{'bwlimit-in'} '$path/'", 3,3, $fh);
+        "--recursive --bwlimit=$Opt{'bwlimit-in'} '$path/'", 9,9, $fh);
     debug "sIR: rc=$rc rc2=$rc2 filename=$filename\n", 3;
     if ($rc) {
         return (0, 0);
@@ -1436,11 +1430,11 @@ sub deleteSnapshot ($$) {
         debug "dS: deleting snapshot the new way\n", 3;
         #my $cmd = "$Opt{'rsync-cmd'} --dirs -f 'R /$snapshot/**' -f '-!r /$snapshot' --delete $EmptyDir/ $dest/";
         my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
-            " --dirs -f 'R /$snapshot/**' -f '-!r /$snapshot' --delete $EmptyDir/ $dest/", 9,9, \@output);
+            " --dirs -f 'R /$snapshot/**' -f '-!r /$snapshot' --delete $EmptyDir/ $dest/", 0,0, \@output); # FIXME
         #debug "dS: delete cmd: '$cmd'\n", 3;
         #my $output = `$cmd`;
         debug "dS: rsync output: \n@output", 3;
-        debug "dS: rsync returned $rc, $rc2\n", 3;
+        debug "dS: rsync returned $rc, '$rc2'\n", 3;
         # This returns no error if the snapshot didn't exist, which is fine
         if ($rc) {
             printlog "ERROR: failed to delete remote snapshot '$snapshot' from '$dest' (code $rc)", 1,1;
@@ -1589,7 +1583,7 @@ sub renameOrDeleteSnapshot ($$$) {
             # Use SSH to rename it 
             # (as usual, we're assuming passwords are taken care of elsewhere)
             my ($host, $path) = $dest =~ /^([^:]*):(.*)$/;
-            ($rc, $rc2) = systemcall('ssh', "$host mv '$path/$snapshot' '$path/$snapshot-$PartialSuffix'", 1,1);
+            ($rc, $rc2) = systemcall('ssh', "$host mv '$path/$snapshot' '$path/$snapshot-$PartialSuffix'", 9,9);
             #my ($rc, $rc2) = (1,'');
             # returns 0 for success
             debug "rODS: remote: rc=$rc rc2=$rc2\n", 1;
