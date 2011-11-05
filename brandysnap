@@ -517,8 +517,8 @@ sub readConfig ($) {
         -LowerCaseNames => 1,
         -AutoTrue => 1,     # convert true,yes,on to 1; false,no,off to 0
     );
-    debug "readConfig WARNING: '$warning'\n", 0;
-    debug "read options: " . join(' ', map {$_ . '=' . $confopt{$_}} sort keys %confopt) . "\n", 0;
+    debug "readConfig WARNING: '$warning'\n", 9;
+    debug "read options: " . join(' ', map {$_ . '=' . $confopt{$_}} sort keys %confopt) . "\n", 9;
     return %confopt;
 }
 
@@ -3829,7 +3829,7 @@ sub testSuite {
 
 # Display basic info -- logging will happen later
 printit "\n$Script version $Version starting at " . (strftime "%H:%M:%S", localtime) . "\n", 1;
-printit "Command line: $0 @ARGV\n", 1;
+printit "Command line: $0 @ARGV\n", 3;
 
 # No options supplied -- display help and exit
 if (@ARGV == 0) {
@@ -3838,22 +3838,17 @@ if (@ARGV == 0) {
     exit EXITCONFIG;
 }
 
-print "XXXX 1\n";
 # Get and validate options
 if (processOptions() > 0) {
-print "XXXX 2\n";
     printlog "ERROR: Problems found in configuration -- stopping\n", 1;
     printlog "Try '$Script --help' or 'man $Script' for help.\n", 1;
     logit '-' x 80, 1;
     exit EXITCONFIG;
 }
-print "XXXX 3\n";
 
 # Help requested - display and exit
 if ($Opt{help}) {
-print "XXXX 4\n";
-# FIXME   showHelp;
-print "XXXX 5\n";
+    showHelp;
     exit EXITOK;
 }
 
