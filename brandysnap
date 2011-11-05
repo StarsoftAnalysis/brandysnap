@@ -496,7 +496,7 @@ sub stamp2time ($) {
 sub time2stamp ($) {
     # convert Unix time to filename timestamp
     my $time = shift;
-    return STAMPFMT0 if $time == 0;
+    return STAMPFMT0 if !$time or $time == 0;
     my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime($time);
     return strftime(STAMPFMT, localtime($time));
 }
@@ -678,31 +678,37 @@ sub processOptions () {
     # Merge options, so that config file options override the defaults,
     # and command-line options override everything else;
     %Opt = mergeOpts \%defopt, \%confopt, \%cmdopt;
+    
+    my $errorcount = 0;
+    my $warningcount = 0;
 
-    debug "what??\n", 1;
-    # Make sure multiple options really are arrays
-    foreach my $opt (keys %MultiOpt) {
-            debug "setting $opt as array\n", 3;
-        if ($Opt{$opt} and !(ref($Opt{$opt}) eq 'ARRAY')) {
-            debug "setting $opt as array\n", 3;
-            $Opt{$opt} = [$Opt{$opt}];
+    foreach my $opt (sort keys %Opt) {
+        if ($MultiOpt{$opt}) {
+            # Make sure multiple options really are arrays
+            foreach my $opt (keys %MultiOpt) {
+                if ($Opt{$opt} and !(ref($Opt{$opt}) eq 'ARRAY')) {
+                    $Opt{$opt} = [$Opt{$opt}];
+                }
+            }
+        } else {
+            # Make sure single options ARE single
+            if (ref($Opt{$opt})) {
+                printlog "ERROR: option '$opt' can not have more than one value\n", 1;
+                $errorcount += 1;
+            }
         }
     }
+    # Give up if this pre-validation failed
+    return $errorcount if $errorcount;
     
-    debug "Unvalidated final options: \n", 1;
-    displayOptions();
-    #foreach my $opt 
-    #. join(' ', 
-    #    map {$_ . '=' . $Opt{$_}} sort keys %Opt) . "\n", 1;
+    debug "Unvalidated final options: " . join(' ', 
+        map {$_ . '=' . $Opt{$_}} sort keys %Opt) . "\n", 1;
     
     # If user asked for help or version, or is running test mode,
     # don't do any more validation
     if ($Opt{help} or $Opt{version} or $Opt{test}) {
         return 0;
     }
-    
-    my $errorcount = 0;
-    my $warningcount = 0;
 
     # Sneaky trick to avoid trying to use logfile before it's been validated:
     $Opt{'logfile-temp'} = $Opt{logfile} if defined $Opt{logfile};
@@ -727,21 +733,11 @@ sub processOptions () {
     }
 
     # Multi-value options
-    foreach my $opt (sort keys %Opt) {
-        if ($MultiOpt{$opt}) {
-            # All multi-value options happen to be string options,
-            # so strip any unnecessary quotes
-            debug "mv option '$opt'...\n", 9;
-            for my $i (0..$#{$Opt{$opt}}) {
-                debug "...i=$i '${$Opt{$opt}}[$i]'\n", 9;
-                ${$Opt{$opt}}[$i] = stripQuotes(${$Opt{$opt}}[$i]);
-            }
-        } else {
-            # Make sure single options ARE single
-            if (ref($Opt{$opt})) {
-                printlog "ERROR: option '$opt' can not have more than one value\n", 1;
-                $errorcount += 1;
-            }
+    foreach my $opt (sort keys %MultiOpt) {
+        # All multi-value options happen to be string options,
+        # so strip any unnecessary quotes
+        for my $i (0..$#{$Opt{$opt}}) {
+            ${$Opt{$opt}}[$i] = stripQuotes(${$Opt{$opt}}[$i]);
         }
     }
 
@@ -2614,7 +2610,7 @@ sub findGoodPeriods ($$$\@) {
     #    debug "fGP: \@S is empty!\n", 3;
     #    return ($gpCount, @good);
     #}
-    my $oldestSnapshot = $S[-1];
+    my $oldestSnapshot = $S[-1] // MAXTIME;
     debug "fGP: range=" . pair2range($beg, $end) . " freqmin=$spec->{freqmin} periodn=$spec->{periodn} " . 
         "count=$spec->{count} oldestS=" . time2stamp($oldestSnapshot) . "\n", 3;
 
@@ -2674,7 +2670,7 @@ sub findGoodPeriodsNoCal ($$$\@) {
     #    debug "fGPnC: \@S is empty!\n", 3;
     #    return ($gpCount, @good);
     #}
-    my $oldestS = $S[-1];
+    my $oldestS = $S[-1] // MAXTIME;
     debug "\nfGPnC: range=" . pair2range($beg, $end) . " freqmin=$spec->{freqmin} periodn=$spec->{periodn} " . 
     "count=$spec->{count} oldestS=" . time2stamp($oldestS) . "\n", 3;
 
@@ -2897,7 +2893,7 @@ sub compileSpecs ($\@\%;$) {
                 beg       => $beg,
                 end       => $end,
                 freqmin   => $spec->{freqmin},
-                fremax    => -1,
+                freqmax   => -1,
                 period    => $spec->{period},
                 count     => $spec->{count},    # or 0,  ?
                 best      => 0,
@@ -2905,7 +2901,7 @@ sub compileSpecs ($\@\%;$) {
                 snapshots => snapshotsInPeriod(@S, $beg, $end), # should always be 0 -- we'll check
             };  
             debug "cS: 'empty' cSpec is not empty!!!!!!!!!!!!!!!!!!!!\n", 1 if snapshotsInPeriod(@S, $beg, $end) > 0 ;
-            debug "cS: created cSpec [5] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) . " freq=$cSpecs[-1]->{freq} count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . time2stamp($cSpecs[-1]->{beg}+$cSpecs[-1]->{best}) . " label=$cSpecs[-1]->{label} snapshots=$cSpecs[-1]->{snapshots}\n", 3;
+            debug "cS: created cSpec [5] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) . " freq=$cSpecs[-1]->{freqmin}-$cSpecs[-1]->{freqmax} count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . time2stamp($cSpecs[-1]->{beg}+$cSpecs[-1]->{best}) . " label=$cSpecs[-1]->{label} snapshots=$cSpecs[-1]->{snapshots}\n", 3;
             $p += 1;
             ($beg, $end) = prevPeriod($beg, $spec->{periodn});
         }
@@ -2925,7 +2921,7 @@ sub compileSpecs ($\@\%;$) {
         push @cSpecs, {
             beg       => $oldestS,
             end       => $end,
-            #freqmin   => $spec->{freqmin},
+            freqmin   => 0,
             freqmax   => 0,     # keep none of them
             period    => '',    # not a proper period
             count     => 1,     # there is 1 of these
@@ -2933,7 +2929,7 @@ sub compileSpecs ($\@\%;$) {
             label     => "old",
             snapshots => snapshotsInPeriod(@S, $oldestS, $end), 
         };  
-        debug "cS: created cSpec [6] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) . " freq=$cSpecs[-1]->{freqmax} count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . time2stamp($cSpecs[-1]->{beg}+$cSpecs[-1]->{best}) . " label=$cSpecs[-1]->{label} snapshots=$cSpecs[-1]->{snapshots}\n", 3;
+        debug "cS: created cSpec [6] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) . " freq=$cSpecs[-1]->{freqmin}-$cSpecs[-1]->{freqmax} count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . time2stamp($cSpecs[-1]->{beg}+$cSpecs[-1]->{best}) . " label=$cSpecs[-1]->{label} snapshots=$cSpecs[-1]->{snapshots}\n", 3;
     }
 
     # Double check that it's ok
