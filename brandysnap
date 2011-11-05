@@ -1438,7 +1438,7 @@ sub deleteSnapshots ($\@\%\@$) {
             debug "dS: not deleting newest snapshot because it was not created\n", 3;
         } else {
            printlog "Deleting snapshot " . snapshotName($d, %S) . 
-                " because there are too many for spec '" . $cSpecs[$ci]->{label} . "'\n", 2;
+                " because there are too many for spec '" . $cSpecs[$ci]->{label} . "'\n", 1;
            $errors += deleteSnapshot($dest, snapshotName($d, %S));
         }
     }
