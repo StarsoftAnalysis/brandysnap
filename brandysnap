@@ -2940,33 +2940,37 @@ sub displayCSpecs (\@;\%) {
     printlog "\nCompiled specs:\n", 2;  
     printlog   "---------------\n", 2;
 
-    # e.g.  From              To                F  P      C  Comment               Ss    Ds
-    #       20080101-111122 - 20090101-221111   0  d  99999  6d7.............30  9999  9999
-    printlog sprintf("%-15s - %-15s  %2s  %1s  %5s  %-30s  %4s  %4s\n",
-        'From', 'To', 'F', 'P', 'C', 'Comment', 'Ss', 'Ds'), 2;
-    printlog sprintf("%-15s - %-15s  %2s  %1s  %5s  %-30s  %4s  %4s\n",
-        '-'x15, '-'x15, '--', '-', '-----', '-'x30, '----', '----'), 2;
+    # e.g.  From              To                F  P      C  Comment               Ss    Xs    Ds
+    #       20080101-111122 - 20090101-221111   0  d  99999  6d7.............30  9999  9999  9999
+    printlog sprintf("%-15s - %-15s  %2s  %1s  %5s  %-30s  %4s  %4s  %4s\n",
+        'From', 'To', 'F', 'P', 'C', 'Comment', 'Ss', 'Xs', 'Ds'), 2;
+    printlog sprintf("%-15s - %-15s  %2s  %1s  %5s  %-30s  %4s  %4s  %4s\n",
+        '-'x15, '-'x15, '--', '-', '-----', '-'x30, '----', '----', '----'), 2;
+    my $totalS = 0;
     my $totalS = 0;
     my $totalD = 0;
     foreach my $c (@cSpecs) { 
-        printlog sprintf("%s - %s  %2d  %1s  %5s  %-30s  %4s  %4s\n",
+        my $excess = $c->{sgood}+$c->{sbad} - $c->{freq};   # how many to delete
+        printlog sprintf("%s - %s  %2d  %1s  %5s  %-30s  %4s  %4s  %4s\n",
             time2stamp($c->{beg}), 
             time2stamp($c->{end}),
             $c->{freq}, 
             $c->{period}, 
             $c->{count} eq UNLIMITED ? 'all' : $c->{count},
             $c->{label}, 
-            $c->{snapshots},
+            $c->{sgood},
+            $c->{sbad},
             # calculate/predict no. of deletions as excess snapshots:
-            ($c->{freq} > 0 and $c->{snapshots} > $c->{freq}) ? $c->{snapshots}-$c->{freq} : '',
+            $excess > 0 ? $excess : '',
         ), 2;
-        $totalS += $c->{snapshots};
-        $totalD += ($c->{freq} > 0 and $c->{snapshots} > $c->{freq}) ? $c->{snapshots}-$c->{freq} : 0;
+        $totalS += $c->{sgood};
+        $totalX += $c->{sbad};
+        $totalD += $excess if $excess > 0;
     }
-    printlog sprintf("%-15s   %-15s  %2s  %1s  %5s  %-30s  %4s  %4s\n",
-        '', '', '', '', '', '-' x 30, '----', '----'), 2;
-    printlog sprintf("%-15s   %-15s  %2s  %1s  %5s  %-30s  %4s  %4s\n",
-        '', '', '', '', '', 'Totals:', $totalS, $totalD), 2;
+    printlog sprintf("%-15s   %-15s  %2s  %1s  %5s  %-30s  %4s  %4s  %4s\n",
+        '', '', '', '', '', '-' x 30, '----', '----', '----'), 2;
+    printlog sprintf("%-15s   %-15s  %2s  %1s  %5s  %-30s  %4s  %4s  %4s\n",
+        '', '', '', '', '', 'Totals:', $totalS, $totalX, $totalD), 2;
 
     # Visualise each cSpec period
     if ($Sref) {
