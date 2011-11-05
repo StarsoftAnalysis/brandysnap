@@ -87,7 +87,7 @@ $SIG{TERM} = 'IGNORE';
 $| = 1;
 
 # version of this script
-my $Version = '0.1.13hacked';
+my $Version = '0.1.13';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
