@@ -641,9 +641,6 @@ sub processOptions () {
         return 1 unless $GOok;  
     }
 
-    debug "\%cmdopt: " . join(' ', map {$_ . '=>' . $cmdopt{$_}} sort keys %cmdopt) . "\n", 9;
-debug "what? 2\n", 1;
-
     # If config file specified, make sure it's readable, and read it
     if ($cmdopt{config}) {
         $cmdopt{config} = absPath($cmdopt{config});
@@ -654,17 +651,17 @@ debug "what? 2\n", 1;
             return 1;
         }
     }
+
     debug "def  options: " . join(' ', 
         map {$_ . '=' . $defopt{$_}}  sort keys %defopt)  . "\n", 9;
     debug "conf options: " . join(' ', 
         map {$_ . '=' . $confopt{$_}} sort keys %confopt) . "\n", 9;
     debug "cmd  options: " . join(' ', 
         map {$_ . '=' . $cmdopt{$_}}  sort keys %cmdopt)  . "\n", 9;
-debug "what? 3\n", 1;
     
     # Merge options, so that config file options override the defaults,
     # and command-line options override everything else;
-    %Opt = mergeOpts \%defopt, \%confopt, \%cmdopt;
+    %Opt = mergeOpts(\%defopt, \%confopt, \%cmdopt);
 
     # Sneaky trick to avoid trying to use logfile before it's been validated:
     $Opt{'logfile-temp'} = $Opt{logfile} if defined $Opt{logfile};
@@ -697,6 +694,7 @@ debug "what? 3\n", 1;
             # This is an error because it's probably a miss-spelled option, 
             # or the user doesn't know what they're doing
             $errorcount += 1;
+            delete $Opt{$opt};  # don't consider it further
         }
     }
 
