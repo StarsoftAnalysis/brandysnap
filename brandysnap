@@ -2042,7 +2042,7 @@ sub visualise ($$$$@) {
     my $end        = shift;
     my $showPeriod = shift;
     my $best       = shift // 0; 
-    my $labelwidth = 5;
+    my $labelwidth = 8;
     #my ($columns, $rows) = Term::Size::chars *STDOUT{IO};
     #$columns = max($columns, 132); # minimum, and also if there's no tty
     my $columns = 80;
