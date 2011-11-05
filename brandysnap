@@ -2036,25 +2036,27 @@ sub getSnapshotList ($) {
 sub visualise ($$$$$$@) {
     # Draw a pretty picture of the actual and ideal snapshots
     # given pairs of (label, array)
+    # TODO distinguish good and bad snapshots
     my $beg        = shift;
     my $end        = shift;
     my $showPeriod = shift;
     my $plevel     = shift;
     my $llevel     = shift;
     my $best       = shift; 
-    # FIXME if plevel/llevel mean there will be no output, then just return
+    # If plevel/llevel mean there will be no output, just return
+    return if $plevel < $Opt{verbose} and $llevel < $Opt{loglevel};
     my $labelwidth = 8;
     #my ($columns, $rows) = Term::Size::chars *STDOUT{IO};
     #$columns = max($columns, 132); # minimum, and also if there's no tty
     my $columns = 80;
     my $size = $columns - $labelwidth - 3;  # - 18; # -18 for log timestamp
     my $scale = ceil(($end - $beg) / $size);    
-    debug "visualise: beg=$beg end=$end (" . fmtRange($beg,$end) . ") size=$size scale=$scale\n", 1;
+    debug "visualise: beg=$beg end=$end (" . fmtRange($beg,$end) . ") size=$size scale=$scale\n", 9;
 
     while (@_ > 1) {
         my $label = pack("A$labelwidth", shift);    # force label to specified width
         my @a     = @{(shift)};
-        debug "vis: label=$label\n", 1;
+        debug "vis: label=$label\n", 9;
         my @points = (0) x ($size+1);
         A: foreach my $a (@a) {
             my $pos = floor(($a - $beg) / $scale);
@@ -2947,11 +2949,15 @@ sub displayCSpecs (\@;\%) {
     printlog sprintf("%-15s - %-15s  %2s  %1s  %5s  %-30s  %4s  %4s  %4s\n",
         '-'x15, '-'x15, '--', '-', '-----', '-'x30, '----', '----', '----'), 2;
     my $totalS = 0;
-    my $totalS = 0;
+    my $totalX = 0;
     my $totalD = 0;
     foreach my $c (@cSpecs) { 
-        my $excess = $c->{sgood}+$c->{sbad} - $c->{freq};   # how many to delete
-        printlog sprintf("%s - %s  %2d  %1s  %5s  %-30s  %4s  %4s  %4s\n",
+        my $excess = 0; # how many to delete
+        if ($c->{freq} > 0 and 
+            $c->{sgood} + $c->{sbad} > $c->{freq}) {
+            $excess = $c->{sgood}+$c->{sbad} - $c->{freq};
+        }
+        printlog sprintf("%s - %s  %2d  %1s  %5s  %-30s  %4d  %4d  %4.0d\n",
             time2stamp($c->{beg}), 
             time2stamp($c->{end}),
             $c->{freq}, 
@@ -2960,16 +2966,15 @@ sub displayCSpecs (\@;\%) {
             $c->{label}, 
             $c->{sgood},
             $c->{sbad},
-            # calculate/predict no. of deletions as excess snapshots:
-            $excess > 0 ? $excess : '',
+            $excess,
         ), 2;
         $totalS += $c->{sgood};
         $totalX += $c->{sbad};
-        $totalD += $excess if $excess > 0;
+        $totalD += $excess;
     }
     printlog sprintf("%-15s   %-15s  %2s  %1s  %5s  %-30s  %4s  %4s  %4s\n",
         '', '', '', '', '', '-' x 30, '----', '----', '----'), 2;
-    printlog sprintf("%-15s   %-15s  %2s  %1s  %5s  %-30s  %4s  %4s  %4s\n",
+    printlog sprintf("%-15s   %-15s  %2s  %1s  %5s  %-30s  %4d  %4d  %4d\n",
         '', '', '', '', '', 'Totals:', $totalS, $totalX, $totalD), 2;
 
     # Visualise each cSpec period
