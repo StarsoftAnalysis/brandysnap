@@ -1642,7 +1642,7 @@ sub status ($\%;\@) {
             my ($dsize, $asize) = snapshotInfo($dest, $name);
             my $label = '';
             if (!$S{$s}) {
-                # find which cSpec applies (complete snapshots only)
+                # Find which cSpec applies (complete snapshots only)
                 while (@cSpecs and $cSpecs[$ci]->{beg} > $s) { 
                     $ci += 1; 
                 }; 
