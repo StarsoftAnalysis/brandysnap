@@ -1210,6 +1210,60 @@ sub sourceDir ($) {
 
 #---------------------------------------------------------------------------------------------------
 
+sub snapshotInfoRemote ($$) {
+    # Get snapshot information for a remote destination via rsync.
+    # rsync returns directory listings thusly (even for recent dates):
+    #    -rwxr-xr-x         149 2008/06/13 13:56:30 textsmart
+    #    drwxr-xr-x        4096 2011/05/07 17:41:48 40dnamer
+    # and gives return code 23 if the directory is not found
+    # 255 for wrong password, unknown host etc.
+    # Note the lack of nlink information, so we can't calculate 'delete size'.
+
+    my $dest = shift;
+    my $dir  = shift;  # name of subfolder (initially the snapshot name)
+    my $path = "$dest/$dir";    # not catdir!
+    debug "sIR: path=$path\n", 3;
+
+    my $totalSize = 0;
+
+    # Get rsync listing into a temporary file
+    my @items;
+    my ($fh, $filename) = tempfile(UNLINK => 1);
+    my $remPath = $Opt{'remote-rsync-cmd'} ? "--rsync-path '$Opt{'remote-rsync-cmd'}'" : '';
+    my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
+        "$remPath --recursive --bwlimit=$Opt{'bwlimit-in'} '$path/'", 9,9, $fh);
+    debug "sIR: rc=$rc rc2='$rc2' filename=$filename\n", 3;
+    if ($rc) {
+        return (0, 0);
+    }
+
+    seek $fh, 0, 0;
+    while (my $item = readline $fh) {
+        debug "sIR: item = $item", 9;
+        # matching e.g.: 'drwxr-xr-x        4096 2011/05/07 17:41:48 40dnamer'
+        if ($item =~ m|^(?<t>.)(?<p>.{9})\s+(?<size>\d+)\s\d{4}/\d{2}/\d{2}\s\d{2}:\d{2}:\d{2}\s(?<name>.*)$|) {
+            next if $+{name} eq '.';
+            next if $+{name} eq '..';
+            if ($+{t} eq '-' or $+{t} eq 'l' or $+{t} eq 'd') {
+                # file or symbolic link or directory
+                # (we're not following the symbolic link, just counting the space of the link itself)
+                # (and we're counting the directory itself, not its contents)
+                debug "sIR: t=$+{t} size=$+{size} name=$+{name}\n", 9;
+                $totalSize += ceil($+{size} / 512) * 512; # a function for this TODO
+            } else {
+                # (ignore anything other than files and directories)
+            }
+        } else {
+            # (ignore any non-matching lines)
+            debug "sIR: ignoring $item\n", 3;
+        }
+    }
+
+    return $totalSize;
+}
+
+#---------------------------------------------------------------------------------------------------
+
 sub snapshotInfo ($$) {
     # Get the amount of space that would be freed by deleting a file or directory.
     # The value returned is a number of blocks, which ought to be 512 bytes each.
@@ -1269,118 +1323,6 @@ sub snapshotInfo ($$) {
     return ($DStotalBlocks * 512, $AStotalBlocks * 512);
 }
 
-#---------------------------------------------------------------------------------------------------
-
-sub snapshotInfoRemote0 ($$) {  # old version
-    # Recursively get snapshot information for a remote destination via rsync.
-    # rsync returns directory listings thusly (even for recent dates):
-    #    -rwxr-xr-x         149 2008/06/13 13:56:30 textsmart
-    #    drwxr-xr-x        4096 2011/05/07 17:41:48 40dnamer
-    # and gives return code 23 if the directory is not found
-    # 255 for wrong password, unknown host etc.
-    # Note the lack of nlink information, so we can't calculate 'delete size'.
-
-    my $dest = shift;
-    my $dir  = shift;  # name of subfolder (initially the snapshot name)
-    my $path = "$dest/$dir";    # not catdir!
-    debug "sIR: path=$path\n", 9;
-
-    my $totalSize = 0;
-
-    # Get rsync listing
-    my @items;
-    my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, "--bwlimit=$Opt{'bwlimit-in'} '$path/'", 9,9, \@items);
-    if ($rc) {
-        debug "sIR: rc=$rc rc2=$rc2\n", 9;
-        return (0, 0);
-    }
-
-    debug "sIR: items: @items", 9;
-    # Recursively process the items
-    # Note, since this directory was created by this script on a previous run,
-    # we'll assume we've got read access to everything (for now)
-    foreach my $item (@items) {
-        debug "sIR: item = $item\n", 9;
-        # matching e.g.: 'drwxr-xr-x        4096 2011/05/07 17:41:48 40dnamer'
-        if ($item =~ m|^(?<t>.)(?<p>.{9})\s+(?<size>\d+)\s\d{4}/\d{2}/\d{2}\s\d{2}:\d{2}:\d{2}\s(?<name>.*)$|) {
-            next if $+{name} eq '.';
-            next if $+{name} eq '..';
-            if ($+{t} eq 'd') {
-                debug "sIR: dir: t=$+{t} size=$+{size} name=$+{name} $item\n", 9;
-                # directory -- recurse
-                my $ast = snapshotInfoRemote($path, $+{name});
-                debug "sIR: unrecursing, ast=$ast\n", 9;
-                $totalSize += $ast;
-            } elsif ($+{t} eq '-' or $+{t} eq 'l') {
-                # file or symbolic link
-                # (we're not following the symbolic link, just counting the space of the link itself)
-                debug "sIR: file: t=$+{t} size=$+{size} name=$+{name} item=$item\n", 9;
-                $totalSize += ceil($+{size} / 512) * 512; # a function for this TODO
-            } else {
-                # (ignore anything other than files and directories)
-            }
-        } else {
-            # (ignore any non-matching lines)
-            debug "sIR: ignoring $item\n", 3;
-        }
-    }
-
-    return $totalSize;
-}
-
-#---------------------------------------------------------------------------------------------------
-
-sub snapshotInfoRemote ($$) {
-    # Get snapshot information for a remote destination via rsync.
-    # rsync returns directory listings thusly (even for recent dates):
-    #    -rwxr-xr-x         149 2008/06/13 13:56:30 textsmart
-    #    drwxr-xr-x        4096 2011/05/07 17:41:48 40dnamer
-    # and gives return code 23 if the directory is not found
-    # 255 for wrong password, unknown host etc.
-    # Note the lack of nlink information, so we can't calculate 'delete size'.
-
-    my $dest = shift;
-    my $dir  = shift;  # name of subfolder (initially the snapshot name)
-    my $path = "$dest/$dir";    # not catdir!
-    debug "sIR: path=$path\n", 3;
-
-    my $totalSize = 0;
-
-    # Get rsync listing into a temporary file
-    my @items;
-    my ($fh, $filename) = tempfile(UNLINK => 1);
-    my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
-        "--recursive --bwlimit=$Opt{'bwlimit-in'} '$path/'", 9,9, $fh);
-    debug "sIR: rc=$rc rc2=$rc2 filename=$filename\n", 3;
-    if ($rc) {
-        return (0, 0);
-    }
-
-    seek $fh, 0, 0;
-    while (my $item = readline $fh) {
-        debug "sIR: item = $item", 9;
-        # matching e.g.: 'drwxr-xr-x        4096 2011/05/07 17:41:48 40dnamer'
-        if ($item =~ m|^(?<t>.)(?<p>.{9})\s+(?<size>\d+)\s\d{4}/\d{2}/\d{2}\s\d{2}:\d{2}:\d{2}\s(?<name>.*)$|) {
-            next if $+{name} eq '.';
-            next if $+{name} eq '..';
-            if ($+{t} eq '-' or $+{t} eq 'l' or $+{t} eq 'd') {
-                # file or symbolic link or directory
-                # (we're not following the symbolic link, just counting the space of the link itself)
-                # (and we're counting the directory itself, not its contents)
-                debug "sIR: t=$+{t} size=$+{size} name=$+{name}\n", 9;
-                $totalSize += ceil($+{size} / 512) * 512; # a function for this TODO
-            } else {
-                # (ignore anything other than files and directories)
-            }
-        } else {
-            # (ignore any non-matching lines)
-            debug "sIR: ignoring $item\n", 3;
-        }
-    }
-
-    return $totalSize;
-}
-
 #===================================================================================================
 
 # Snapshot stuff 
@@ -1429,8 +1371,10 @@ sub deleteSnapshot ($$) {
         my @output;
         debug "dS: deleting snapshot the new way\n", 3;
         #my $cmd = "$Opt{'rsync-cmd'} --dirs -f 'R /$snapshot/**' -f '-!r /$snapshot' --delete $EmptyDir/ $dest/";
+        my $remPath = $Opt{'remote-rsync-cmd'} ? "--rsync-path '$Opt{'remote-rsync-cmd'}'" : '';
         my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
-            " --dirs -f 'R /$snapshot/**' -f '-!r /$snapshot' --delete $EmptyDir/ $dest/", 0,0, \@output); # FIXME
+            "$remPath --dirs -f 'R /$snapshot/**' -f '-!r /$snapshot' --delete $EmptyDir/ $dest/", 
+            9,9, \@output); 
         #debug "dS: delete cmd: '$cmd'\n", 3;
         #my $output = `$cmd`;
         debug "dS: rsync output: \n@output", 3;
@@ -2037,13 +1981,17 @@ sub getSnapshotList ($) {
     # returning a list of snapshot dates extracted from their directory names
     # as a hash, with flags indicating partial snapshots
     # Uses rsync in case the destination is remote.
-    my $dir = shift;
+    my $dest = shift;
     my $template = $Opt{template};  
     my %S;
-    debug "gSL: dir=$dir template=$Opt{template}\n", 9;
+    debug "gSL: dest=$dest template=$Opt{template}\n", 9;
     my @listing;
+    my $remPath = '';
+    if (remote($dest) and $Opt{'remote-rsync-cmd'}) {
+       $remPath = "--rsync-path '$Opt{'remote-rsync-cmd'}'";
+    }
     my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
-        "--bwlimit=$Opt{'bwlimit-in'} '$dir/'", 9,9, \@listing);    
+        "$remPath --bwlimit=$Opt{'bwlimit-in'} '$dest/'", 9,9, \@listing);    
     debug "gsL: rc=$rc listing: @listing n=" . scalar @listing ."\n", 9;
     return %S if $rc;
     foreach (@listing) {
