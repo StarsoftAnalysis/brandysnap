@@ -2036,7 +2036,8 @@ sub getSnapshotList ($) {
 sub visualise ($$$$$$@) {
     # Draw a pretty picture of the actual and ideal snapshots
     # given pairs of (label, array)
-    # TODO distinguish good and bad snapshots
+    # Doesn't distinguish good and bad snapshots -- the caller
+    # should visualise bad snapshots separately.
     my $beg        = shift;
     my $end        = shift;
     my $showPeriod = shift;
@@ -2727,15 +2728,7 @@ sub compileSpecs ($\@\%;$) {
     my %S          = %{(shift)};    
     my $quiet       = shift // 0;   
 
-    # FIXME !! gDL expects cSpecs to cover the range of all (good and bad) snapshots
-    #          which is reasonable.
-    #          So somehow this sub needs to look at bad ones too, at least when filling
-    #          the trailing cSpecs
-    #          Maybe setting oldestS to include the bad ones will do it.
-    # That seems to do it.
-    # But displaySpecs and visualise need to get the full list -- good and bad.  FIXME
     my $oldestS = $now; # Time of oldest snapshot
-    ## Make @S here just contain the good ones
     # List good and bad snapshots separately
     my (@Sgood, @Sbad);
     foreach my $s (rsort keys %S) {
@@ -2979,17 +2972,23 @@ sub displayCSpecs (\@;\%) {
 
     # Visualise each cSpec period
     if ($Sref) {
-        my @S;
-        # Create array of all snapshots
+        my (@Sgood, @Sbad);
+        # Create arrays of good and bad snapshots
         foreach my $s (rsort keys %$Sref) {
-            #push @S, $s if !$$Sref{$s};
-            push @S, $s;
+            push @Sgood, $s if !$$Sref{$s};
+            push @Sbad,  $s if $$Sref{$s};
         }
         printlog "\nDistribution of existing snapshots within each compiled spec\n", 2;
         printlog "------------------------------------------------------------\n", 2;
         foreach my $c (@cSpecs) {
-            my @SiP = snapshotsInPeriod(@S, $c->{beg}, $c->{end}, 1);
+            my @SiP = snapshotsInPeriod(@Sgood, $c->{beg}, $c->{end}, 1);
             visualise($c->{beg}, $c->{end}, 1, 2,2, 0, $c->{label} => \@SiP);
+            if (@Sbad) {
+                @SiP = snapshotsInPeriod(@Sbad, $c->{beg}, $c->{end}, 1);
+                if (@SiP) {
+                    visualise($c->{beg}, $c->{end}, 1, 2,2, 0, ' bad' => \@SiP);
+                }
+            }
         }
     }
 
