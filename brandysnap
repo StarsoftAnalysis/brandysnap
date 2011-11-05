@@ -335,7 +335,7 @@ sub logit ($;$) {
     # Simple logging to a text file,
     # preserving newlines in the text 
     # while adding a timestamp
-    return if !defined $Opt{logfile};
+    return if !defined $Opt{validLogfile};
     my $text  = shift;
     my $level = shift // 1;
     return if $Opt{loglevel} < $level;
@@ -344,7 +344,7 @@ sub logit ($;$) {
     my $now  = strftime "%y/%m/%d %H:%M:%S ", localtime;
     my $oldfh = select LOGFILE;
     $| = 1;
-    open  LOGFILE, '>>', "$Opt{logfile}" or die "Unable to write to logfile $Opt{logfile}";
+    open  LOGFILE, '>>', "$Opt{validLogfile}" or die "Unable to write to logfile $Opt{validLogfile}";
     print LOGFILE "${leadingnl}${now}${text}\n";
     close LOGFILE;
     select $oldfh;
@@ -521,17 +521,18 @@ sub pair2range ($$) {
 # - then validate
 
 sub readConfig ($) {
+    # Read in options from the given filename
     my $cfile = shift;
     my %confopt = ();
     my $warning = '';
-    if (-f -r $cfile) {
-        local $SIG{__WARN__} = sub { $warning = "@_"; }; # or $_[0]
-        %confopt = ParseConfig(
-            -ConfigFile => $cfile,
-            -LowerCaseNames => 1,
-            -AutoTrue => 1,     # convert true,yes,on to 1; false,no,off to 0
-        );
-    }
+    # Trap any warnings from ParseConfig
+    local $SIG{__WARN__} = sub { $warning = "@_"; }; # or $_[0]
+    # Parse the config file, and store the results in %confopt
+    %confopt = ParseConfig(
+        -ConfigFile => $cfile,
+        -LowerCaseNames => 1,
+        -AutoTrue => 1,     # convert true,yes,on to 1; false,no,off to 0
+    );
     debug "readConfig WARNING: '$warning'\n", 9;
     debug "read options: " . join(' ', map {$_ . '=' . $confopt{$_}} sort keys %confopt) . "\n", 9;
     return %confopt;
@@ -656,8 +657,6 @@ sub processOptions () {
         return 1 unless $GOok;  
     }
 
-    debug "\%cmdopt: " . join(' ', map {$_ . '=>' . $cmdopt{$_}} sort keys %cmdopt) . "\n", 9;
-
     # If config file specified, make sure it's readable, and read it
     if ($cmdopt{config}) {
         $cmdopt{config} = absPath($cmdopt{config});
@@ -668,6 +667,7 @@ sub processOptions () {
             return 1;
         }
     }
+
     debug "def  options: " . join(' ', 
         map {$_ . '=' . $defopt{$_}}  sort keys %defopt)  . "\n", 9;
     debug "conf options: " . join(' ', 
@@ -678,10 +678,15 @@ sub processOptions () {
     # Merge options, so that config file options override the defaults,
     # and command-line options override everything else;
     %Opt = mergeOpts(\%defopt, \%confopt, \%cmdopt);
+
+    ## Sneaky trick to avoid trying to use logfile before it's been validated:
+    #$Opt{'logfile-temp'} = $Opt{logfile} if defined $Opt{logfile};
+    #delete $Opt{logfile};
     
     my $errorcount = 0;
     my $warningcount = 0;
 
+    # Pre-validation of single and multiple options
     foreach my $opt (sort keys %Opt) {
         if ($MultiOpt{$opt}) {
             # Make sure multiple options really are arrays
@@ -693,13 +698,13 @@ sub processOptions () {
         } else {
             # Make sure single options ARE single
             if (ref($Opt{$opt})) {
-                printlog "ERROR: option '$opt' can not have more than one value\n", 1;
-                $errorcount += 1;
+                printlog "WARNING: Option '$opt' can not have more than one value:\n", 1;
+                printlog "         the last value '$Opt{$opt}[-1]' will be used\n", 1;
+                $warningcount += 1;
+                $Opt{$opt} = $Opt{$opt}[-1];
             }
         }
     }
-    # Give up if this pre-validation failed
-    return $errorcount if $errorcount;
     
     debug "Unvalidated final options: " . join(' ', 
         map {$_ . '=' . $Opt{$_}} sort keys %Opt) . "\n", 1;
@@ -710,14 +715,10 @@ sub processOptions () {
         return 0;
     }
 
-    # Sneaky trick to avoid trying to use logfile before it's been validated:
-    $Opt{'logfile-temp'} = $Opt{logfile} if defined $Opt{logfile};
-    delete $Opt{logfile};
-
     # Check for missing options
     foreach my $ropt (@ReqOpt) {
         unless ($Opt{$ropt}) {
-            printlog "ERROR: required option '$ropt' is missing\n", 1;
+            printlog "ERROR: Required option '$ropt' is missing\n", 1;
             $errorcount += 1;
         }
     }
@@ -725,12 +726,16 @@ sub processOptions () {
     # Check for unknown options
     foreach my $opt (sort keys %Opt) {
         unless ($AllOpt{$opt}) {
-            printlog "ERROR: unknown option '$opt' found\n", 1;
+            printlog "ERROR: Unknown option '$opt' found\n", 1;
             # This is an error because it's probably a miss-spelled option, 
             # or the user doesn't know what they're doing
             $errorcount += 1;
+            delete $Opt{$opt};  # don't consider it further
         }
     }
+
+    # Give up here if there have been missing or unknown options
+    return $errorcount if $errorcount;
 
     # Multi-value options
     foreach my $opt (sort keys %MultiOpt) {
@@ -747,27 +752,27 @@ sub processOptions () {
     }
 
     # Logging (check this first, so that we can log later errors).
-    # logfile must be local
-    $Opt{logfile} = $Opt{'logfile-temp'};
-    delete $Opt{'logfile-temp'};
+    # Note that, once validated, the 'logfile' option is copied to
+    # $Opt{validLogfile}, which is what is used by logit().
+    # The logfile must be local.
     if (!$Opt{logfile}) {
-        # no logfile, so no logging
+        # No logfile, so no logging
         $Opt{loglevel} = 0;
-        delete $Opt{logfile};
     } else {
         $Opt{logfile} = absPath($Opt{logfile});
-        # check that the logfile is a writable file, or if it does not
-        # exist, will be in a writable directory
-        unless (-f -w $Opt{logfile} or
-                -d -w dirname($Opt{logfile})) {
+        # Check that the logfile is a writable file, 
+        # or if it does not exist, will be in a writable directory
+        if (-f -w $Opt{logfile} or
+            -d -w dirname($Opt{logfile})) {
+            $Opt{validLogfile} = $Opt{logfile};
+        } else {
             printit "ERROR: Logfile '$Opt{logfile}' (option 'logfile') can not be written\n", 1;
-            delete $Opt{logfile};
             $Opt{loglevel} = 0;
             $errorcount += 1;
         }
     }
 
-    # Add basic info to logfile
+    # Add basic info to logfile (which couldn't be done before we had a valid logfile)
     logit "\n" . '-' x 80, 1;
     logit "\n$Script version $Version starting at " . (strftime "%H:%M:%S", localtime) . "\n", 1;
     logit "Command line: $0 @ARGVcopy\n", 3;
@@ -856,7 +861,7 @@ sub processOptions () {
         $local = 1 if !remote($dest);
     }
     if (!$local) {
-        printlog "ERROR: at least one source or destination must be local\n", 1;
+        printlog "ERROR: At least one source or destination must be local\n", 1;
         $errorcount += 1;
     }
 
@@ -881,7 +886,7 @@ sub processOptions () {
                 "not '$Opt{$opt}'\n", 1,1;
             return 1;
         }
-        return 0
+        return 0;
     }
     foreach my $opt (@BoolOpt) {
         $errorcount += checkBoolean $opt;
@@ -2021,7 +2026,7 @@ sub visualise ($$$$@) {
     my $end        = shift;
     my $showPeriod = shift;
     my $best       = shift // 0; 
-    my $labelwidth = 5;
+    my $labelwidth = 8;
     #my ($columns, $rows) = Term::Size::chars *STDOUT{IO};
     #$columns = max($columns, 132); # minimum, and also if there's no tty
     my $columns = 80;
@@ -3847,6 +3852,7 @@ printit "Command line: $0 @ARGV\n", 3;
 
 # No options supplied -- display help and exit
 if (@ARGV == 0) {
+    printit "ERROR: No options given\n"; 
     showHelp;
     exit EXITCONFIG;
 }
