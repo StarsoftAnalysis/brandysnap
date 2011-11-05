@@ -94,7 +94,14 @@ Each spec is of the form
 
 	<frequency><period><count>
 
-The 'frequency' is the number of snapshots to be kept in each period.  It can be any number from 1 to ...whatever is reasonable.  Note that this is not the number of snapshots that will be CREATED -- that is determined simply by how often brandysnap is run, and that will usually be down to the way that cron is configured.
+or
+
+	<minimum frequency> - <maximum frequency><period><count>
+
+The 'frequency' is the number of snapshots to be kept in each period.  
+It can be a single number from 1 to...whatever is reasonable.  Or it can be a minimum-maximum range: for example I<0-4> means 'keep between 0 and 4 snapshots in this period'.
+
+Note that the frequency is not the number of snapshots that will be CREATED -- that is determined simply by how often brandysnap is run, and that will usually be down to the way that cron is configured.
 
 The 'period' is a single letter indicating the time period.  It can be one of
 
@@ -145,6 +152,10 @@ B<1d> - just keep 1 backup every day, with no limit to the number of backups.
 =item * 
 
 B<1h24,4d6,3w3,4m11> - one an hour for the first day, then 4 a day for the rest of the week then 3 a week for the rest of the month, then 4 a month to give a whole year of snapshots.
+
+=item *
+
+B<0-6d5,2-5w3,4m12> - keep up to 6 snapshots a day for five days, but consider days with no snapshots at all to be valid; them keep between 2 and 5 a week for three weeks, then keep snapshots for 12 months with 4 snapshots in each.
 
 =item * 
 
@@ -502,7 +513,7 @@ deleting any partially completed snapshot if possible.
 
 =head1 KNOWN ISSUES
 
-As of 25 October 2011 and version 0.1.13, the following issues and bugs are known.
+As of 5 November 2011 and version 0.1.14, the following issues and bugs are known.
 
 =over
 

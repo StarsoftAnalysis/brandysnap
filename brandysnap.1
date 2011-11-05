@@ -124,7 +124,7 @@
 .\" ========================================================================
 .\"
 .IX Title "BRANDYSNAP 1"
-.TH BRANDYSNAP 1 "2011-10-25" "perl v5.10.1" "User Contributed Perl Documentation"
+.TH BRANDYSNAP 1 "2011-11-05" "perl v5.10.1" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -223,7 +223,16 @@ Each spec is of the form
 \&        <frequency><period><count>
 .Ve
 .PP
-The 'frequency' is the number of snapshots to be kept in each period.  It can be any number from 1 to ...whatever is reasonable.  Note that this is not the number of snapshots that will be \s-1CREATED\s0 \*(-- that is determined simply by how often brandysnap is run, and that will usually be down to the way that cron is configured.
+or
+.PP
+.Vb 1
+\&        <minimum frequency> \- <maximum frequency><period><count>
+.Ve
+.PP
+The 'frequency' is the number of snapshots to be kept in each period.  
+It can be a single number from 1 to...whatever is reasonable.  Or it can be a minimum-maximum range: for example \fI0\-4\fR means 'keep between 0 and 4 snapshots in this period'.
+.PP
+Note that the frequency is not the number of snapshots that will be \s-1CREATED\s0 \*(-- that is determined simply by how often brandysnap is run, and that will usually be down to the way that cron is configured.
 .PP
 The 'period' is a single letter indicating the time period.  It can be one of
 .IP "\(bu" 4
@@ -256,6 +265,8 @@ More spec examples:
 \&\fB1d\fR \- just keep 1 backup every day, with no limit to the number of backups.
 .IP "\(bu" 4
 \&\fB1h24,4d6,3w3,4m11\fR \- one an hour for the first day, then 4 a day for the rest of the week then 3 a week for the rest of the month, then 4 a month to give a whole year of snapshots.
+.IP "\(bu" 4
+\&\fB0\-6d5,2\-5w3,4m12\fR \- keep up to 6 snapshots a day for five days, but consider days with no snapshots at all to be valid; them keep between 2 and 5 a week for three weeks, then keep snapshots for 12 months with 4 snapshots in each.
 .IP "\(bu" 4
 \&...
 .PP
@@ -546,7 +557,7 @@ is shutting down, or the user has pressed ctrl-C, while rsync is running, it tra
 deleting any partially completed snapshot if possible.
 .SH "KNOWN ISSUES"
 .IX Header "KNOWN ISSUES"
-As of 25 October 2011 and version 0.1.13, the following issues and bugs are known.
+As of 5 November 2011 and version 0.1.14, the following issues and bugs are known.
 .IP "\(bu" 4
 The option \fB\-\-remote\-rsync\-cmd\fR can only be specified once, and applies to all remote sources and directories.
 .IP "\(bu" 4

@@ -1,4 +1,11 @@
 Changelog for Brandysnap
+
+0.1.14	5/11/11
+
+* allow range (minimum - maximum) on number of snapshots in a period, aka the 'frequency'
+* fixes to option checking
+* fixes for remote destinations
+* fixes re handling incomplete snapshots
  
 0.1.13	24/10/11 
 * adjustments to signal handling 
