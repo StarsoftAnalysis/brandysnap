@@ -2146,7 +2146,7 @@ sub snapshotsInPeriod (\@$$;$) {
     foreach my $s (@S) {
         last if $s < $beg;
         if ($s < $end) {
-            $count += 1 
+            $count += 1;
             push @SIP, $s;
         }
     }
@@ -2725,7 +2725,6 @@ sub compileSpecs ($\@\%;$) {
     my %S          = %{(shift)};    
     my $quiet       = shift // 0;   
 
-    # Make @S here just contain the good ones
     # FIXME !! gDL expects cSpecs to cover the range of all (good and bad) snapshots
     #          which is reasonable.
     #          So somehow this sub needs to look at bad ones too, at least when filling
@@ -2733,10 +2732,13 @@ sub compileSpecs ($\@\%;$) {
     #          Maybe setting oldestS to include the bad ones will do it.
     # That seems to do it.
     # But displaySpecs and visualise need to get the full list -- good and bad.  FIXME
-    my @S;
-    my $oldestS = $now;
+    my $oldestS = $now; # Time of oldest snapshot
+    ## Make @S here just contain the good ones
+    # List good and bad snapshots separately
+    my (@Sgood, @Sbad);
     foreach my $s (rsort keys %S) {
-        push @S, $s if !$S{$s};
+        push @Sgood, $s if !$S{$s};
+        push @Sbad, $s  if $S{$s};
         $oldestS = $s if $s < $oldestS; # including the bad ones
     }
 
@@ -2754,7 +2756,6 @@ sub compileSpecs ($\@\%;$) {
 
     # Not like this -- need to take account of bad ones too
     #my $oldestS = @S ? $S[-1] : $now; # back to the oldestS idea
-
 
     my $end = $now + 1; # +1 to ensure 'now' is within the current period
     debug "cS: starting with oldestS=" . time2stamp($oldestS) . ", end=" . time2stamp($end) . "\n", 3;
@@ -2779,24 +2780,25 @@ sub compileSpecs ($\@\%;$) {
         if (!fullPeriod($beg, $end, $spec->{periodn})) { 
             # This is a partial period -- either the current period (if it's the first spec),
             # or because of a change of period
-            my $sip = snapshotsInPeriod(@S, $beg, $end);
+            my $sip = snapshotsInPeriod(@Sgood, $beg, $end);
             if ($firstSpec and $sip >= $spec->{freq}) {  # FIXME reverse this test and get rid of the else
                 # This partial period can count as a good one -- do nothing here
                 debug "cS: firstSpec and enough S's -- will count as good\n", 3;
             } else {
                 push @cSpecs, {
-                    beg       => $beg, 
-                    end       => $end, 
-                    freq      => ($firstSpec and !$Opt{'delete-cp'}) ? -1 : $spec->{freq},    # -1 means keep all
-                    count     => $spec->{count},
-                    period    => $spec->{period},
-                    best      => min(bestOffset($spec->{period}, $beg), $end-$beg-1),  # limit best to partial period
-                    label     => $spec->{rawspec} . ($firstSpec ? '-current' : '-partial'),
-                    snapshots => $sip,
+                    beg    => $beg, 
+                    end    => $end, 
+                    freq   => ($firstSpec and !$Opt{'delete-cp'}) ? -1 : $spec->{freq},    # -1 means keep all
+                    count  => $spec->{count},
+                    period => $spec->{period},
+                    best   => min(bestOffset($spec->{period}, $beg), $end-$beg-1),  # limit best to partial period
+                    label  => $spec->{rawspec} . ($firstSpec ? '-current' : '-partial'),
+                    sgood  => $sip,
+                    sbad   => snapshotsInPeriod(@Sbad, $beg, $end),
                 };  
                 # If $end>$oldestS, we should append 'empty' to the label 
                 $cSpecs[-1]->{label} .= ' empty' if $end <= $oldestS;  # is this a nasty hack?  
-                debug "cS: created cSpec [1] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) . " freq=$cSpecs[-1]->{freq} count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . time2stamp($cSpecs[-1]->{beg}+$cSpecs[-1]->{best}) . " label=$cSpecs[-1]->{label} snapshots=$cSpecs[-1]->{snapshots}\n", 3;
+                debug "cS: created cSpec [1] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) . " freq=$cSpecs[-1]->{freq} count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . time2stamp($cSpecs[-1]->{beg}+$cSpecs[-1]->{best}) . " label=$cSpecs[-1]->{label} snapshots=$cSpecs[-1]->{sgood}/$cSpecs[-1]->{sbad}\n", 3;
                 # move to previous complete period
                 ($beg, $end) = prevPeriod($beg, $spec->{periodn});   
             }
@@ -2807,13 +2809,13 @@ sub compileSpecs ($\@\%;$) {
         # get list of good periods starting with beg,end
         if ($Opt{safe}) {
             if ($Opt{calendar}) {
-                ($gpCount, @goodPeriods) = findGoodPeriods($beg, $end, $spec, @S);
+                ($gpCount, @goodPeriods) = findGoodPeriods($beg, $end, $spec, @Sgood);
             } else {
-                ($gpCount, @goodPeriods) = findGoodPeriodsNoCal($beg, $end, $spec, @S);
+                ($gpCount, @goodPeriods) = findGoodPeriodsNoCal($beg, $end, $spec, @Sgood);
             }
         } else {
             # no-safe mode, with or without calendar mode
-            ($gpCount, @goodPeriods) = findAllPeriods($beg, $end, $spec, @S);
+            ($gpCount, @goodPeriods) = findAllPeriods($beg, $end, $spec, @Sgood);
         }
 
         foreach my $gpRef (@goodPeriods) {
@@ -2821,32 +2823,34 @@ sub compileSpecs ($\@\%;$) {
             if (!$good) { # there's a gap -- either 1 or more incomplete periods, 
                 # or (in no-calendar mode) a fractional number of incomplete periods
                 push @cSpecs, {
-                    beg       => $beg,
-                    end       => $end,
-                    freq      => -1,    # keep them all
-                    period    => $spec->{period},
-                    count     => $pCount,   # may be fractional
-                    best      => 0,
-                    label     => 'skipped - incomplete ' . $LevelName[$spec->{periodn}] . '(s)',   
-                    snapshots => $sip, 
+                    beg    => $beg,
+                    end    => $end,
+                    freq   => -1,    # keep them all
+                    period => $spec->{period},
+                    count  => $pCount,   # may be fractional
+                    best   => 0,
+                    label  => 'skipped - incomplete ' . $LevelName[$spec->{periodn}] . '(s)',   
+                    sgood  => $sip,
+                    sbad   => snapshotsInPeriod(@Sbad, $beg, $end), 
                 };
                 # FIXME if there are no more snapshots, then printing 'incomplete period'
                 # (which may be for a fractional period) and then doing a list of 'empty' cSpecs
                 # looks silly.  Possibly.
-                debug "cS: created cSpec [3] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) . " freq=$cSpecs[-1]->{freq} count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . time2stamp($cSpecs[-1]->{beg}+$cSpecs[-1]->{best}) . " label=$cSpecs[-1]->{label} snapshots=$cSpecs[-1]->{snapshots}\n", 3;
+                debug "cS: created cSpec [3] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) . " freq=$cSpecs[-1]->{freq} count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . time2stamp($cSpecs[-1]->{beg}+$cSpecs[-1]->{best}) . " label=$cSpecs[-1]->{label} snapshots=$cSpecs[-1]->{sgood}/$cSpecs[-1]->{sbad}\n", 3;
             } else { # it's a complete period
                 push @cSpecs, {
-                    beg       => $beg, 
-                    end       => $end, 
+                    beg    => $beg, 
+                    end    => $end, 
                     # if this is the first period, apply the delete-cp option
-                    freq      => (($end == $now+1) and !$Opt{'delete-cp'}) ? -1 : $spec->{freq}, 
-                    period    => $spec->{period},
-                    count     => $spec->{count},
-                    best      => bestOffset($spec->{period}, $beg),
-                    label     => $spec->{rawspec} . "-$p",
-                    snapshots => $sip, 
+                    freq   => (($end == $now+1) and !$Opt{'delete-cp'}) ? -1 : $spec->{freq}, 
+                    period => $spec->{period},
+                    count  => $spec->{count},
+                    best   => bestOffset($spec->{period}, $beg),
+                    label  => $spec->{rawspec} . "-$p",
+                    sgood  => $sip, 
+                    sbad   => snapshotsInPeriod(@Sbad, $beg, $end), 
                 };  
-                debug "cS: created cSpec [4] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) . " freq=$cSpecs[-1]->{freq} count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . time2stamp($cSpecs[-1]->{beg}+$cSpecs[-1]->{best}) . " label=$cSpecs[-1]->{label} snapshots=$cSpecs[-1]->{snapshots}\n", 3;
+                debug "cS: created cSpec [4] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) . " freq=$cSpecs[-1]->{freq} count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . time2stamp($cSpecs[-1]->{beg}+$cSpecs[-1]->{best}) . " label=$cSpecs[-1]->{label} snapshots=$cSpecs[-1]->{sgood}/$cSpecs[-1]->{sbad}\n", 3;
                 $p += 1;
             }
             # Move back a period beyond @goodPeriods
@@ -2862,19 +2866,21 @@ sub compileSpecs ($\@\%;$) {
         my $count = ($spec->{count} == UNLIMITED) ? 1 : $spec->{count};
         debug "cS: any left over? gpCount=$gpCount, count=$count \n", 3;
         for my $i (($gpCount+1)..$count) {
-            # HERE THERE ARE NO MORE SPECS!! WE'RE JUST ITERATING THE REMAINING PERIODS OF REMAINING SPECS
+            # HERE THERE ARE NO MORE SPECS!! 
+            # WE'RE JUST ITERATING THE REMAINING PERIODS OF REMAINING SPECS
             push @cSpecs, {
-                beg       => $beg,
-                end       => $end,
-                freq      => -1,
-                period    => $spec->{period},
-                count     => $spec->{count},    # or 0,  ?
-                best      => 0,
-                label     => $spec->{rawspec} . "-$p empty",
-                snapshots => snapshotsInPeriod(@S, $beg, $end), # should always be 0 -- we'll check
+                beg    => $beg,
+                end    => $end,
+                freq   => -1,
+                period => $spec->{period},
+                count  => $spec->{count},    # or 0,  ?
+                best   => 0,
+                label  => $spec->{rawspec} . "-$p empty",
+                sgood  => snapshotsInPeriod(@Sgood, $beg, $end), # should always be 0 -- we'll check
+                sbad   => snapshotsInPeriod(@Sbad, $beg, $end), # should always be 0 -- we'll check
             };  
-            debug "cS: 'empty' cSpec is not empty!!!!!!!!!!!!!!!!!!!!\n", 1 if snapshotsInPeriod(@S, $beg, $end) > 0 ;
-            debug "cS: created cSpec [5] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) . " freq=$cSpecs[-1]->{freq} count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . time2stamp($cSpecs[-1]->{beg}+$cSpecs[-1]->{best}) . " label=$cSpecs[-1]->{label} snapshots=$cSpecs[-1]->{snapshots}\n", 3;
+            debug "cS: 'empty' cSpec is not empty!!!!!!!!!!!!!!!!!!!!\n", 1 if snapshotsInPeriod(@Sgood, $beg, $end) > 0 ;
+            debug "cS: created cSpec [5] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) . " freq=$cSpecs[-1]->{freq} count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . time2stamp($cSpecs[-1]->{beg}+$cSpecs[-1]->{best}) . " label=$cSpecs[-1]->{label} snapshots=$cSpecs[-1]->{sgood}/$cSpecs[-1]->{sbad}\n", 3;
             $p += 1;
             ($beg, $end) = prevPeriod($beg, $spec->{periodn});
         }
@@ -2892,16 +2898,17 @@ sub compileSpecs ($\@\%;$) {
     # and can all be deleted
     if ($end > $oldestS) {
         push @cSpecs, {
-            beg       => $oldestS,
-            end       => $end,
-            freq      => 0,     # keep none of them
-            period    => '',    # not a proper period
-            count     => 1,     # there is 1 of these
-            best      => 0,
-            label     => "old",
-            snapshots => snapshotsInPeriod(@S, $oldestS, $end), 
+            beg    => $oldestS,
+            end    => $end,
+            freq   => 0,     # keep none of them
+            period => '',    # not a proper period
+            count  => 1,     # there is 1 of these
+            best   => 0,
+            label  => "old",
+            sgood  => snapshotsInPeriod(@Sgood, $oldestS, $end), 
+            sbad   => snapshotsInPeriod(@Sbad, $oldestS, $end), 
         };  
-        debug "cS: created cSpec [6] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) . " freq=$cSpecs[-1]->{freq} count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . time2stamp($cSpecs[-1]->{beg}+$cSpecs[-1]->{best}) . " label=$cSpecs[-1]->{label} snapshots=$cSpecs[-1]->{snapshots}\n", 3;
+        debug "cS: created cSpec [6] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) . " freq=$cSpecs[-1]->{freq} count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . time2stamp($cSpecs[-1]->{beg}+$cSpecs[-1]->{best}) . " label=$cSpecs[-1]->{label} snapshots=$cSpecs[-1]->{sgood}/$cSpecs[-1]->{sbad}\n", 3;
     }
 
     # Double check that it's ok
@@ -2909,7 +2916,7 @@ sub compileSpecs ($\@\%;$) {
     foreach my $c (@cSpecs) {
         if ($c->{end} != $lastbeg) {
             debug "      skipped " . fmtRange($c->{end}, $lastbeg) . ' with ' . 
-            snapshotsInPeriod(@S, $c->{end}, $lastbeg) . " snapshots\n", 0;
+            snapshotsInPeriod(@Sgood, $c->{end}, $lastbeg) . " snapshots\n", 0;
             debug "      !!!!!!!!!!!!! This shouldn't happen any more!\n", 0; 
         }
         if ($c->{beg} > $c->{end}) {
@@ -2928,15 +2935,7 @@ sub compileSpecs ($\@\%;$) {
 sub displayCSpecs (\@;\%) {
     # Display the compiled specs
     my @cSpecs = @{(shift)};
-    my $Sref;
-    $Sref      = shift if @_;   # optional
-    my @S;
-    if ($Sref) {
-        # create array of only the good snapshots
-        foreach my $s (rsort keys %$Sref) {
-            push @S, $s if !$$Sref{$s};
-        }
-    }
+    my $Sref   = shift;   # optional
 
     printlog "\nCompiled specs:\n", 2;  
     printlog   "---------------\n", 2;
@@ -2965,12 +2964,18 @@ sub displayCSpecs (\@;\%) {
         $totalD += ($c->{freq} > 0 and $c->{snapshots} > $c->{freq}) ? $c->{snapshots}-$c->{freq} : 0;
     }
     printlog sprintf("%-15s   %-15s  %2s  %1s  %5s  %-30s  %4s  %4s\n",
-        '', '', '', '', '', '-' x 30, '----', '----'), 3;
+        '', '', '', '', '', '-' x 30, '----', '----'), 2;
     printlog sprintf("%-15s   %-15s  %2s  %1s  %5s  %-30s  %4s  %4s\n",
-        '', '', '', '', '', 'Totals:', $totalS, $totalD), 3;
+        '', '', '', '', '', 'Totals:', $totalS, $totalD), 2;
 
     # Visualise each cSpec period
-    if (@S) {
+    if ($Sref) {
+        my @S;
+        # Create array of all snapshots
+        foreach my $s (rsort keys %$Sref) {
+            #push @S, $s if !$$Sref{$s};
+            push @S, $s;
+        }
         printlog "\nDistribution of existing snapshots within each compiled spec\n", 2;
         printlog "------------------------------------------------------------\n", 2;
         foreach my $c (@cSpecs) {
