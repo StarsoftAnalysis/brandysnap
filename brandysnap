@@ -2033,30 +2033,35 @@ sub getSnapshotList ($) {
 
 #---------------------------------------------------------------------------------------------------
 
-sub visualise ($$$$@) {
+sub visualise ($$$$$$@) {
     # Draw a pretty picture of the actual and ideal snapshots
     # given pairs of (label, array)
     my $beg        = shift;
     my $end        = shift;
     my $showPeriod = shift;
-    my $best       = shift // 0; 
+    my $plevel     = shift;
+    my $llevel     = shift;
+    my $best       = shift; 
+    # FIXME if plevel/llevel mean there will be no output, then just return
     my $labelwidth = 8;
     #my ($columns, $rows) = Term::Size::chars *STDOUT{IO};
     #$columns = max($columns, 132); # minimum, and also if there's no tty
     my $columns = 80;
     my $size = $columns - $labelwidth - 3;  # - 18; # -18 for log timestamp
     my $scale = ceil(($end - $beg) / $size);    
-    debug "visualise: beg=$beg end=$end (" . fmtRange($beg,$end) . ") size=$size scale=$scale\n", 6;
+    debug "visualise: beg=$beg end=$end (" . fmtRange($beg,$end) . ") size=$size scale=$scale\n", 1;
 
     while (@_ > 1) {
         my $label = pack("A$labelwidth", shift);    # force label to specified width
         my @a     = @{(shift)};
+        debug "vis: label=$label\n", 1;
         my @points = (0) x ($size+1);
-        foreach my $a (@a) {
+        A: foreach my $a (@a) {
             my $pos = floor(($a - $beg) / $scale);
             if ($pos < 0 or $pos > $size) {
                 debug "vis: out of range: $pos should be >= 0 and <= $size, a=$a (" . 
                     time2stamp($a) . ")\n", 1;
+                next A;
             }   
             if ($label eq 'Ideal' and !$points[$pos] and $best == $a) {
                 $points[$pos] = 'B';  # this is a nasty hack! what if it later does 'B'+1 ?
@@ -2075,7 +2080,7 @@ sub visualise ($$$$@) {
                 ($_ > 9)     ? '*' : 
                                $_
             } 
-            @points) . "| $period\n", 1;
+            @points) . "| $period\n", $plevel,$llevel;
     }
 }
 
@@ -2140,8 +2145,10 @@ sub snapshotsInPeriod (\@$$;$) {
     my @SIP;
     foreach my $s (@S) {
         last if $s < $beg;
-        $count += 1 if $s < $end;
-        push @SIP, $s if ($s < $end and $returnArray);
+        if ($s < $end) {
+            $count += 1 
+            push @SIP, $s;
+        }
     }
     debug "snapshotsInPeriod $beg..$end " . time2stamp($beg) . '..' . time2stamp($end) . 
         " = $count\n", 9;
@@ -2372,7 +2379,7 @@ sub getMatchingSnapshots ($$$$\@\%) {
     my @combs = combinations(scalar @I, 0..$#S); 
     my $minct = MAXTIME;
     my $mincti = 0;
-    my $ci = 0; # or use while/each ?
+    my $ci = 0; 
     foreach my $comb (@combs) {
         my $combtotal = 0;
         # Note: ideals are already in ascending order, need to sort the comb
@@ -2400,7 +2407,7 @@ sub getMatchingSnapshots ($$$$\@\%) {
     debug "gMS: best matches: @bestMatches total: " . @bestMatches . "\n", 3;
     debug "gMS: closeness (old to new): " . join(' ', (map {sprintf("%.2f", $_)} reverse @closeness)) . 
         ", average: $averageC\n", 3;
-    visualise($oldBeg, $oldEnd, 1, $bestTime, 
+    visualise($oldBeg, $oldEnd, 1, 1,1, $bestTime, 
         'Snap'  => \@S, 
         'Ideal' => \@I, 
         'Match' => \@bestMatches) if $Opt{debug} >= 3;
@@ -2538,12 +2545,12 @@ sub getDeleteList (\%\@;$) {
     printlog "--------------------------------------------------------------------\n", $plevel;
     printlog((@Sgood+@Sbad) . ' snapshots, ' . @allMatches . ' to be kept, ' . @D . " to be deleted\n", 
         $plevel);
-    visualise($firstbeg, $lastend, 0, 0, 
+    #visualise($firstbeg, $lastend, 0, $plevel,$plevel, 0,   FIXME should be this line
+    visualise($firstbeg, $lastend, 0, 1,1, 0, 
         'SnapG' => \@Sgood, 
         'SnapB' => \@Sbad, 
         'Keep' => \@allMatches, 
-        'Del' => \@D)
-        if ($Opt{verbose} >= $plevel);
+        'Del' => \@D);
 
     return @D;  # list of timestamps of snapshots to delete
 }
@@ -2719,9 +2726,18 @@ sub compileSpecs ($\@\%;$) {
     my $quiet       = shift // 0;   
 
     # Make @S here just contain the good ones
+    # FIXME !! gDL expects cSpecs to cover the range of all (good and bad) snapshots
+    #          which is reasonable.
+    #          So somehow this sub needs to look at bad ones too, at least when filling
+    #          the trailing cSpecs
+    #          Maybe setting oldestS to include the bad ones will do it.
+    # That seems to do it.
+    # But displaySpecs and visualise need to get the full list -- good and bad.  FIXME
     my @S;
+    my $oldestS = $now;
     foreach my $s (rsort keys %S) {
         push @S, $s if !$S{$s};
+        $oldestS = $s if $s < $oldestS; # including the bad ones
     }
 
     my $pl = 2;
@@ -2735,7 +2751,10 @@ sub compileSpecs ($\@\%;$) {
 
     my $firstSpec = 1;  # first spec applies to the current period
     my @cSpecs;
-    my $oldestS = @S ? $S[-1] : $now; # back to the oldestS idea
+
+    # Not like this -- need to take account of bad ones too
+    #my $oldestS = @S ? $S[-1] : $now; # back to the oldestS idea
+
 
     my $end = $now + 1; # +1 to ensure 'now' is within the current period
     debug "cS: starting with oldestS=" . time2stamp($oldestS) . ", end=" . time2stamp($end) . "\n", 3;
@@ -2956,7 +2975,7 @@ sub displayCSpecs (\@;\%) {
         printlog "------------------------------------------------------------\n", 2;
         foreach my $c (@cSpecs) {
             my @SiP = snapshotsInPeriod(@S, $c->{beg}, $c->{end}, 1);
-            visualise($c->{beg}, $c->{end}, 1, 0, $c->{label} => \@SiP) if $Opt{verbose} >= 2;
+            visualise($c->{beg}, $c->{end}, 1, 2,2, 0, $c->{label} => \@SiP);
         }
     }
 
@@ -3081,7 +3100,7 @@ sub runRsync ($\@$\%) {
     SOURCE:
     foreach my $source (@{$Opt{source}}) {
 
-        printlog "\nCopying from source $source\n", 1;
+        printlog "\nCopying from source '$source'\n", 1;
         my $remoteSource = remote($source);
         my $destDir = "$dest/$snapshot$destSuffix";    # can't use catdir because it nobbles rsync:// URLs
         debug "rR: dest '$dest'  destdir '$destDir'\n", 1;
