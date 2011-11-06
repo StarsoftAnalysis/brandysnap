@@ -1,10 +1,5 @@
 #!/usr/bin/perl
 
-# TODO for minmax
-# - check whether cSpec's freqmin is ever used
-#   - apparently not, so just have freq in cspec
-# - documentation
-
 #########################################################################
 # brandysnap: rsync-based backup snapshot creation and management       #
 # Copyright (C) 2011  Chris Dennis, chris@starsoftanalysis.co.uk        #
@@ -1841,7 +1836,8 @@ sub parseSpecs ($) {
                 next;
             }
             if ($freqmax < $freqmin) {
-                printlog "ERROR: Maximum frequency must be greater than minimum: '$freqmin-$freqmax' in spec '$spec' does not make sense\n", 1;
+                printlog "ERROR: Maximum frequency must be greater than minimum: \n", 1;
+                printlog "       '$freqmin-$freqmax' in spec '$spec' does not make sense\n", 1;
                 $errorcount += 1;
             }
             my $period = $+{period};
@@ -2916,8 +2912,8 @@ sub displayCSpecs (\@;\%) {
     printlog "\nCompiled specs:\n", 2;  
     printlog   "---------------\n", 2;
 
-    # e.g.  From              To                F  P      C  Comment               Ss    Ds
-    #       20080101-111122 - 20090101-221111   0  d  99999  6d7.............30  9999  9999
+    # e.g.  From              To                F      P      C  Comment               Ss    Ds
+    #       20080101-111122 - 20090101-221111   0 - 4  d  99999  6d7.............30  9999  9999
     printlog sprintf("%-15s - %-15s  %5s  %1s  %5s  %-30s  %4s  %4s\n",
         'From', 'To', 'Freq', 'P', 'C', 'Comment', 'Ss', 'Ds'), 2;
     printlog sprintf("%-15s - %-15s  %2s  %1s  %5s  %-30s  %4s  %4s\n",
@@ -2928,7 +2924,7 @@ sub displayCSpecs (\@;\%) {
         printlog sprintf("%s - %s  %2d-%2d  %1s  %5s  %-30s  %4s  %4s\n",
             time2stamp($c->{beg}), 
             time2stamp($c->{end}),
-            $c->{freqmin} // -9, 
+            $c->{freqmin}, 
             $c->{freqmax}, 
             $c->{period}, 
             $c->{count} eq UNLIMITED ? 'all' : $c->{count},
