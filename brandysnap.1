@@ -124,7 +124,7 @@
 .\" ========================================================================
 .\"
 .IX Title "BRANDYSNAP 1"
-.TH BRANDYSNAP 1 "2011-11-05" "perl v5.10.1" "User Contributed Perl Documentation"
+.TH BRANDYSNAP 1 "2011-11-06" "perl v5.10.1" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -574,6 +574,10 @@ because it is less than 24 hours ago, so it will be deleted.  A fix is planned t
 .IP "\(bu" 4
 When using the \fB\-\-dry\-run\*(--\fR option, rsync sometimes displays an error message that \f(CW\*(C`\-\-link\-dest arg does not exist\*(C'\fR.  
 This can be safely ignored.
+.IP "\(bu" 4
+When daylight savings ends (or the clock goes backwards for any other reason), it is possible
+that brandysnap will try to create a new snapshot at exactly the same time as an existing one.
+The results of that are 'undefined' \*(-- i.e. I haven't tried it.
 .SH "AUTHOR"
 .IX Header "AUTHOR"
 Chris Dennis, chris@starsoftanalysis.co.uk

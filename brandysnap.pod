@@ -541,6 +541,12 @@ because it is less than 24 hours ago, so it will be deleted.  A fix is planned t
 When using the B<--dry-run--> option, rsync sometimes displays an error message that C<--link-dest arg does not exist>.  
 This can be safely ignored.
 
+=item *
+
+When daylight savings ends (or the clock goes backwards for any other reason), it is possible
+that brandysnap will try to create a new snapshot at exactly the same time as an existing one.
+The results of that are 'undefined' -- i.e. I haven't tried it.
+
 =back
 
 =head1 AUTHOR

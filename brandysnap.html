@@ -557,6 +557,11 @@ because it is less than 24 hours ago, so it will be deleted.  A fix is planned t
 <p>When using the <strong>--dry-run--</strong> option, rsync sometimes displays an error message that <code>--link-dest arg does not exist</code>.  
 This can be safely ignored.</p>
 </li>
+<li>
+<p>When daylight savings ends (or the clock goes backwards for any other reason), it is possible
+that brandysnap will try to create a new snapshot at exactly the same time as an existing one.
+The results of that are 'undefined' -- i.e. I haven't tried it.</p>
+</li>
 </ul>
 <p>
 </p>

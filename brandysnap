@@ -77,17 +77,18 @@ my $Quitting = 0;
 # Set the process group so that we can tidy up child processes:
 setpgrp(0, 0);
 # Ignore signals here; see also runRsync() systemCall() 
+# FIXME is this OK? -- it's a problem if the code loops!
 $SIG{HUP}  = 'IGNORE';
 $SIG{INT}  = 'IGNORE';
 $SIG{QUIT} = 'IGNORE';
 $SIG{ABRT} = 'IGNORE';
 $SIG{TERM} = 'IGNORE';
 
-# turn off buffering on STDOUT to get full error messages
+# Turn off buffering on STDOUT to get full error messages
 $| = 1;
 
-# version of this script
-my $Version = '0.1.14';
+# Version of this script
+my $Version = '0.1.15';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -1014,6 +1015,7 @@ sub displayOptions () {
     my $max = 80;
     my $pos = 0;
     foreach my $opt (sort keys %Opt) {
+        next if $opt eq 'validLogfile'; # for internal use only
         my $key = "$opt";
         my $text = sprintf("%16s - %s", $key, printableOption($opt)); 
         # one per line for now
@@ -1631,8 +1633,8 @@ sub status ($\%;\@) {
         if (!remote($dest)) {
             my $ref = df($dest, 1);
             if (defined($ref)) {
-                printlog sprintf("%-*s     %13s\n", $nameLength+12, 
-                    'Disk space used (not just by these snapshots):', bytes($ref->{used})), $plevel,$llevel;  
+                #printlog sprintf("%-*s     %13s\n", $nameLength+12, 
+                #    'Disk space used (not just by these snapshots):', bytes($ref->{used})), $plevel,$llevel;  
                 printlog sprintf("%-*s     %13s\n", $nameLength+12, 
                     'Disk space available:', bytes($ref->{bfree})), $plevel,$llevel;
                 printlog sprintf("%-*s     %13s\n", $nameLength+12, 
@@ -1710,8 +1712,14 @@ sub prevPeriod ($$) {
     my $end = $beg;
     # subtract the delta for the relevant period:
     my $beg2 = date2time(DateCalc(time2date($beg), $PrevP[$periodn]));
-    debug "pP: $LevelName[$periodn] before " . time2stamp($beg) . " is " . 
-        pair2range($beg2, $end) . "\n", 9;
+    # Hacky workaround for the rare occasion when daylight savings ends
+    # and we're going back one hour: in that case $beg2 will be the same
+    # as $beg, and we need to go back two hours.
+    if ($beg2 == $beg) {
+        $beg2 = date2time(DateCalc(time2date($beg), '-0:0:-0:0:2:0:0'));
+    }
+    debug "pP: $periodn/$LevelName[$periodn] before " . time2stamp($beg) . " is " . 
+        pair2range($beg2, $end) . " (PrevP=$PrevP[$periodn])\n", 9;
     return ($beg2, $end);
 }
 
@@ -1728,7 +1736,7 @@ sub fullPeriod ($$$) {
     # from the end, and see if it matches the beginning
     my $beg2 = date2time(DateCalc(time2date($end), $PrevP[$periodn]));
     debug 'fP: ' . pair2range($beg, $end) . ' is' . (($beg == $beg2) ? '' : ' not') .
-        " a full $LevelName[$periodn]\n", 9;
+        " a full $LevelName[$periodn]\n", 99;
     return $beg == $beg2;
 }
 
@@ -2554,7 +2562,7 @@ sub findGoodPeriods ($$$\@) {
     my $beg  = shift;
     my $end  = shift;
     my $spec = shift;
-    my @S    = @{(shift)};
+    my @S    = @{(shift)};  # just 'good' ones
 
     my $gpCount = 0;
     my @good;
@@ -2690,6 +2698,7 @@ sub findAllPeriods ($$$\@) {
     my $end  = shift;
     my $spec = shift;
     my @S    = @{(shift)};
+    return (0, ()) if !@S;
     my @all;
     for my $c (1..$spec->{count}) {
         my $sip = snapshotsInPeriod(@S, $beg, $end);
@@ -3783,7 +3792,6 @@ sub testSuite {
 
         when (14) {
             debug "Testing findGoodPeriods\n";
-            # testing expirables  
             $Opt{spec} = '1d7,1w3,1m11,1y';
             $Opt{verbose} = 3;
             $Opt{loglevel} = 3;
