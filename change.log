@@ -1,7 +1,9 @@
 Changelog for Brandysnap
 
-0.1.14	5/11/11
+0.1.15	6/11/11
+* fixed bug when jumping back one hour at same time as daylight savings ends
 
+0.1.14	5/11/11
 * allow range (minimum - maximum) on number of snapshots in a period, aka the 'frequency'
 * fixes to option checking
 * fixes for remote destinations
