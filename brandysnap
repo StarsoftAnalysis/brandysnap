@@ -1713,10 +1713,15 @@ sub prevPeriod ($$) {
     # subtract the delta for the relevant period:
     my $beg2 = date2time(DateCalc(time2date($beg), $PrevP[$periodn]));
     # Hacky workaround for the rare occasion when daylight savings ends
-    # and we're going back one hour: in that case $beg2 will be the same
+    # just as we're going back one hour: in that case $beg2 will be the same
     # as $beg, and we need to go back two hours.
-    if ($beg2 == $beg) {
+    if ($LevelName[$periodn] eq 'hour' and $beg2 == $beg) {
         $beg2 = date2time(DateCalc(time2date($beg), '-0:0:-0:0:2:0:0'));
+    }
+    if ($beg2 == $beg) {
+        # We're still not making progress -- something is very wrong
+        printlog "ERROR: prevPeriod($beg, $periodn) is stuck -- aborting\n";
+        die "ERROR: prevPeriod($beg, $periodn) is stuck -- aborting\n";
     }
     debug "pP: $periodn/$LevelName[$periodn] before " . time2stamp($beg) . " is " . 
         pair2range($beg2, $end) . " (PrevP=$PrevP[$periodn])\n", 9;
