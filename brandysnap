@@ -1709,28 +1709,67 @@ sub prevPeriod ($$) {
     # e.g. month before 20110622-234400 is 20110522-234400--20110622-234400
     my $beg     = shift;
     my $periodn = shift;
-    my $end = $beg;
-    # subtract the delta for the relevant period:
-    my $beg2 = date2time(DateCalc(time2date($beg), $PrevP[$periodn]));
-    # Hacky workaround for the rare occasion when daylight savings ends
-    # just as we're going back one hour: in that case $beg2 will be the same
-    # as $beg, and we need to go back two hours.
-    if ($LevelName[$periodn] eq 'hour' and $beg2 == $beg) {
-        $beg2 = date2time(DateCalc(time2date($beg), '-0:0:-0:0:2:0:0'));
+    #my $end = $beg;
+    my $newbeg;
+    # Subtract the delta for the relevant period:
+    # NO! any period can land in the missing hour in spring -- we need to check for that
+    # Something like this:
+    # * calculate the previous beg
+    # * if it's the same as the old one (and period is hour)
+    #     just subtract 3600 seconds 
+    #     done.
+    # * if the result is zero or throws an exception
+    #     we've tried to jump back to the missing hour in spring
+    #      - e.g. jump back a day from 1:30AM on the Monday; 24 hours
+    #        before then is 00:30 on Sunday, so do that
+    #     if hourly, just subtract 3600 seconds
+    #     else jump (-period, -an extra hour)  (or for hourly, jump 2 hours.
+    #     in other words, subtract 3600 seconds, and then do the calc again.
+    # AND WHAT ABOUT LEAP YEARS?
+    #
+    # Use the OO version of Date::Manip.
+    # use Date::Manip::Date;
+    #
+    # my $date1 = new Date::Manip::Date;
+    #
+    # my @dates = ('2011103003:00:00',
+    #              '2011103002:00:00',
+    #                           '2011103001:00:00',
+    #                                        '2011103000:00:00');
+    #
+    #                                        my $delta1 = $date1->new_delta();
+    #                                        $delta1->parse('-0:0:-0:0:1:0:0');
+    #
+    #                                        foreach my $date (@dates) {
+    #                                            $date1->parse($date);
+    #                                                my $date2 = $date1->calc($delta1);
+    #
+    #                                                    print "date: ",$date1->printf('%g')," ",
+    #                                                              "date2: ",$date2->printf('%g'),"\n";
+    #                                                              }
+    # Maybe do a general-purpose wrapper equivalent to DateCalc
+    # Include time zones?
+    #
+    if ($periodn == $Level{h}) {
+        # When going back an hour, just subtract the relevant number 
+        # of seconds.  (If we use DateCalc, it does clever stuff with
+        # the change to or from daylight savings, which we don't want.)
+        $newbeg = $beg - HOUR;
+    } else {
+        # For all other periods, use DateCalc, with mode set to 1
+        # for 'approximate' mode, e.g. a day is a whole day, and
+        # not always 24 hours (if DST starts or ends).
+        $newbeg = date2time(DateCalc(time2date($beg), $PrevP[$periodn], 1));
     }
-    if ($beg2 == $beg) {
-        # We're still not making progress -- something is very wrong
-        printlog "ERROR: prevPeriod($beg, $periodn) is stuck -- aborting\n";
-        die "ERROR: prevPeriod($beg, $periodn) is stuck -- aborting\n";
-    }
-    debug "pP: $periodn/$LevelName[$periodn] before " . time2stamp($beg) . " is " . 
-        pair2range($beg2, $end) . " (PrevP=$PrevP[$periodn])\n", 9;
-    return ($beg2, $end);
+    debug "pP: $LevelName[$periodn] before " . time2stamp($beg) . " starts at " . 
+        time2stamp($newbeg) . "\n", 1;
+    return ($newbeg, $beg);
 }
 
 #---------------------------------------------------------------------------------------------------
 
 sub fullPeriod ($$$) {
+    # -- use same logic as prevPeriod TODO
     # Returns true if the beg,end pair given are a full period
     # Note: this does not 'align' the period to whole weeks or months etc.,
     # e.g. 20110522-234400--20110622-234400 is a full month
@@ -1739,9 +1778,16 @@ sub fullPeriod ($$$) {
     my $periodn = shift;
     # Subtract the delta for the relevant period
     # from the end, and see if it matches the beginning
-    my $beg2 = date2time(DateCalc(time2date($end), $PrevP[$periodn]));
+    my $beg2;
+    if ($periodn == $Level{h}) {
+        # (see above in prevPeriod)
+        $beg2 = $beg - HOUR;
+    } else {
+        # (see above in prevPeriod)
+        $beg2 = date2time(DateCalc(time2date($end), $PrevP[$periodn], 1));
+    }
     debug 'fP: ' . pair2range($beg, $end) . ' is' . (($beg == $beg2) ? '' : ' not') .
-        " a full $LevelName[$periodn]\n", 99;
+        " a full $LevelName[$periodn]\n", 1;
     return $beg == $beg2;
 }
 
@@ -1761,7 +1807,9 @@ sub fmtRange ($$) {
     } elsif ($range == WEEK) {
         return "week from " . $begStamp;
     }
-    my $delta = DateCalc(time2date($beg), time2date($end), 9);
+    # DST/leap years: won't get the whole periods we expect,
+    # but that's just cosmetic.  TODO check for error from DateCalc
+    my $delta = DateCalc(time2date($beg), time2date($end), 1); # (1 = approx mode)
     debug "fR: delta is $delta\n", 9;
     if ($delta eq '+0:1:+0:0:0:0:0') {
         return "month from " . $begStamp;
@@ -1770,7 +1818,7 @@ sub fmtRange ($$) {
     } else {
         return "period " . time2stamp($beg) . " to " . time2stamp($end);
     }
-    # TODO expand this for multiple periods?
+    # TODO expand this for multiple periods? e.g. if $delta =~ /\+(\d+):0:\+0:0:0:0:0/ -> $1 years
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -1781,6 +1829,7 @@ sub countPeriods ($$$) {
     my $beg     = shift;
     my $end     = shift;
     my $periodn = shift;
+    # TODO  Won't return the expected integer result for DST/Leap year cases
     my $delta = DateCalc(time2date($beg), time2date($end));
     my $count = Delta_Format($delta, "%$DMperiod[$periodn]ys");
     return sprintf(($count == floor($count)) ? "%d" : "%.1f", $count);  # 1dp if not an integer
@@ -1794,6 +1843,7 @@ sub calcPadding ($$$) {
     # return the number of low-levels needed to get to the next high-level
     # e.g. ('d', 'm', 23days) returns 5days
     # except that the levels are given numerically
+    # FIXME need to do proper month lengths in --calendar mode
     my $level1    = shift;
     my $level2    = shift;
     my $timesofar = shift;
@@ -1887,7 +1937,7 @@ sub parseSpecs ($) {
 
     # Check that the specs make sense
     debug "pS: Checking specs...\n", 3;
-    my $timesofar = 0; # in hours
+    my $timesofar = 0; # in hours (because they're the smallest interval that we use)
     my $i = 0; # index into @specs
     foreach my $spec (@specs) {
         debug "pS: Spec0: $spec->{freqmin}-$spec->{freqmax} $spec->{period} $spec->{count}     \n", 4;
@@ -1895,7 +1945,7 @@ sub parseSpecs ($) {
             # Pad spec to fill next period
             # e.g. 1d,1w4 -- the daily period gets padded to a week, i.e. 1d7,1w4
             # This is done even if --calendar is false.
-            if ($i == @specs-1) {
+            if ($i == $#specs) {
                 # last spec -- can't pad, so set count to lots
                 printlog "NOTE: last spec padded forever\n", 3;
                 $spec->{count} = UNLIMITED; 
@@ -1914,7 +1964,6 @@ sub parseSpecs ($) {
                     debug "No padding -- stay at 0\n", 3;
                 } else {
                     # timesofar is not a whole multiple of speclevel+1, add some padding
-                    # need to know how much padding -- so calcPadding should return that
                     debug "pS: padding by setting count to $padding\n", 3;
                     $spec->{count} = $padding;
                 }
@@ -2390,7 +2439,7 @@ sub getMatchingSnapshots ($$$$\@\%) {
             #    (distance to ideal * closeness) + offset for being bad
             my $score = abs($I[$i] - $S[$c]) * $closeness[$c] + $badoffset[$c];
             debug "gMS: i=$i comb[i]=$c I[i]=$I[$i] S[c]=$S[$c] I-S=". abs($I[$i]-$S[$c]) .
-                " clo=$closeness[$c] bo=$badoffset[$c] score=$score\n", 3;
+                " clo=$closeness[$c] bo=$badoffset[$c] score=$score\n", 9;
             $combtotal += $score;
         }
         if ($combtotal < $minct) {
@@ -2399,13 +2448,13 @@ sub getMatchingSnapshots ($$$$\@\%) {
         }
         $ci += 1;
     }
-    debug "gMS: " . @combs . " combinations tested\n", 3;
+    debug "gMS: " . @combs . " combinations tested\n", 5;
     debug "gMS: best combination, with total $minct, is " . 
-        join(' ', sort {$b <=> $a} @{$combs[$mincti]}) . "\n", 3;
+        join(' ', sort {$b <=> $a} @{$combs[$mincti]}) . "\n", 5;
     my @bestMatches = sort(map {$S[$_]} @{$combs[$mincti]});    # convert indexes back to snapshots 
-    debug "gMS: best matches: @bestMatches total: " . @bestMatches . "\n", 3;
+    debug "gMS: best matches: @bestMatches total: " . @bestMatches . "\n", 5;
     debug "gMS: closeness (old to new): " . join(' ', (map {sprintf("%.2f", $_)} reverse @closeness)) . 
-        ", average: $averageC\n", 3;
+        ", average: $averageC\n", 5;
     visualise($oldBeg, $oldEnd, 1, 1,1, $bestTime, 
         'Snap'  => \@S, 
         'Ideal' => \@I, 
@@ -3482,6 +3531,8 @@ sub testSuite {
             '4d2,1d,2w3,1m6',
             '4d2,1d,1m6',
             '2h6,1h,1d,1w',
+            '1d7,1d,1w2',   # zero padding
+            '1d,1m1',       # jump from day to month
             '1d7,2h3,1d,1w1',
             '0-1d,3-7w,4-4m1',
             '2h3,1d,1w1',  # problem -- doesn't line up hours before lining up days
@@ -3496,7 +3547,7 @@ sub testSuite {
             'd1,1q3,abc,-1d1,1.3w2.9, 1d2 ', # check for invalid ones
             );
             foreach my $spec (@specs) {
-                print "parsing $spec...\n";
+                print "\nparsing $spec...\n";
                 my ($w, $e, @ps) = parseSpecs($spec);
                 print "...gives w=$w e=$e " . (join(',', map {"$_->{rawspec}"} @ps)) . "\n";
             }
