@@ -2089,7 +2089,7 @@ sub visualise ($$$$$$@) {
     my $llevel     = shift;
     my $best       = shift; 
     # If plevel/llevel mean there will be no output, just return
-    return if $plevel < $Opt{verbose} and $llevel < $Opt{loglevel};
+    return if $plevel > $Opt{verbose} and $llevel > $Opt{loglevel};
     my $labelwidth = 8;
     #my ($columns, $rows) = Term::Size::chars *STDOUT{IO};
     #$columns = max($columns, 132); # minimum, and also if there's no tty
