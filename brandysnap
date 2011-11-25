@@ -1297,7 +1297,8 @@ sub snapshotInfo ($$) {
     my $dest     = shift;
     my $snapshot = shift;   # Unix date of snapshot dir
 
-    if (remote($dest)) {
+    # FIXME always use remote i.e. rsync for perms purposes
+    if (1 or remote($dest)) {
         return (0, snapshotInfoRemote($dest, $snapshot));
     }
 
@@ -1382,13 +1383,14 @@ sub deleteSnapshot ($$) {
         printlog "Not deleting snapshot $snapshot' because of option 'delete=no'\n", 1;
         return 0;
     }
-    if (remote($dest)) {
+    # Yes, this works when local destination would require root access
+    if (1 or remote($dest)) {   # FIXME hack to make it always use rsync
         # Destination is remote -- use some rsync trickery to delete the snapshot
         # (gleaned from http://lists.samba.org/archive/rsync/2010-October/025723.html)
         # This involves copying an empty directory onto the snapshot, and
         # removing the snapshot directory itself with filter cleverness.
         my @output;
-        debug "dS: deleting snapshot the new way\n", 3;
+        debug "dS: deleting snapshot the new way\n", 1;
         #my $cmd = "$Opt{'rsync-cmd'} --dirs -f 'R /$snapshot/**' -f '-!r /$snapshot' --delete $EmptyDir/ $dest/";
         my $remPath = $Opt{'remote-rsync-cmd'} ? "--rsync-path '$Opt{'remote-rsync-cmd'}'" : '';
         my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
@@ -1396,8 +1398,8 @@ sub deleteSnapshot ($$) {
             9,9, \@output); 
         #debug "dS: delete cmd: '$cmd'\n", 3;
         #my $output = `$cmd`;
-        debug "dS: rsync output: \n@output", 3;
-        debug "dS: rsync returned $rc, '$rc2'\n", 3;
+        debug "dS: rsync output: \n@output", 1;
+        debug "dS: rsync returned $rc, '$rc2'\n", 1;
         # This returns no error if the snapshot didn't exist, which is fine
         if ($rc) {
             printlog "ERROR: failed to delete remote snapshot '$snapshot' from '$dest' (code $rc)", 1,1;
@@ -2076,7 +2078,8 @@ sub getSnapshotList ($) {
     return %S if $rc;
     foreach (@listing) {
         chomp;
-        if (/^($template)-(?<Y>\d{4})(?<M>\d{2})(?<D>\d{2})-(?<h>\d{2})(?<m>\d{2})(?<s>\d{2})(?<ps>-$PartialSuffix)?$/) {
+        # matching e.g. 'drwxr-xr-x        4096 2011/08/09 23:01:29 library-20110809-165521'
+        if (/\d\d:\d\d:\d\d ($template)-(?<Y>\d{4})(?<M>\d{2})(?<D>\d{2})-(?<h>\d{2})(?<m>\d{2})(?<s>\d{2})(?<ps>-$PartialSuffix)?$/) {
             # Skip over any template with an invalid date (should not happen)
             next if $+{M} < 1;
             next if $+{M} > 12;
@@ -2087,6 +2090,8 @@ sub getSnapshotList ($) {
             next if $+{s} > 60;
             # Store the suffix to indicate good or bad snapshot
             $S{stamp2time($_)} = ($+{ps} ? 1 : 0);
+        } else {
+            debug "gSL: unmatched: $_\n", 1;
         }
     }
     return %S;
