@@ -1,5 +1,21 @@
 #!/usr/bin/perl
 
+# TODO if Ctrl-C'd, says 
+# library/pictures/ann+chris-photos/2006/cd4/orig/pb123640.jpg
+# ^Csudo rsync errors:
+# rsync error: unexplained error (code 130) at rsync.c(541) [generator=3.0.7]
+# receiver=3.0.7]
+# Command 'sudo rsync' died with signal 2
+# ERROR: rsync reported a serious problem (1002 / '')
+#
+# WARNING: rsync did NOT create a complete new snapshot on destination '/media/backuppc/brandysnap/library'
+#          0 out of 1 sources were completed
+#          WARNING: all sources failed, will delete snapshot
+#          ERROR: failed to delete snapshot library-20111124-182037
+#            problem unlinking /media/backuppc/brandysnap/library/library-20111124-182037/library-at-ferox/library/pictures/chris-negatives-2011: cannot chdir to child: Permission denied
+#
+# i.e. allow-restart should override all-failed=delete
+
 #########################################################################
 # brandysnap: rsync-based backup snapshot creation and management       #
 # Copyright (C) 2011  Chris Dennis, chris@starsoftanalysis.co.uk        #
@@ -1306,6 +1322,7 @@ sub snapshotInfo ($$) {
 
     sub processItem {
         # called from find().  $_ is the file name
+        # FIXME need to run as root, or otherwise get permissions on all these files
         my ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,
             $atime,$mtime,$ctime,$blksize,$blocks) = stat($_);
         if (-f _) {
@@ -2059,7 +2076,7 @@ sub getSnapshotList ($) {
     return %S if $rc;
     foreach (@listing) {
         chomp;
-        if (/($template)-(?<Y>\d{4})(?<M>\d{2})(?<D>\d{2})-(?<h>\d{2})(?<m>\d{2})(?<s>\d{2})(?<ps>-$PartialSuffix)?/) {
+        if (/^($template)-(?<Y>\d{4})(?<M>\d{2})(?<D>\d{2})-(?<h>\d{2})(?<m>\d{2})(?<s>\d{2})(?<ps>-$PartialSuffix)?$/) {
             # Skip over any template with an invalid date (should not happen)
             next if $+{M} < 1;
             next if $+{M} > 12;
