@@ -16,6 +16,43 @@
 #
 # i.e. allow-restart should override all-failed=delete
 
+# What's happened to the numbers in the C column?:
+# Compiled specs:
+# ---------------
+# From            - To                Freq  P      C  Comment                           Ss    Xs    Ds
+# --------------- - ---------------  -----  -  -----  ------------------------------  ----  ----  ----
+# 20111127-000000 - 20111127-045516   0- 4  d      1  0-4d1-1                            1     0      
+# 20111126-000000 - 20111127-000000   0- 1  d      7  0-1d-1                             1     0      
+# 20111125-000000 - 20111126-000000   0- 1  d      7  0-1d-2                             1     0      
+# 20111124-000000 - 20111125-000000   0- 1  d      7  0-1d-3                             0     0      
+# 20111123-000000 - 20111124-000000   0- 1  d      7  0-1d-4                             0     0      
+# 20111122-000000 - 20111123-000000   0- 1  d      7  0-1d-5                             0     0      
+# 20111121-000000 - 20111122-000000   0- 1  d      7  0-1d-6                             0     0      
+# 20111120-000000 - 20111121-000000   0- 1  d      7  0-1d-7                             0     0      
+# 20110814-010000 - 20111120-000000   1--1  w     14  skipped - incomplete week(s)       0     0      
+# 20110807-010000 - 20110814-010000   1- 7  w      4  1-7w-1                             4     0      
+# 20110731-010000 - 20110807-010000   1--1  w      4  1-7w-2 empty                       0     0      
+# 20110724-010000 - 20110731-010000   1--1  w      4  1-7w-3 empty                       0     0      
+# 20110717-010000 - 20110724-010000   1--1  w      4  1-7w-4 empty                       0     0      
+# 20110701-000000 - 20110717-010000   1- 4  m     12  1-4m-partial empty                 0     0      
+# 20110531-000000 - 20110701-000000   1--1  m     12  1-4m-1 empty                       0     0      
+# 20110501-000000 - 20110531-000000   1--1  m     12  1-4m-2 empty                       0     0      
+# 20110331-000000 - 20110501-000000   1--1  m     12  1-4m-3 empty                       0     0      
+# 20110228-230000 - 20110331-000000   1--1  m     12  1-4m-4 empty                       0     0      
+# 20110128-230000 - 20110228-230000   1--1  m     12  1-4m-5 empty                       0     0      
+# 20101228-230000 - 20110128-230000   1--1  m     12  1-4m-6 empty                       0     0      
+# 20101128-230000 - 20101228-230000   1--1  m     12  1-4m-7 empty                       0     0      
+# 20101029-000000 - 20101128-230000   1--1  m     12  1-4m-8 empty                       0     0      
+# 20100929-000000 - 20101029-000000   1--1  m     12  1-4m-9 empty                       0     0      
+# 20100829-000000 - 20100929-000000   1--1  m     12  1-4m-10 empty                      0     0      
+# 20100729-000000 - 20100829-000000   1--1  m     12  1-4m-11 empty                      0     0      
+# 20100629-000000 - 20100729-000000   1--1  m     12  1-4m-12 empty                      0     0      
+# 20100101-000000 - 20100629-000000   1-12  y    all  1-12y-partial empty                0     0      
+# 20090101-000000 - 20100101-000000   1--1  y    all  1-12y-1 empty                      0     0      
+#                                                     ------------------------------  ----  ----  ----
+#                                                     Totals:                            7     0     0
+# - see 27/11/11 04:56
+
 #########################################################################
 # brandysnap: rsync-based backup snapshot creation and management       #
 # Copyright (C) 2011  Chris Dennis, chris@starsoftanalysis.co.uk        #
@@ -69,19 +106,19 @@ use IO::File;
 use Carp;
 $SIG{__DIE__} = sub { Carp::confess(@_) };
 
-# Prototyped subs: (which of these are needed?)
-# TODO put all subs here, or get things in the right order
-use subs qw(printit logit printlog debug warning
-    mergeOpts snapshotName status
-    processOptions validateOptions displayOptions
-    fmtRange snapshotsInPeriod
-    showHelp showLicence
-    snapshotInfo snapshotInfoRemote
-    testSuite run
-    runRsync
-    arrayDiff
-    absPath safeAbsPath
-);
+## Prototyped subs: (which of these are needed?)
+## TODO put all subs here, or get things in the right order
+#use subs qw(printit logit printlog debug warning
+#    mergeOpts snapshotName status
+#    processOptions validateOptions displayOptions
+#    fmtRange snapshotsInPeriod
+#    showHelp showLicence
+#    snapshotInfo snapshotInfoRemote
+#    testSuite run
+#    runRsync
+#    arrayDiff
+#    absPath safeAbsPath
+#);
 
 # Globals and constants ============================================================================
 
@@ -215,6 +252,74 @@ my $PartialSuffix = 'x';
 # Mainline code is at the end of this file
 
 #===================================================================================================
+# Logging
+
+sub printit ($;$) {
+    # Print depending on the level of verbose
+    # (trailing newline to be supplied)
+    my $text  = shift;
+    my $level = shift // 1;
+    print $text if $Opt{verbose} >= $level;
+}
+
+# --------------------------------------------------------------------------------------------------
+
+sub logit ($;$) {
+    # Simple logging to a text file,
+    # preserving newlines in the text 
+    # while adding a timestamp
+    return if !defined $Opt{validLogfile};
+    my $text  = shift;
+    my $level = shift // 1;
+    return if $Opt{loglevel} < $level;
+    (my $leadingnl, $text) = ($text =~ m/^(\n*)(.*?)\n*$/s);
+    $text =~ s/\n/\n                  /gs;
+    my $now  = strftime "%y/%m/%d %H:%M:%S ", localtime;
+    my $oldfh = select LOGFILE;
+    $| = 1;
+    open  LOGFILE, '>>', "$Opt{validLogfile}" or die "Unable to write to logfile $Opt{validLogfile}";
+    print LOGFILE "${leadingnl}${now}${text}\n";
+    close LOGFILE;
+    select $oldfh;
+}
+
+# --------------------------------------------------------------------------------------------------
+
+sub printlog ($;$$) {
+    # Print and log depending on the level of verbose
+    # (trailing newline to be supplied)
+    my $text   = shift;
+    my $plevel = shift // 1;
+    my $llevel = shift // $plevel;
+    print "$text" if $Opt{verbose} >= $plevel;
+    logit $text, $llevel;
+}
+
+# --------------------------------------------------------------------------------------------------
+
+sub debug ($;$) {
+    # Print debugging information to STDOUT and log
+    # depending on the level of verbosity
+    # (trailing new lines supplied if required)
+    my $text  = shift;
+    my $level = shift // 1;
+    if ($Opt{debug} >= $level) {
+        (my $leadingnl, $text) = ($text =~ m/^(\n?)(.*)$/s); 
+        print "${leadingnl}dbg: $text";
+        logit "${leadingnl}dbg: $text", 0; 
+    }   
+}
+
+# --------------------------------------------------------------------------------------------------
+    
+sub warning ($) {
+    # Output a warning to STDERR and log
+    my $text = shift;
+    logit "WARNING: $text", 1;
+    warn $text;
+}
+
+#===================================================================================================
 
 # Useful stuff
 
@@ -328,74 +433,6 @@ sub fmtFreq ($$) {
     } else {
         return "$freqmin-$freqmax";
     }
-}
-
-#===================================================================================================
-# Logging
-
-sub printit ($;$) {
-    # Print depending on the level of verbose
-    # (trailing newline to be supplied)
-    my $text  = shift;
-    my $level = shift // 1;
-    print $text if $Opt{verbose} >= $level;
-}
-
-# --------------------------------------------------------------------------------------------------
-
-sub logit ($;$) {
-    # Simple logging to a text file,
-    # preserving newlines in the text 
-    # while adding a timestamp
-    return if !defined $Opt{validLogfile};
-    my $text  = shift;
-    my $level = shift // 1;
-    return if $Opt{loglevel} < $level;
-    (my $leadingnl, $text) = ($text =~ m/^(\n*)(.*?)\n*$/s);
-    $text =~ s/\n/\n                  /gs;
-    my $now  = strftime "%y/%m/%d %H:%M:%S ", localtime;
-    my $oldfh = select LOGFILE;
-    $| = 1;
-    open  LOGFILE, '>>', "$Opt{validLogfile}" or die "Unable to write to logfile $Opt{validLogfile}";
-    print LOGFILE "${leadingnl}${now}${text}\n";
-    close LOGFILE;
-    select $oldfh;
-}
-
-# --------------------------------------------------------------------------------------------------
-
-sub printlog ($;$$) {
-    # Print and log depending on the level of verbose
-    # (trailing newline to be supplied)
-    my $text   = shift;
-    my $plevel = shift // 1;
-    my $llevel = shift // $plevel;
-    print "$text" if $Opt{verbose} >= $plevel;
-    logit $text, $llevel;
-}
-
-# --------------------------------------------------------------------------------------------------
-
-sub debug ($;$) {
-    # Print debugging information to STDOUT and log
-    # depending on the level of verbosity
-    # (trailing new lines supplied if required)
-    my $text  = shift;
-    my $level = shift // 1;
-    if ($Opt{debug} >= $level) {
-        (my $leadingnl, $text) = ($text =~ m/^(\n?)(.*)$/s); 
-        print "${leadingnl}dbg: $text";
-        logit "${leadingnl}dbg: $text", 0; 
-    }   
-}
-
-# --------------------------------------------------------------------------------------------------
-    
-sub warning ($) {
-    # Output a warning to STDERR and log
-    my $text = shift;
-    logit "WARNING: $text", 1;
-    warn $text;
 }
 
 # Date/time routines ===============================================================================
@@ -1049,6 +1086,29 @@ sub displayOptions () {
 
 # Help
 
+sub showLicence () {
+    printit <<EOT;
+rsync-based backup snapshot creation and management        
+Copyright (C) 2011  Chris Dennis, chris\@starsoftanalysis.co.uk        
+                                                                       
+This program is free software: you can redistribute it and/or modify  
+it under the terms of the GNU General Public License as published by  
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.                              
+                                                                  
+This program is distributed in the hope that it will be useful,     
+but WITHOUT ANY WARRANTY; without even the implied warranty of     
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the        
+GNU General Public License for more details.                          
+                                                                      
+You should have received a copy of the GNU General Public License     
+along with this program.  If not, see <http://www.gnu.org/licenses/>. 
+
+EOT
+}
+
+#---------------------------------------------------------------------------------------------------
+
 sub showHelp () {
     printit <<EOT;
 
@@ -1121,30 +1181,7 @@ Options marked with '*' can be specified more than once
 Please see the $Script documentation for full details.
 
 EOT
-    showLicence;
-}
-
-#---------------------------------------------------------------------------------------------------
-
-sub showLicence () {
-    printit <<EOT;
-rsync-based backup snapshot creation and management        
-Copyright (C) 2011  Chris Dennis, chris\@starsoftanalysis.co.uk        
-                                                                       
-This program is free software: you can redistribute it and/or modify  
-it under the terms of the GNU General Public License as published by  
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.                              
-                                                                  
-This program is distributed in the hope that it will be useful,     
-but WITHOUT ANY WARRANTY; without even the implied warranty of     
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the        
-GNU General Public License for more details.                          
-                                                                      
-You should have received a copy of the GNU General Public License     
-along with this program.  If not, see <http://www.gnu.org/licenses/>. 
-
-EOT
+    showLicence();
 }
 
 #===================================================================================================
@@ -1298,6 +1335,7 @@ sub snapshotInfo ($$) {
     my $snapshot = shift;   # Unix date of snapshot dir
 
     # FIXME always use remote i.e. rsync for perms purposes
+    # FIXME but that loses 'delete size' stuff
     if (1 or remote($dest)) {
         return (0, snapshotInfoRemote($dest, $snapshot));
     }
