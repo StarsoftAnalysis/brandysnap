@@ -1,58 +1,5 @@
 #!/usr/bin/perl
 
-# TODO if Ctrl-C'd, says 
-# library/pictures/ann+chris-photos/2006/cd4/orig/pb123640.jpg
-# ^Csudo rsync errors:
-# rsync error: unexplained error (code 130) at rsync.c(541) [generator=3.0.7]
-# receiver=3.0.7]
-# Command 'sudo rsync' died with signal 2
-# ERROR: rsync reported a serious problem (1002 / '')
-#
-# WARNING: rsync did NOT create a complete new snapshot on destination '/media/backuppc/brandysnap/library'
-#          0 out of 1 sources were completed
-#          WARNING: all sources failed, will delete snapshot
-#          ERROR: failed to delete snapshot library-20111124-182037
-#            problem unlinking /media/backuppc/brandysnap/library/library-20111124-182037/library-at-ferox/library/pictures/chris-negatives-2011: cannot chdir to child: Permission denied
-#
-# i.e. allow-restart should override all-failed=delete
-
-# What's happened to the numbers in the C column?:
-# Compiled specs:
-# ---------------
-# From            - To                Freq  P      C  Comment                           Ss    Xs    Ds
-# --------------- - ---------------  -----  -  -----  ------------------------------  ----  ----  ----
-# 20111127-000000 - 20111127-045516   0- 4  d      1  0-4d1-1                            1     0      
-# 20111126-000000 - 20111127-000000   0- 1  d      7  0-1d-1                             1     0      
-# 20111125-000000 - 20111126-000000   0- 1  d      7  0-1d-2                             1     0      
-# 20111124-000000 - 20111125-000000   0- 1  d      7  0-1d-3                             0     0      
-# 20111123-000000 - 20111124-000000   0- 1  d      7  0-1d-4                             0     0      
-# 20111122-000000 - 20111123-000000   0- 1  d      7  0-1d-5                             0     0      
-# 20111121-000000 - 20111122-000000   0- 1  d      7  0-1d-6                             0     0      
-# 20111120-000000 - 20111121-000000   0- 1  d      7  0-1d-7                             0     0      
-# 20110814-010000 - 20111120-000000   1--1  w     14  skipped - incomplete week(s)       0     0      
-# 20110807-010000 - 20110814-010000   1- 7  w      4  1-7w-1                             4     0      
-# 20110731-010000 - 20110807-010000   1--1  w      4  1-7w-2 empty                       0     0      
-# 20110724-010000 - 20110731-010000   1--1  w      4  1-7w-3 empty                       0     0      
-# 20110717-010000 - 20110724-010000   1--1  w      4  1-7w-4 empty                       0     0      
-# 20110701-000000 - 20110717-010000   1- 4  m     12  1-4m-partial empty                 0     0      
-# 20110531-000000 - 20110701-000000   1--1  m     12  1-4m-1 empty                       0     0      
-# 20110501-000000 - 20110531-000000   1--1  m     12  1-4m-2 empty                       0     0      
-# 20110331-000000 - 20110501-000000   1--1  m     12  1-4m-3 empty                       0     0      
-# 20110228-230000 - 20110331-000000   1--1  m     12  1-4m-4 empty                       0     0      
-# 20110128-230000 - 20110228-230000   1--1  m     12  1-4m-5 empty                       0     0      
-# 20101228-230000 - 20110128-230000   1--1  m     12  1-4m-6 empty                       0     0      
-# 20101128-230000 - 20101228-230000   1--1  m     12  1-4m-7 empty                       0     0      
-# 20101029-000000 - 20101128-230000   1--1  m     12  1-4m-8 empty                       0     0      
-# 20100929-000000 - 20101029-000000   1--1  m     12  1-4m-9 empty                       0     0      
-# 20100829-000000 - 20100929-000000   1--1  m     12  1-4m-10 empty                      0     0      
-# 20100729-000000 - 20100829-000000   1--1  m     12  1-4m-11 empty                      0     0      
-# 20100629-000000 - 20100729-000000   1--1  m     12  1-4m-12 empty                      0     0      
-# 20100101-000000 - 20100629-000000   1-12  y    all  1-12y-partial empty                0     0      
-# 20090101-000000 - 20100101-000000   1--1  y    all  1-12y-1 empty                      0     0      
-#                                                     ------------------------------  ----  ----  ----
-#                                                     Totals:                            7     0     0
-# - see 27/11/11 04:56
-
 #########################################################################
 # brandysnap: rsync-based backup snapshot creation and management       #
 # Copyright (C) 2011  Chris Dennis, chris@starsoftanalysis.co.uk        #
@@ -76,7 +23,7 @@
 # Globals with a leading capital
 # otherVariables in camelCase (except for some frequently used things like @S)
 # Formatting this file -- see the 'vim:' line at the end,
-# and limit lines to 100 characters
+# and limit lines to 100 characters if possible.
 # Keep it neat and tidy!
 
 use 5.10.1;         
@@ -125,8 +72,8 @@ $SIG{__DIE__} = sub { Carp::confess(@_) };
 my $Script = 'brandysnap';
 
 # Make this script robust against interruptions.
-# $Quitting becomes true if the script has been interrupted
-my $Quitting = 0;
+# $Interrupted becomes true if the script has been interrupted
+my $Interrupted = 0;
 # Set the process group so that we can tidy up child processes:
 setpgrp(0, 0);
 # Ignore signals here; see also runRsync() systemCall() 
@@ -1544,8 +1491,8 @@ sub renameOrDeleteSnapshot ($$$) {
     # in particular there is no way to rename a snapshot via the rsync daemon.
     #
     # Returns 1 for renamed, 2 for deleted, 3 for kept, 0 for error     # FIXME is this required?
-    my $dest     = shift; 
-    my $snapshot = shift; # as directory name 
+    my $dest             = shift; 
+    my $snapshot         = shift; # as directory name 
     my $sourcesCompleted = shift;
 
     my $rc = 0;
@@ -1669,7 +1616,7 @@ sub status ($\%;\@) {
                 $xcount += 1;
             }
             printlog sprintf("%-*s   %13s %13s   %s\n", $nameLength, $name, 
-                bytes($dsize), bytes($asize), $label), $plevel,$llevel;
+                bytes($dsize), bytes($asize) || 'empty', $label), $plevel,$llevel;
             $totald += $dsize;
             $totala += $asize;
         }
@@ -2129,7 +2076,7 @@ sub getSnapshotList ($) {
             # Store the suffix to indicate good or bad snapshot
             $S{stamp2time($_)} = ($+{ps} ? 1 : 0);
         } else {
-            debug "gSL: unmatched: $_\n", 1;
+            debug "gSL: unmatched: $_\n", 9;
         }
     }
     return %S;
@@ -2526,35 +2473,35 @@ sub getMatchingSnapshots ($$$$\@\%) {
 #---------------------------------------------------------------------------------------------------
 
 sub bestOffset {
-    # Returns the 'best' option for a period as
-    # the offset in seconds from the beginning
-    # of the period.
+    # Returns the 'best' option for a period as the offset in seconds from 
+    # the beginning of the period.
     my $period = shift;
     my $time   = shift; # a time within the period
-    my $best = undef;   # default - no best time specified
+    my $best;
 
-    if ($period eq 'h' and $Opt{hbest}) {
+    if ($period eq 'h') {
         # Best is a minute from 0-59
         $best = $Opt{hbest} * MINUTE;
     } elsif ($period eq 'd' and $Opt{dbest}) {
         # Best is specified as an hour from 0-23.99
         # so calculate the fraction of day
         $best = $Opt{dbest} * HOUR;
-    } elsif ($period eq 'w' and $Opt{wbest}) {
+    } elsif ($period eq 'w') {
         # Best is a number from 1 to 7 indicating
         # the day.  Choose the middle of the day (is that OK?)
         # TODO allow e.g. 'Friday 5pm' as supplied by Date::Manip
         $best = ($Opt{wbest}-0.5) * DAY;
-    } elsif ($period eq 'm' and $Opt{mbest}) {
-        # Best is the day of the month -- assume noon.
+    } elsif ($period eq 'm') {
+        # Best is the day of the month -- assume noon
         my $mbest = min($Opt{mbest}, daysInMonth($time));
         $best = ($mbest-0.5) * DAY;
-    } elsif ($period eq 'y' and $Opt{ybest}) {
+    } elsif ($period eq 'y') {
         # Best is the day of the year -- assume noon
         my $ybest = min($Opt{ybest}, daysInYear($time));
         $best = ($ybest-0.5) * DAY;
     } else {
-        die "invalid period in bestOffset";
+        # Shouldn't happen, but return a usable answer anyway
+        $best = 1;  
     }
     return $best;
 }
@@ -2883,7 +2830,7 @@ sub compileSpecs ($\@\%;$) {
             # This is a partial period -- either the current period (if it's the first spec),
             # or because of a change of period
             my $sip = snapshotsInPeriod(@Sgood, $beg, $end);
-            if ($firstSpec and $sip >= $spec->{freqmin}) {  # FIXME reverse this test and get rid of the else
+            if ($firstSpec and $sip >= $spec->{freqmin}) {  
                 # This partial period can count as a good one -- do nothing here
                 debug "cS: firstSpec and enough S's -- will count as good\n", 3;
             } else {
@@ -3024,7 +2971,7 @@ sub compileSpecs ($\@\%;$) {
     foreach my $c (@cSpecs) {
         if ($c->{end} != $lastbeg) {
             debug "      skipped " . fmtRange($c->{end}, $lastbeg) . ' with ' . 
-            snapshotsInPeriod(@Sgood, $c->{end}, $lastbeg) . " snapshots\n", 0;
+                snapshotsInPeriod(@Sgood, $c->{end}, $lastbeg) . " snapshots\n", 0;
             debug "      !!!!!!!!!!!!! This shouldn't happen any more!\n", 0; 
         }
         if ($c->{beg} > $c->{end}) {
@@ -3299,17 +3246,17 @@ sub runRsync ($\@$\%) {
             # and trap interrupts so that the block becomes (sort of) atomic,
             # i.e. if rsync fails, the partial snapshot will be deleted or 
             # renamed before we give up completely.
-            local $SIG{INT}  = sub { $Quitting = 1; };
-            local $SIG{QUIT} = sub { $Quitting = 1; };
-            local $SIG{ABRT} = sub { $Quitting = 1; };
-            local $SIG{TERM} = sub { $Quitting = 1; };
+            local $SIG{INT}  = sub { $Interrupted = 1; };
+            local $SIG{QUIT} = sub { $Interrupted = 1; };
+            local $SIG{ABRT} = sub { $Interrupted = 1; };
+            local $SIG{TERM} = sub { $Interrupted = 1; };
 
             my $maxTries = @expirableSnapshots + 1; 
             my $keepTrying = $maxTries;  
             my $deletions = 0;
             my $tries = 0;
             # Run rsync, dealing with various types of error
-            while ($keepTrying and !$Quitting) {
+            while ($keepTrying and !$Interrupted) {
                 $tries += 1;
                 printlog "Running rsync -- try $tries of $maxTries\n", 2;
                 my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, $args, 2,2);
@@ -3322,8 +3269,15 @@ sub runRsync ($\@$\%) {
                         $keepTrying = 0;    # no need to try this source again
                         $sourcesSucceeded += 1;
                     }
-                    #* errors that can be ignored, treat as successful (but perhaps a warning)
+                    ##* source not found
+                    #when (($_ == 23) and ($rc2 eq 'nofileordir')) {
+                    #}
+                    #* errors that can (usually) be ignored, treat as successful 
                     when ([22, 23, 24]) {   
+                        if ($rc2) {
+                            # it's more serious -- fall through to the default case
+                            continue;
+                        }
                         debug "rR: ignored errors, so success\n", 1;
                         # Errors on some files such as problems with permissions,
                         # or files that have vanished -- carry on
@@ -3353,10 +3307,12 @@ sub runRsync ($\@$\%) {
                         }
                     }
                     #* error that means rename/delete/abandon whole destination
-                        # 11 e.g. include-from file not found
-                        # 5 - failed to start rsyncd protocol
-                        # 255, various, including wrong ssh password, 
-                        # -1
+                    # 11 e.g. include-from file not found
+                    # 23 with rc2 = 'nofileordir'
+                    # 5 - failed to start rsyncd protocol
+                    # 255, various, including wrong ssh password, 
+                    # -1
+                    # etc.
                     default {
                         printlog "ERROR: rsync reported a serious problem ($rc / '$rc2')\n", 1;
                         $keepTrying = 0;
@@ -3388,8 +3344,12 @@ sub runRsync ($\@$\%) {
     } else {
         printlog "\nWARNING: rsync did NOT create a complete new snapshot on destination '$dest'\n", 1;
         printlog   "         $sourcesSucceeded out of " . @{$Opt{source}} . " sources were completed\n", 1;
-        if ($sourcesSucceeded < @{$Opt{source}}) {
-           my $rc = renameOrDeleteSnapshot($dest, $snapshot, $sourcesSucceeded);
+        #if ($sourcesSucceeded < @{$Opt{source}}) {  # FIXME is this needed?
+        if ($Interrupted and $Opt{'allow-restart'}) {
+            printlog "NOTE: partial snapshot has been left to allow the run to be restarted\n", 1;
+            printlog "      (use the --restart option to do so)\n", 1;
+        } else {
+            my $rc = renameOrDeleteSnapshot($dest, $snapshot, $sourcesSucceeded);
         } 
     }
 
@@ -3459,7 +3419,7 @@ sub run ($\@) {
         printlog "Option 'no-snapshot' given -- no new snapshot will be created\n", 2;
     }
 
-    return if ($Quitting);
+    return if ($Interrupted);
 
     if ($Opt{delete}) {
         deleteSnapshots($dest, @D, %S, @cSpecs, $deleteNew);
@@ -3510,7 +3470,7 @@ sub systemcall ($$$$;$$) {
             # Make sure all child processes are killed too.
             my $sig = shift;
             local $SIG{$sig} = 'IGNORE'; # don't kill ourselves again
-            $Quitting = 1; 
+            $Interrupted = 1; 
             kill($sig, -$$);
         };
         local $SIG{INT}  = \&killgroup;
@@ -3540,6 +3500,8 @@ sub systemcall ($$$$;$$) {
             # scan for specific errors
             if (/No space left on device/) {    # (this text is not always there)
                 $rc2 = 'diskfull';
+            } elsif (/No such file or directory/) {
+                $rc2 = 'nofileordir';
             }
             if (ref($stderrRef) eq 'ARRAY') {
                 push @$stderrRef, $_; 
@@ -4052,7 +4014,7 @@ if ($Opt{test}) {
 } elsif ($Opt{status}) {
     # Display the status of snapshots on each destination
     my $di = 0;
-    while (!$Quitting and $di <= $#{$Opt{destination}}) {
+    while (!$Interrupted and $di <= $#{$Opt{destination}}) {
         my $dest = ${$Opt{destination}}[$di];
         my %S = getSnapshotList($dest);
         status($dest, %S);
@@ -4062,7 +4024,7 @@ if ($Opt{test}) {
     my @specs = processSpecs();
     # Run rsync to each of the destinations
     my $di = 0;
-    while (!$Quitting and $di <= $#{$Opt{destination}}) {
+    while (!$Interrupted and $di <= $#{$Opt{destination}}) {
         run(${$Opt{destination}}[$di], @specs);
         $di += 1;
     }
