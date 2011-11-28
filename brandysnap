@@ -3442,10 +3442,11 @@ sub run ($\@) {
     my $deleteNew = grep {$_ == $snapshotTime} @D;
 
     if ($Opt{snapshot}) {
-        if ($deleteNew and $Opt{delete} and $Opt{'delete-cp'}) {
+        if ($deleteNew and $Opt{delete} and $Opt{'delete-cp'} and !$Opt{'allow-restart'}) {
             printlog "NOTE: new snapshot would be immediately deleted, so rsync will NOT be run\n", 1;
         } else {
             my @expirableSnapshots = getExpirableSnapshots(%S, @specs, @cSpecs, $snapshotTime);
+            # Run rsync to create the new snapshot
             my $rsyncOK = runRsync($dest, @expirableSnapshots, $snapshotTime, %S);  
             if (!$rsyncOK) {
                 # Failed to create a new snapshot, so re-do the list of deletions
