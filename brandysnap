@@ -109,7 +109,7 @@ $Opt{debug}    = 0;
 $Opt{verbose}  = 1;
 $Opt{loglevel} = 1;
 
-# Template for snapshot directory names --  the date part:
+# Template for snapshot directory names -- the date part:
 # (if you change this, existing snapshots will not be found!)
 use constant STAMPFMT  => "%Y%m%d-%H%M%S";
 use constant STAMPFMT0 => '00000000-000000';
@@ -475,7 +475,7 @@ sub aligned ($$) {
 #---------------------------------------------------------------------------------------------------
 
 # Timestamp format for snapshots is YYYYMMDD-hhmmss
-# as hard-coded in the following two subroutines.
+# as defined by STAMPFMT and hard-coded in the following subroutine.
 
 sub stamp2time ($) {
     # convert filename-type timestamp to Unix time
@@ -1221,9 +1221,9 @@ sub snapshotInfoRemote ($$) {
     # 255 for wrong password, unknown host etc.
     # Note the lack of nlink information, so we can't calculate 'delete size'.
 
-    my $dest = shift;
-    my $dir  = shift;  # name of subfolder (initially the snapshot name)
-    my $path = "$dest/$dir";    # not catdir!
+    my $dest  = shift;
+    my $sName = shift;  
+    my $path  = "$dest/$sName";    # not catdir() because $dest may be an rsync URI
     debug "sIR: path=$path\n", 3;
 
     my $totalSize = 0;
@@ -1278,17 +1278,18 @@ sub snapshotInfo ($$) {
     # TODO could use 'du', which gives very similar results for
     # most snapshots, but picks one as the 'complete' one -- why?
 
-    my $dest     = shift;
-    my $snapshot = shift;   # Unix date of snapshot dir
+    my $dest    = shift;
+    my $sName   = shift;   
+    my $partial = shift;
 
     # FIXME always use remote i.e. rsync for perms purposes
-    # FIXME but that loses 'delete size' stuff
+    # FIXME but that loses 'delete size' stuff and is very slow
     if (1 or remote($dest)) {
-        return (0, snapshotInfoRemote($dest, $snapshot));
+        return (0, snapshotInfoRemote($dest, $sName));
     }
 
     # Now we're dealing with a local snapshot
-    my $snapshotPath = snapshotPath($dest, $snapshot);
+    my $snapshotPath = "$dest/$sName";   #snapshotPath($dest, $snapshot);
     debug "sI: snapshotPath = $snapshotPath\n", 7;
 
     # These totals have 'state' because otherwise Perl gives warnings
@@ -1332,40 +1333,40 @@ sub snapshotInfo ($$) {
 
 # Snapshot stuff 
 
-sub snapshotName ($\%) {
+sub snapshotName ($$) {
     # Derive the snapshot name from its date
-    my $stamp = shift;
-    my %S     = %{(shift)};
-    my $suffix = $S{$stamp} ? "-$PartialSuffix" : '';
-    return "$Opt{template}-" . time2stamp($stamp) . $suffix;
+    my $snapshot = shift;
+    my $partial  = shift;
+    my $suffix = $partial ? "-$PartialSuffix" : '';
+    return "$Opt{template}-" . time2stamp($snapshot) . $suffix;
 }
 
 #---------------------------------------------------------------------------------------------------
 
-sub snapshotPath ($$) {
-    # Derive the full snapshot path name from its date
-    # (NOT using catdir because that would mess up remote rsync paths)
-    my $dest     = shift;
-    my $snapshot = shift;   # either name or Unix date
-    my %emptyS; #        = %{(shift)};
-    return "$dest/" . snapshotName($snapshot, %emptyS) if (looks_like_number($snapshot));
-    return "$dest/$snapshot";
-}
+#sub snapshotPath ($$) {
+#    # FIXME what if it's partial??????????????????????
+#    # Derive the full snapshot path name from its date
+#    # (NOT using catdir because that would mess up remote rsync paths)
+#    my $dest     = shift;
+#    my $snapshot = shift;   # either name or Unix date
+#    return "$dest/" . snapshotName($snapshot, 0) if (looks_like_number($snapshot));
+#    return "$dest/$snapshot";
+#}
 
 #---------------------------------------------------------------------------------------------------
 
 sub deleteSnapshot ($$) {
     # Delete a snapshot directory, returning
     # the number of errors encountered.
-    my $dest     = shift; 
-    my $snapshot = shift; # directory name
-    debug "deleteSnapshot: doing $dest/$snapshot\n", 3;
+    my $dest  = shift; 
+    my $sName = shift; 
+    debug "deleteSnapshot: doing $dest/$sName\n", 3;
     if ($Opt{'dry-run'}) {
-        printlog "Dry run: would have deleted '$snapshot'\n", 1;
+        printlog "Dry run: would have deleted '$sName'\n", 1;
         return 0;
     }
     if (!$Opt{delete}) {
-        printlog "Not deleting snapshot $snapshot' because of option 'delete=no'\n", 1;
+        printlog "Not deleting snapshot $sName' because of option 'delete=no'\n", 1;
         return 0;
     }
     # Yes, this works when local destination would require root access
@@ -1376,10 +1377,10 @@ sub deleteSnapshot ($$) {
         # removing the snapshot directory itself with filter cleverness.
         my @output;
         debug "dS: deleting snapshot the new way\n", 1;
-        #my $cmd = "$Opt{'rsync-cmd'} --dirs -f 'R /$snapshot/**' -f '-!r /$snapshot' --delete $EmptyDir/ $dest/";
+        #my $cmd = "$Opt{'rsync-cmd'} --dirs -f 'R /$sName/**' -f '-!r /$sName' --delete $EmptyDir/ $dest/";
         my $remPath = $Opt{'remote-rsync-cmd'} ? "--rsync-path '$Opt{'remote-rsync-cmd'}'" : '';
         my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
-            "$remPath --dirs -f 'R /$snapshot/**' -f '-!r /$snapshot' --delete $EmptyDir/ $dest/", 
+            "$remPath --dirs -f 'R /$sName/**' -f '-!r /$sName' --delete $EmptyDir/ $dest/", 
             9,9, \@output); 
         #debug "dS: delete cmd: '$cmd'\n", 3;
         #my $output = `$cmd`;
@@ -1387,13 +1388,13 @@ sub deleteSnapshot ($$) {
         debug "dS: rsync returned $rc, '$rc2'\n", 1;
         # This returns no error if the snapshot didn't exist, which is fine
         if ($rc) {
-            printlog "ERROR: failed to delete remote snapshot '$snapshot' from '$dest' (code $rc)", 1,1;
+            printlog "ERROR: failed to delete remote snapshot '$sName' from '$dest' (code $rc)", 1,1;
             return 1;
         }
         return 0;
     }
     # From here on, we're dealing with a local destination
-    my $snapshotPath = catdir($dest, $snapshot);
+    my $snapshotPath = catdir($dest, $sName);
     if (!-e $snapshotPath) {
         # doesn't exist - no worries
         return 0;
@@ -1404,7 +1405,7 @@ sub deleteSnapshot ($$) {
     }
     remove_tree($snapshotPath, {error => \my $err});
     if (@$err) {
-        printlog "ERROR: failed to delete snapshot $snapshot\n", 1,1;
+        printlog "ERROR: failed to delete snapshot $sName\n", 1,1;
         for my $diag (@$err) {
             my ($file, $message) = %$diag;
             if ($file eq '') {
@@ -1443,9 +1444,9 @@ sub deleteSnapshots ($\@\%\@$) {
             # Don't need to delete the new snapshot because we avoided creating it
             debug "dS: not deleting newest snapshot because it was not created\n", 3;
         } else {
-           printlog "Deleting snapshot " . snapshotName($d, %S) . 
+           printlog "Deleting snapshot " . snapshotName($d, $S{$d}) . 
                 " because there are too many for spec '" . $cSpecs[$ci]->{label} . "'\n", 1;
-           $errors += deleteSnapshot($dest, snapshotName($d, %S));
+           $errors += deleteSnapshot($dest, snapshotName($d, $S{$d}));
         }
     }
     #printlog "Total of $errors errors while deleting snapshots!\n", 1; 
@@ -1466,9 +1467,9 @@ sub deleteOldSnapshots ($\@\%;$) {
     while (@$expirablesR and $n > 0) {
         my $e = pop @$expirablesR;
         $n -= 1;
-        my $snapshotName = snapshotName($e, %S);
-        printlog "Expiring old snapshot $snapshotName\n", 2;
-        if (deleteDirectory($dest, $snapshotName) == 0) {
+        my $sName = snapshotName($e, $S{$e});
+        printlog "Expiring old snapshot $sName\n", 2;
+        if (deleteDirectory($dest, $sName) == 0) {
             $deleted += 1;
         }
     }
@@ -1492,7 +1493,7 @@ sub renameOrDeleteSnapshot ($$$) {
     #
     # Returns 1 for renamed, 2 for deleted, 3 for kept, 0 for error     # FIXME is this required?
     my $dest             = shift; 
-    my $snapshot         = shift; # as directory name 
+    my $sName            = shift; 
     my $sourcesCompleted = shift;
 
     my $rc = 0;
@@ -1518,12 +1519,17 @@ sub renameOrDeleteSnapshot ($$$) {
 
     if ($Opt{'dry-run'}) {
         if ($action eq 'rename') {
-            printlog "Dry run: would have renamed incomplete snapshot '$snapshot' to '$snapshot-$PartialSuffix'\n", 1;
+            printlog "Dry run: would have renamed incomplete snapshot '$sName' to '$sName-$PartialSuffix'\n", 1;
             return 1;
         } else {
-            printlog "Dry run: would have deleted incomplete snapshot '$snapshot'\n", 1;
+            printlog "Dry run: would have deleted incomplete snapshot '$sName'\n", 1;
             return 2;
         }
+    }
+
+    if ($action eq 'rename' and ($sName =~ /-$PartialSuffix$/)) {
+        # It already has a suffix -- don't add another
+        return 1;
     }
 
     if (remoteDaemon($dest)) {
@@ -1534,7 +1540,7 @@ sub renameOrDeleteSnapshot ($$$) {
             return 3;
         } else {
            # Can't rename, just delete it (see all-failed/some-failed option validation)
-            $rc = deleteSnapshot($dest, $snapshot);
+            $rc = deleteSnapshot($dest, $sName);
             return $rc == 0 ? 2 : 0; 
         }
     }
@@ -1545,7 +1551,7 @@ sub renameOrDeleteSnapshot ($$$) {
             # Use SSH to rename it 
             # (as usual, we're assuming passwords are taken care of elsewhere)
             my ($host, $path) = $dest =~ /^([^:]*):(.*)$/;
-            ($rc, $rc2) = systemcall('ssh', "$host mv '$path/$snapshot' '$path/$snapshot-$PartialSuffix'", 9,9);
+            ($rc, $rc2) = systemcall('ssh', "$host mv '$path/$sName' '$path/$sName-$PartialSuffix'", 9,9);
             #my ($rc, $rc2) = (1,'');
             # returns 0 for success
             debug "rODS: remote: rc=$rc rc2=$rc2\n", 1;
@@ -1567,7 +1573,7 @@ sub renameOrDeleteSnapshot ($$$) {
         if ($action eq 'delete' or $rc) {
             # Delete requested, or renaming failed
             # (because, for example, the user may have sudo permission for rsync but not for mv)
-            $rc = deleteSnapshot($dest, $snapshot);
+            $rc = deleteSnapshot($dest, $sName);
             if ($rc == 0) {
                 printlog "NOTE: Snapshot deleted\n", 1;
                 return 2;
@@ -1580,10 +1586,10 @@ sub renameOrDeleteSnapshot ($$$) {
 
     # ...else, it's a local destination
     if ($action eq 'rename') {
-        $rc = rename "$dest/$snapshot", "$dest/$snapshot-$PartialSuffix";
+        $rc = rename "$dest/$sName", "$dest/$sName-$PartialSuffix";
         # returns 1 for success
         if ($rc == 1) {
-            printlog "NOTE: Snapshot renamed to '$dest/$snapshot-$PartialSuffix'\n", 1;
+            printlog "NOTE: Snapshot renamed to '$dest/$sName-$PartialSuffix'\n", 1;
         } else {
             printlog "WARNING: Snapshot could not be renamed\n", 1;
         }
@@ -1593,15 +1599,59 @@ sub renameOrDeleteSnapshot ($$$) {
     }
     if ($action eq 'delete') {
         debug "rODS: local: delete\n", 1;
-        $rc = deleteSnapshot($dest, $snapshot); # returns 0 for success
+        $rc = deleteSnapshot($dest, $sName); # returns 0 for success
         if ($rc == 0) {
-            printlog "NOTE: Snapshot deleted'\n", 1;
+            printlog "NOTE: Snapshot deleted\n", 1;
         } else {
             printlog "WARNING: Snapshot could not be deleted (error $rc)\n", 1;
         }
         debug "rODS: rc=$rc\n", 1;
         return $rc == 0 ? 2 : 0; 
     }
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub clearSuffix ($$$) {
+    # Remove any suffix from a snapshot.
+    # Returns the new state of the snapshot (true if partial/suffxed, false if not)
+    my $snapshot = shift;
+    my $partial  = shift;
+    my $dest     = shift;
+    debug "clearSuffix: snapshot=$snapshot partial=$partial dest=$dest\n", 1;
+    return 0 if !$partial;   
+    if (remoteDaemon($dest)) {
+        # Shouldn't happen because suffix would not have been added
+        debug "cS: daemon -- can't happen\n", 1;
+        return $partial;
+    }
+    my $oldname = snapshotName($snapshot, $partial);
+    (my $newname = $oldname) =~ s/-$PartialSuffix//; # remove suffix 
+    if (remote($dest)) {
+        # Non-daemon remote destination -- try to use ssh/mv to rename it
+        # (as usual, we're assuming passwords are taken care of elsewhere)
+        my ($rc, $rc2);
+        (my ($host, $path) = $dest) =~ /^([^:]*):(.*)$/;
+        debug "cS: ssh $host mv '$path/$oldname' '$path/$newname'\n", 1;
+        ($rc, $rc2) = systemcall('ssh', "$host mv '$path/$oldname' '$path/$newname'", 9,9);
+        if ($rc) {
+            debug "cS: failed to remove remote suffix ($rc/'$rc2')\n", 1;
+            return $partial;
+        } else {
+            return 0;
+        }
+    }
+    # Else it's local
+    debug "cS: rename '$dest/$oldname', '$dest/$newname'\n", 1;
+    my $rc = rename "$dest/$oldname", "$dest/$newname";
+    # returns 1 for success
+    if ($rc == 1) {
+        return 0;
+    } else {
+        debug "cS: failed to remove local suffix\n", 1;
+        return $partial
+    }
+    return $partial;
 }
 
 #===================================================================================================
@@ -1639,7 +1689,7 @@ sub status ($\%;\@) {
         printlog sprintf("%-*s   %13s %13s   %s\n", $nameLength, '-'x$nameLength, 
             '-----------', '-----------', @cSpecs ? '--------' : ''), $plevel,$llevel;
         foreach my $s (rsort keys %S) {
-            my $name = snapshotName($s, %S);
+            my $name = snapshotName($s, $S{$s});
             my ($dsize, $asize) = snapshotInfo($dest, $name);
             my $label = '';
             if (!$S{$s}) {
@@ -3155,18 +3205,17 @@ sub newSnapshotTime ($) {
     # making sure that a directory with the corresponding
     # name doesn't already exist.
     my $dest = shift;
-    my $snapshotTime = time;
-    my $snapshotDir = snapshotPath($dest, $snapshotTime);
-    # ...may have to wait a second
+    my $snapshot = time();
+    my $snapshotDir = "$dest/" . snapshotName($snapshot, 0);
     while (-e $snapshotDir) {
         debug "Sleeping for a second...\n", 3;
         # Yes, we could just add 1 to $snapshotTime,
         # but then we might end up in the future...
         sleep 1;
-        $snapshotTime = time;
-        $snapshotDir = snapshotPath($dest, $snapshotTime);
+        $snapshot = time();
+        $snapshotDir = "$dest/" . snapshotName($snapshot, 0);
     }
-    return $snapshotTime;
+    return $snapshot;
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -3184,7 +3233,7 @@ sub runRsync ($\@$\%) {
     debug "runRsync: \@eS='@expirableSnapshots' sTime=$snapshotTime (" . 
         time2stamp($snapshotTime) .")\n", 3;
 
-    my $snapshot = snapshotName($snapshotTime, %S);
+    my $sName = snapshotName($snapshotTime, $S{$snapshotTime});
 
     # Set up verbosity option
     # TODO option to have stats without the file listing that --verbose gives
@@ -3206,7 +3255,6 @@ sub runRsync ($\@$\%) {
     my $sourcesSucceeded = 0;   # count of successfully backed-up sources
 
     my $deletionsAllSources = 0;
-    my $destSuffix = '';    # gets set to "-$PartialSuffix" if necessary
 
     # Loop through sources one at a time
     SOURCE:
@@ -3214,7 +3262,7 @@ sub runRsync ($\@$\%) {
 
         printlog "\nCopying from source '$source'\n", 1;
         my $remoteSource = remote($source);
-        my $destDir = "$dest/$snapshot$destSuffix";    # can't use catdir because it nobbles rsync:// URLs
+        my $destDir = "$dest/$sName";    # can't use catdir because it nobbles rsync:// URLs
         debug "rR: dest '$dest'  destdir '$destDir'\n", 1;
 
         # Source and destination can not both be remote (rsync limitation)
@@ -3253,7 +3301,7 @@ sub runRsync ($\@$\%) {
         my $s = 1;  # start at snapshot 1
         my $linkdest = '';
         while ($ld < $Opt{ldcount} and $s <= $#S) {
-            $linkdest .= "--link-dest='$upDir../" . snapshotName($S[$s], %S) . "/$subDir' ";
+            $linkdest .= "--link-dest='$upDir../" . snapshotName($S[$s], $S{$s}) . "/$subDir' ";
             $ld += 1 if !$S{$S[$s]};
             $s += 1;
         }
@@ -3373,7 +3421,7 @@ sub runRsync ($\@$\%) {
     } # for each source
 
     if ($succeeded) {
-        printlog "\nrsync successfully created new snapshot '$dest/$snapshot'\n", 1;  
+        printlog "\nrsync successfully created new snapshot '$dest/$sName'\n", 1;  
         printlog "(dry run: no snapshot actually created)\n", 1 if $Opt{'dry-run'};
         if ($deletionsAllSources) {
             printlog "NOTE: $deletionsAllSources expirable snapshots were deleted from destination '$dest'\n", 2;
@@ -3386,10 +3434,10 @@ sub runRsync ($\@$\%) {
         if ($Interrupted and $Opt{'allow-restart'}) {
             printlog "NOTE: partial snapshot has been left to allow the run to be restarted\n", 1;
             printlog "      (use the --restart option to do so)\n", 1;
-            # (renameOrDeleteSnapshot will take not of the $Interrupted flag
+            # (renameOrDeleteSnapshot will take note of the $Interrupted flag
             #  to avoid deleting the snapshot)
         } 
-        my $rc = renameOrDeleteSnapshot($dest, $snapshot, $sourcesSucceeded);
+        my $rc = renameOrDeleteSnapshot($dest, $sName, $sourcesSucceeded);
     }
 
     return $succeeded;
@@ -3416,7 +3464,9 @@ sub run ($\@) {
     if ($Opt{restart}) {
         # Restarting the previous snapshot, which will (probably) be marked as partial
         $snapshotTime = $S[0];
-        printlog "NOTE: Restarting snapshot " . snapshotName($snapshotTime, %S) . "\n", 1;
+        print "S is " . ref(\%S) . "\n";
+        $S{$snapshotTime} = clearSuffix($snapshotTime, $S{$snapshotTime}, $dest);
+        printlog "NOTE: Restarting snapshot " . snapshotName($snapshotTime, $S{$snapshotTime}) . "\n", 1;
     } else {
         # Normal run, creating a new snapshot.
         # Get time stamp for this run...
@@ -3427,7 +3477,7 @@ sub run ($\@) {
     }
     debug "run: got list of " . @S . " snapshots\n", 4;
 
-    printlog "\nCreating snapshot " . snapshotName($snapshotTime, %S) . " on destination $dest\n", 1;
+    printlog "\nCreating snapshot " . snapshotName($snapshotTime, $S{$snapshotTime}) . " on destination $dest\n", 1;
     printlog '-' x (50 + length($dest) + length($Opt{template})) . "\n", 1;
 
     # 'Compile' the specs taking account of current time and existing snapshots
@@ -3886,8 +3936,7 @@ sub testSuite {
             my $dest = ${$Opt{destination}}[0];
             # generate initial state
             foreach my $s (keys %S) {
-                #        debug " mkdir snapshotPath($dest, $s)\n";
-                mkdir snapshotPath($dest, $s);
+                mkdir "$dest/" . snapshotName($s, 0);
             }
             my $now = stamp2time('20110531-003000');
             my ($warnings, $errors, @specs) = parseSpecs('2d'); 
