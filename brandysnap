@@ -2830,8 +2830,7 @@ sub getDeleteList (\@;$) {
     printlog "--------------------------------------------------------------------\n", $plevel;
     printlog((@Sgood+@Sbad) . ' snapshots, ' . @allMatches . ' to be kept, ' . @D . " to be deleted\n", 
         $plevel);
-    #visualise($firstbeg, $lastend, 0, $plevel,$plevel, 0,   FIXME should be this line
-    visualise($firstbeg, $lastend, 0, 1,1, 0, 
+    visualise($firstbeg, $lastend, 0, $plevel,$plevel, 0,   
         'SnapG' => \@Sgood, 
         'SnapB' => \@Sbad, 
         'Keep' => \@allMatches, 
@@ -3454,7 +3453,7 @@ sub runRsync ($\@$) {
         # Previous 'bad' snapshots are linked in case they contain useful
         # files, but don't count towards the total.
         my $ld = 0; # number of 'good' link-dests created
-        my $s = 1;  # start at snapshot 1
+        my $s = 1;  # start at snapshot 1 (i.e. skip the 0th one that we're creating now)
         my $linkdest = '';
         while ($ld < $Opt{ldcount} and $s <= $#S) {
             $linkdest .= "--link-dest='$upDir../$S{$snapshot}{name}/$subDir' ";
@@ -3609,6 +3608,7 @@ sub run ($\@) {
     # Get list of existing snapshots
     getSnapshotList($dest);
     my @S = rsort keys %S;
+    debug "run: got list of " . @S . " snapshots\n", 4;
 
     # If there are no previous snapshots, ignore the 'restart' option
     if ($Opt{restart} and !%S) {
@@ -3616,24 +3616,23 @@ sub run ($\@) {
         $Opt{restart} = 0;
     }
 
-    my $snapshot;
-    if ($Opt{restart}) {
-        # Restarting the previous snapshot, which will (probably) be marked as partial
-        $snapshot = $S[0];
-        clearSuffix($snapshot);   
-        printlog "NOTE: Restarting snapshot $S{$snapshot}{name}\n", 1;
-    } else {
-        # Normal run, creating a new snapshot.
-        # Create the new entry in %S, and get the new time stamp
-        $snapshot = newSnapshot($dest);
-        # ...and include it in the list 
-        unshift @S, $snapshot if ($Opt{snapshot});
-        #$S{$snapshot}{partial} = 0;  FIXME do the rest of this
+    my $snapshot = 0;	# Keeps value 0 if we're not creating a new snapshot
+    if ($Opt{snapshot}) {
+        if ($Opt{restart}) {
+            # Restarting the previous snapshot, which will (probably) be marked as partial
+            $snapshot = $S[0];
+            clearSuffix($snapshot);   
+            printlog "NOTE: Restarting snapshot $S{$snapshot}{name}\n", 1;
+        } else {
+            # Normal run, creating a new snapshot.
+            # Create the new entry in %S, and get the new time stamp,
+            $snapshot = newSnapshot($dest);
+            # and include it in the list 
+            unshift @S, $snapshot;
+        }
+        printlog "\nCreating snapshot $S{$snapshot}{name} on destination $dest\n", 1;
+        printlog '-' x (50 + length($dest) + length($Opt{template})) . "\n", 1;
     }
-    debug "run: got list of " . @S . " snapshots\n", 4;
-
-    printlog "\nCreating snapshot $S{$snapshot}{name} on destination $dest\n", 1;
-    printlog '-' x (50 + length($dest) + length($Opt{template})) . "\n", 1;
 
     # 'Compile' the specs taking account of current time and existing snapshots
     my @cSpecs;
