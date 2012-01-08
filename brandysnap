@@ -2288,7 +2288,7 @@ sub getSnapshotList ($) {
     foreach (@listing) {
         chomp;
         # matching e.g. 'drwxr-xr-x        4096 2011/08/09 23:01:29 library-20110809-165521'
-        if (/\d\d:\d\d:\d\d 
+        if (/\d\d:\d\d:\d\d\s+ 
             (?<name>($template)-
             (?<Y>\d{4})(?<M>\d{2})(?<D>\d{2})-
             (?<h>\d{2})(?<m>\d{2})(?<s>\d{2}))
@@ -3079,7 +3079,7 @@ sub compileSpecs ($\@;$) {
                     sbad    => snapshotsInPeriod(@Sbad, $beg, $end),
                 };  
                 # If $end>$oldestS, we should append 'empty' to the label 
-                $cSpecs[-1]->{label} .= ' empty' if $end <= $oldestS;  # is this a nasty hack?  YES -- maybe we should stop printing out the cSpecs once there are no more snapshots   FIXME
+                $cSpecs[-1]->{label} .= ' empty (1)' if $end <= $oldestS;  # is this a nasty hack?  YES -- maybe we should stop printing out the cSpecs once there are no more snapshots   FIXME
                 debug "cS: created cSpec [1] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) . " freq=$cSpecs[-1]->{freqmin}-$cSpecs[-1]->{freqmax} count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . time2stamp($cSpecs[-1]->{beg}+$cSpecs[-1]->{best}) . " label=$cSpecs[-1]->{label} snapshots=$cSpecs[-1]->{sgood}/$cSpecs[-1]->{sbad}\n", 3;
                 # move to previous complete period
                 ($beg, $end) = prevPeriod($beg, $spec->{periodn});   
@@ -3160,7 +3160,7 @@ sub compileSpecs ($\@;$) {
                 period  => $spec->{period},
                 count   => $spec->{count},    # or 0,  ?
                 best    => 0,
-                label   => $spec->{rawspec} . "-$p empty",
+                label   => $spec->{rawspec} . "-$p empty (2)",
                 sgood   => snapshotsInPeriod(@Sgood, $beg, $end), # should always be 0 -- we'll check
                 sbad    => snapshotsInPeriod(@Sbad, $beg, $end), # should always be 0 -- we'll check
             };  
@@ -3237,7 +3237,7 @@ sub displayCSpecs (\@;\%) {
     my $totalD = 0;
     foreach my $c (@cSpecs) { 
         my $excess = 0; # how many to delete
-        if ($c->{freqmax} > 0 and 
+        if ($c->{freqmax} >= 0 and 
             $c->{sgood} + $c->{sbad} > $c->{freqmax}) {
             $excess = $c->{sgood}+$c->{sbad} - $c->{freqmax};
         }
@@ -3657,8 +3657,8 @@ sub run ($\@) {
             if (!$rsyncOK and $Opt{delete}) {
                 # Failed to create a new snapshot, so re-do the list of deletions
                 @S = grep {$_ != $snapshot} @S;
-                getSnapshotList($dest);   # is this enough or too much?
-                @D = getDeleteList(@cSpecs, 3); # 3 should be 9 FIXME
+                getSnapshotList($dest);   # is this enough or too much?  FIXME needed?
+                @D = getDeleteList(@cSpecs, 3); # 3 should be 9 FIXME -- level, and needed?
             }
         }
     } else {
@@ -3670,7 +3670,7 @@ sub run ($\@) {
     if ($Opt{delete}) {
         deleteSnapshots(@D, @cSpecs, $deleteNew);
         # Get new snapshot list after deletions 
-        getSnapshotList($dest);
+        getSnapshotList($dest); # FIXME needed?
     } else {
         printlog "Option 'no-delete' given, so no existing snapshots will be deleted\n", 2;
     }
@@ -4281,7 +4281,7 @@ if ($Opt{test}) {
     }
 }
 
-printlog "\n$Script stopping at " . (strftime "%H:%M:%S", localtime) . "\n", 1,1;
+printlog "\n$Script stopping at " . (strftime "%H:%M:%S", localtime) . " with exit code $ExitCode\n", 1,1;
 logit '-' x 80, 1;
 
 # Free the lock
