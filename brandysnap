@@ -43,7 +43,7 @@ use File::Temp qw(tempfile tempdir);
 use File::Spec::Functions qw(rel2abs splitdir catfile catdir);
 use File::Basename;
 use Fcntl qw(:flock);
-use Filesys::Df;    
+use Filesys::Df;        # FIXME still needed?
 use Scalar::Util qw(looks_like_number);
 use IPC::Open3;
 use Symbol qw(gensym);
@@ -1405,7 +1405,7 @@ sub deleteSnapshots (\@\@$) {
     my $deleteNew = shift;
     my $ci = 0; # index into @cSpecs
     my $errors = 0;
-    debug "dS: list is: " . (join(' ', map {$S{$_}{name}} @D)) . "\n";
+    debug "dS: list is: " . (join(' ', map {$S{$_}{name}} @D)) . "\n", 1;
     foreach my $di (0..$#D) {
         my $d = $D[$di];
         # Find the cSpec matching this snapshot (just for the log message)
@@ -3456,7 +3456,8 @@ sub runRsync ($\@$) {
         my $s = 1;  # start at snapshot 1 (i.e. skip the 0th one that we're creating now)
         my $linkdest = '';
         while ($ld < $Opt{ldcount} and $s <= $#S) {
-            $linkdest .= "--link-dest='$upDir../$S{$s}{name}/$subDir' ";
+            debug "rR: linking: s=$s S[s]=$S[$s] S{S[s]}{name}=$S{$S[$s]}{name}\n", 1;
+            $linkdest .= "--link-dest='$upDir../$S{$S[$s]}{name}/$subDir' ";
             $ld += 1 if !$S{$S[$s]}{partial};
             $s += 1;
         }
@@ -3616,22 +3617,31 @@ sub run ($\@) {
         $Opt{restart} = 0;
     }
 
-    my $snapshot = 0;	# Keeps value 0 if we're not creating a new snapshot
-    if ($Opt{snapshot}) {
-        if ($Opt{restart}) {
-            # Restarting the previous snapshot, which will (probably) be marked as partial
-            $snapshot = $S[0];
+    # TODO ?rework logic re $Opt{snapshot} -- it's a bit messy,
+    # but compileSpecs requires a %S entry
+    my $snapshot;
+    if ($Opt{restart}) {
+        # Restarting the previous snapshot, which will (probably) be marked as partial
+        # FIXME Restarting is BROKEN -- lots of errors re $beg/$end being uninitialised
+        $snapshot = $S[0];
+        if ($Opt{snapshot}) {
             clearSuffix($snapshot);   
             printlog "NOTE: Restarting snapshot $S{$snapshot}{name}\n", 1;
         } else {
-            # Normal run, creating a new snapshot.
-            # Create the new entry in %S, and get the new time stamp,
-            $snapshot = newSnapshot($dest);
-            # and include it in the list 
-            unshift @S, $snapshot;
+            debug "run: not restarting because !\$Opt{snapshot}", 1;
         }
+    } else {
+        # Normal run, creating a new snapshot.
+        # Create the new entry in %S, and get the new time stamp,
+        $snapshot = newSnapshot($dest);
+        # and include it in the list 
+        unshift @S, $snapshot if $Opt{snapshot};;
+    }
+    if ($Opt{snapshot}) {
         printlog "\nCreating snapshot $S{$snapshot}{name} on destination $dest\n", 1;
         printlog '-' x (50 + length($dest) + length($Opt{template})) . "\n", 1;
+    } else { 
+        debug "run: not creating snapshot because !\$Opt{snapshot}", 1;
     }
 
     # 'Compile' the specs taking account of current time and existing snapshots
