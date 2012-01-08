@@ -3456,7 +3456,7 @@ sub runRsync ($\@$) {
         my $s = 1;  # start at snapshot 1 (i.e. skip the 0th one that we're creating now)
         my $linkdest = '';
         while ($ld < $Opt{ldcount} and $s <= $#S) {
-            $linkdest .= "--link-dest='$upDir../$S{$snapshot}{name}/$subDir' ";
+            $linkdest .= "--link-dest='$upDir../$S{$s}{name}/$subDir' ";
             $ld += 1 if !$S{$S[$s]}{partial};
             $s += 1;
         }
