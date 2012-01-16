@@ -1,5 +1,12 @@
 Changelog for Brandysnap
 
+0.1.16  16/1/12
+* fix error handling when no remote sources are readable
+* fix handling of interrupts and --allow-restart option
+* Improved error checking in deleteOrRenameSnapshot(); and interaction with --allow-restart option.
+* Restructured: %S now global, with more information in it
+  - lots of changes as a result
+ 
 0.1.15	6/11/11
 * fixed bug when jumping back one hour at same time as daylight savings ends
 

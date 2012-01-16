@@ -53,20 +53,6 @@ use IO::File;
 use Carp;
 $SIG{__DIE__} = sub { Carp::confess(@_) };
 
-## Prototyped subs: (which of these are needed?)
-## TODO put all subs here, or get things in the right order
-#use subs qw(printit logit printlog debug warning
-#    mergeOpts status
-#    processOptions validateOptions displayOptions
-#    fmtRange snapshotsInPeriod
-#    showHelp showLicence
-#    snapshotInfo snapshotInfoRemote
-#    testSuite run
-#    runRsync
-#    arrayDiff
-#    absPath safeAbsPath
-#);
-
 # Globals and constants ============================================================================
 
 my $Script = 'brandysnap';
@@ -88,7 +74,7 @@ $SIG{TERM} = 'IGNORE';
 $| = 1;
 
 # Version of this script
-my $Version = '0.1.15-next';
+my $Version = '0.1.16';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -826,7 +812,7 @@ sub processOptions () {
                 $readableSources += 1; 
                 push @{$Opt{source}}, $src;
             } else {
-                printlog "WARNING: Source '$src' (option 'source') can not be read -- it will be ignored\n", 1;
+                printlog "WARNING: Source '$src' can not be read -- it will be ignored\n", 1;
                 $warningcount += 1;
                 # (and don't copy it to the final array)
             }
@@ -857,7 +843,7 @@ sub processOptions () {
                 $writableDests += 1;
                 push @{$Opt{destination}}, $absdest;
             } else {
-                printlog "WARNING: Destination '$absdest' (option 'destination') is not available " .
+                printlog "WARNING: Destination '$absdest' is not available " .
                     "as a writable directory\n", 1;
                 $warningcount += 1;
             }
