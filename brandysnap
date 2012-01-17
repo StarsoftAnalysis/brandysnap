@@ -74,7 +74,7 @@ $SIG{TERM} = 'IGNORE';
 $| = 1;
 
 # Version of this script
-my $Version = '0.1.16';
+my $Version = '0.1.16next';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -139,6 +139,11 @@ my @DMperiod = ('h', 'd', 'w', 'M', 'y');
 my %Level = (h => 0, d => 1, w => 2, m => 3, y => 4);
 
 my @LevelName = ('hour', 'day', 'week', 'month', 'year');
+my %LevelName = ('h' => 'hour',
+                 'd' => 'day',
+                 'w' => 'week',
+                 'm' => 'month',
+                 'y' => 'year');
 
 # Number of hours in periods at each level
 # (approximate for months and years)
@@ -1583,7 +1588,7 @@ sub clearSuffix ($) {
         debug "cS: daemon -- can't happen\n", 1;
         return;
     }
-    my $oldname = $S{snapshot}{name};
+    my $oldname = $S{$snapshot}{name};
     (my $newname = $oldname) =~ s/-$PartialSuffix//; # remove suffix 
     if ($S{$snapshot}{remote}) {
         # Non-daemon remote destination -- try to use ssh/mv to rename it
@@ -1658,6 +1663,8 @@ sub status ($;\@) {
                     $ci += 1; 
                 }; 
                 $label = $cSpecs[$ci]->{label} if @cSpecs;
+                # Is this easier?:
+                $label .= ' ' . $LevelName{$cSpecs[$ci]->{period}}.'ly' if @cSpecs;
                 $count += 1;
             }
             printlog sprintf("%-*s   %13s %15s   %s\n", $nameLength, $S{$s}{name}, 
@@ -1811,7 +1818,7 @@ sub prevPeriod ($$) {
         $newbeg = date2time(DateCalc(time2date($beg), $PrevP[$periodn], 1));
     }
     debug "pP: $LevelName[$periodn] before " . time2stamp($beg) . " starts at " . 
-        time2stamp($newbeg) . "\n", 1;
+        time2stamp($newbeg) . "\n", 9;
     return ($newbeg, $beg);
 }
 
@@ -2819,8 +2826,8 @@ sub getDeleteList (\@;$) {
     visualise($firstbeg, $lastend, 0, $plevel,$plevel, 0,   
         'SnapG' => \@Sgood, 
         'SnapB' => \@Sbad, 
-        'Keep' => \@allMatches, 
-        'Del' => \@D);
+        'Keep'  => \@allMatches, 
+        'Del'   => \@D);
 
     return @D;  # list of timestamps of snapshots to delete
 }
@@ -3608,8 +3615,8 @@ sub run ($\@) {
     my $snapshot;
     if ($Opt{restart}) {
         # Restarting the previous snapshot, which will (probably) be marked as partial
-        # FIXME Restarting is BROKEN -- lots of errors re $beg/$end being uninitialised
         $snapshot = $S[0];
+        debug "run: restarting with snapshot=$snapshot: " . dumpSnapshot($snapshot) . "\n", 9;
         if ($Opt{snapshot}) {
             clearSuffix($snapshot);   
             printlog "NOTE: Restarting snapshot $S{$snapshot}{name}\n", 1;
