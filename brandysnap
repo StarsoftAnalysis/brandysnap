@@ -2,7 +2,7 @@
 
 #########################################################################
 # brandysnap: rsync-based backup snapshot creation and management       #
-# Copyright (C) 2011  Chris Dennis, chris@starsoftanalysis.co.uk        #
+# Copyright (C) 2011,2012 Chris Dennis, chris@starsoftanalysis.co.uk    #
 #                                                                       #
 # This program is free software: you can redistribute it and/or modify  #
 # it under the terms of the GNU General Public License as published by  #
@@ -33,9 +33,8 @@ use warnings;
 use Time::Local;
 use POSIX qw(ceil floor strftime);
 use Date::Manip;    # see http://search.cpan.org/~sbeck/Date-Manip-6.23/lib/Date/Manip/DM6.pod
-use Getopt::Long qw(:config ignore_case auto_abbrev);
+use Getopt::Long qw(GetOptionsFromArray :config ignore_case auto_abbrev);
 use Math::Combinatorics;
-use Config::General qw(ParseConfig);
 use File::Path qw(remove_tree);
 use File::Glob qw(:glob); 
 use File::Find;
@@ -74,7 +73,8 @@ $SIG{TERM} = 'IGNORE';
 $| = 1;
 
 # Version of this script
-my $Version = '0.1.16next';
+my $Version = '0.1.17';
+use constant VERSION => $Version;
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -91,7 +91,7 @@ my $ExitCode = EXITOK;
 
 # Options -- need some options to start with
 my %Opt = ();   
-$Opt{debug}    = 0;
+$Opt{debug}    = 1; # Set this > 0 when debugging the processOptions()
 $Opt{verbose}  = 1;
 $Opt{loglevel} = 1;
 
@@ -340,7 +340,7 @@ sub stripQuotes ($) {
     $string =~ s/^\s+//;                # strip white-space again
     $string =~ s/\s+$//;
     $string =~ s/\"/\\\"/g;             # escape double quotes
-    $string =~ s/\\#/#/g;               # UNescape # that had to be escaped for Config::General
+    $string =~ s/\\#/#/g;               # UNescape # that had to be escaped for Config::General  FIXME still required?
     debug "sQ: |$temp| -> |$string|\n", 9;
     return $string;
 }
@@ -527,23 +527,69 @@ sub pair2range ($$) {
 # - then merge defaults, config file, and command line options
 # - then validate
 
-sub readConfig ($) {
-    # Read in options from the given filename
-    my $cfile = shift;
+#---------------------------------------------------------------------------------------------------
+
+sub readConfig ($$) {
+    # Read in options from the given configuration filename
+    my $cfile      = shift;
+    my $GOarrayRef = shift;
+
     my %confopt = ();
-    my $warning = '';
-    # Trap any warnings from ParseConfig
-    local $SIG{__WARN__} = sub { $warning = "@_"; }; # or $_[0]
-    # Parse the config file, and store the results in %confopt
-    %confopt = ParseConfig(
-        -ConfigFile => $cfile,
-        -LowerCaseNames => 1,
-        -AutoTrue => 1,     # convert true,yes,on to 1; false,no,off to 0
-    );
-    debug "readConfig WARNING: '$warning'\n", 9;
-    debug "read options: " . join(' ', map {$_ . '=' . $confopt{$_}} sort keys %confopt) . "\n", 9;
-    return %confopt;
+    my @args;   # array of things to pass to GetOpt instead of letting it use @ARGV
+    if (open CONFIG, '<', $cfile) {
+        # Parse the config file, extracting options and values
+        # The format is home-made and simple:
+        # Definition:
+        #   - ignore blank lines, or lines with first non-whitespace '#' (comments)
+        #   - leading and trailing whitespace of whole line
+        #   - option lines are of the form
+        #       <option>  whitespace|:|= <value>
+        #       <option>
+        #   - <option> is non-whitespace i.e. a single word, with any leading - or -- stripped
+        #   - <value> has surrounding whitespace stripped, but otherwise is anything
+        while (<CONFIG>) {
+            chomp;
+            next if /^\s*$/;	# Skip blank lines
+            next if /^\s*#/;	# Skip comments
+            if (/^\s*-{0,2}(?<option>\S+)\s*[:=]?\s*(?<value>.+)?\s*$/) {
+                push @args, "--$+{option}";
+                push @args, $+{value} if exists $+{value};
+                debug "rC: $+{option} = $+{value}\n", 1 if exists $+{value};
+                debug "rC: $+{option}\n", 1 if !exists $+{value};
+            } else {
+                debug "rC: strange line: '$_'\n", 1;
+            }
+        }
+    } else {
+        # Shouldn't happen if we've already tested for readability
+        printlog "ERROR: failed to open config file '$cfile'\n", 1;
+        return 1, %confopt;
+    }
+
+    debug "rC: \@args: " . join(' ', map {"'$_'"} @args) . "\n", 1;
+    my $rc = GetOptionsFromArray(\@args, \%confopt, @$GOarrayRef);
+
+    debug "rC options: " . join(' ', map {$_ . '=' . $confopt{$_}} sort keys %confopt) . "\n", 1;
+    return 0, %confopt;
 }
+
+#sub readConfig0 ($) { # old version
+#    # Read in options from the given filename
+#    my $cfile = shift;
+#    my %confopt = ();
+#    my $warning = '';
+#    # Trap any warnings from ParseConfig
+#    local $SIG{__WARN__} = sub { $warning = "@_"; }; # or $_[0]
+#    # Parse the config file, and store the results in %confopt
+#    %confopt = ParseConfig(
+#        -ConfigFile => $cfile,
+#        -LowerCaseNames => 1,
+#        -AutoTrue => 1,     # convert true,yes,on to 1; false,no,off to 0
+#    );
+#    debug "readConfig WARNING: '$warning'\n", 9;
+#    debug "read options: " . join(' ', map {$_ . '=' . $confopt{$_}} sort keys %confopt) . "\n", 9;
+#    return %confopt;
+#}
 
 #---------------------------------------------------------------------------------------------------
 
@@ -610,11 +656,7 @@ sub processOptions () {
     my %confopt = ();   # config file options
     my %cmdopt = ();    # command line options
 
-    # Trap warnings from GetOptions
-    { # limit scope of SIGWARN override
-        my $GOwarning = '';
-        local $SIG{__WARN__} = sub { $GOwarning = "@_"; }; # or $_[0]
-        my $GOok = GetOptions (\%cmdopt,
+    my @GOarray = (     # array to pass to GetOptions and GetOptionsFromArray
             'all-failed=s',
             'allow-restart!',
             'bwlimit-in=i',
@@ -659,7 +701,14 @@ sub processOptions () {
             'wbest=i',
             'weekstart=i',
             'ybest=i',
-        );
+    );
+
+    # Block to limit the scope of the SIGWARN override which traps 
+    # warnings from GetOptions
+    {
+        my $GOwarning = '';
+        local $SIG{__WARN__} = sub { $GOwarning = "@_"; };
+        my $GOok = GetOptions (\%cmdopt, @GOarray);
         printlog "ERROR: $GOwarning\n", 1 if !$GOok;
         return 1 unless $GOok;  
     }
@@ -668,7 +717,8 @@ sub processOptions () {
     if ($cmdopt{config}) {
         $cmdopt{config} = absPath($cmdopt{config});
         if (-f -r $cmdopt{config}) {
-            %confopt = readConfig($cmdopt{config});    
+            (my $rc, %confopt) = readConfig($cmdopt{config}, \@GOarray);    
+            return 1 if $rc;
         } else {
             printlog "ERROR: configuration file '$cmdopt{config}' can not be read -- stopping\n", 1;
             return 1;
@@ -685,6 +735,8 @@ sub processOptions () {
     # Merge options, so that config file options override the defaults,
     # and command-line options override everything else;
     %Opt = mergeOpts(\%defopt, \%confopt, \%cmdopt);
+
+# (this is the point at which the new method meets the old)
 
     ## Sneaky trick to avoid trying to use logfile before it's been validated:
     #$Opt{'logfile-temp'} = $Opt{logfile} if defined $Opt{logfile};
@@ -884,8 +936,7 @@ sub processOptions () {
     }
 
     # Boolean options
-    # Config::General converts true/yes/on to 1, false/no/off to 0
-    # Getopt::Log likewise
+    # GetOpt::Long converts true/yes/on to 1, false/no/off to 0
     sub checkBoolean ($) {
         my $opt = shift;
         if (!(0 ~~ $Opt{$opt} or 1 ~~ $Opt{$opt})) {
@@ -1394,13 +1445,15 @@ sub deleteSnapshots (\@\@$) {
     my @D         = @{(shift)}; # list of snapshots to delete
     my @cSpecs    = @{(shift)};
     my $deleteNew = shift;
+    return if !@D;
     my $ci = 0; # index into @cSpecs
     my $errors = 0;
+    printlog "\n", 1;
     debug "dS: list is: " . (join(' ', map {$S{$_}{name}} @D)) . "\n", 1;
     foreach my $di (0..$#D) {
         my $d = $D[$di];
         # Find the cSpec matching this snapshot (just for the log message)
-        while (@cSpecs and $cSpecs[$ci]->{beg} > $d) { 
+        while ($cSpecs[$ci]->{beg} > $d) { 
             $ci += 1; 
         }; 
         if ($di == 0 and $deleteNew) {

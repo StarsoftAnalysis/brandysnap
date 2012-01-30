@@ -38,8 +38,6 @@ requirements are met.
 It requires Perl 5 version 5.10.1 or later, and the following non-core modules:
 
 * Math::Combinatorics	
-* Config::General
-* Filesys::DF
 
 It also requires rsync, which should available in your version of Linux.
 Brandysnap has been developed with rsync version 3.0.7.  It should work with 
@@ -60,8 +58,6 @@ There is not (yet) an installation script or package.  All you need to do is
 
     * rsync
     * libmath-combinatorics-perl
-    * libconfig-general-perl
-    * libfilesys-df-perl
 
     which you can install with your favourite package manager, or from the 
     command line with something like:
@@ -82,7 +78,7 @@ LBackup is another, and the [LBackup website](http://www.lbackup.org/) has a lis
 
 **************************************************************
 This is part of the brandysnap documentation.<br>
-Copyright &copy; 2011  Chris Dennis  chris@starsoftanalysis.co.uk<br>
+Copyright &copy; 2011,2012  Chris Dennis  chris@starsoftanalysis.co.uk<br>
 See the file fdl-1.3.txt for copying conditions.
 **************************************************************
  

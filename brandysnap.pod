@@ -15,7 +15,7 @@ brandysnap --conf brandysnap.conf [OTHER OPTIONS...]
 =head1 DESCRIPTION
 
  This is part of the brandysnap documentation.
- Copyright &copy; 2011  Chris Dennis  chris@starsoftanalysis.co.uk
+ Copyright &copy; 2011,2012  Chris Dennis  chris@starsoftanalysis.co.uk
  See the file fdl-1.3.txt for copying conditions.
 
 Brandysnap is (yet another) script that uses rsync to create snapshot backups of files and directories.
@@ -178,16 +178,16 @@ Think of the whole set of snapshots as one backup, with multiple versions of fil
 
 =head2 Options
 
-All options can be given either on the command line or in the configuration file.  Command line options override configuration file ones.  They are case-insensitive.
+All options can be given either on the command line or in the configuration file.  Command line options override configuration file ones (but see below regarding multiple options).  They are case-insensitive.
 
 On the command line, options must be preceded by one or two hyphens, and can be abbreviated as long as they do not become ambiguous.  An 'equals' sign (B<=>) is optional.  For example:
 
     brandysnap --source xyz -verbose=1 --conf=bs1.conf -cal false
 
-In the configuration file, leave off the hyphens and don't abbreviate the options.  Lines beginning with '#' are considered to be comments and are ignored.  [These differences between the command line and the configuration file will be fixed...]
+In the configuration file, the hyphens are optional, but options can still be abbreviated.  Lines beginning with '#' are considered to be comments and are ignored.
 
-Some options (such as B<source> and B<destination>) can be specified more than once.  Note that command line options _always_ override configuration file ones, even for multiple options.  So if you have a list of B<exclude> options in the configuration file, and try to add an extra one on the command line, those in the file will be ignored.
-
+Some options (such as B<source> and B<destination>) can be specified more than once.  In this case, command line options 
+are added to configuration file one.  For example, if the configuration files includes B<exclude foo> and B<exclude bar>, and you put B<--exclude thing> on the command line, all three items (B<foo>, B<bar>, and B<thing>) will be excluded. 
 
 B<~> can be used to specify local files and directories e.g.
 
