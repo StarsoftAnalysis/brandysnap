@@ -36,7 +36,8 @@ requirements are met.</p>
 <p>It requires Perl 5 version 5.10.1 or later, and the following non-core modules:</p>
 
 <ul>
-<li>Math::Combinatorics   </li>
+<li>Math::Combinatorics</li>
+<li>JSON</li>
 </ul>
 
 <p>It also requires rsync, which should available in your version of Linux.
@@ -51,19 +52,7 @@ any version of rsync that has the '--link-dest' option.</p>
 <li><p>Download the script and all the related files by clicking on the
 'Downloads' button on https://github.com/StarsoftAnalysis/brandysnap
 and unpack the files into a suitable directory on your computer.</p></li>
-<li><p>Make sure you've got rsync and the necessary Perl modules, i.e. these
-packages (on Ubuntu/Debian-type versions of Linux):</p>
-
-<ul>
-<li>rsync</li>
-<li>libmath-combinatorics-perl</li>
-</ul>
-
-<p>which you can install with your favourite package manager, or from the 
-command line with something like:</p>
-
-<pre><code>sudo apt-get install rsync libmath-combinatorics-perl libconfig-general-perl libfilesys-df-perl
-</code></pre></li>
+<li><p>Make sure you've got rsync and the necessary Perl modules (see above).</p></li>
 <li><p>Use a text editor to create a configuration file -- refer to the user guide for details.</p></li>
 <li><p>Run the script, with a command something like this:</p>
 

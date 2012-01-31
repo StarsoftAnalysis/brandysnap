@@ -184,7 +184,7 @@ On the command line, options must be preceded by one or two hyphens, and can be 
 
     brandysnap --source xyz -verbose=1 --conf=bs1.conf -cal false
 
-In the configuration file, the hyphens are optional, but options can still be abbreviated.  Lines beginning with '#' are considered to be comments and are ignored.
+In the configuration file the hyphens are optional, but options can still be abbreviated.  Lines beginning with '#' are considered to be comments and are ignored.
 
 Some options (such as B<source> and B<destination>) can be specified more than once.  In this case, command line options 
 are added to configuration file one.  For example, if the configuration files includes B<exclude foo> and B<exclude bar>, and you put B<--exclude thing> on the command line, all three items (B<foo>, B<bar>, and B<thing>) will be excluded. 
@@ -552,4 +552,4 @@ The results of that are 'undefined' -- i.e. I haven't tried it.
 =head1 AUTHOR
 
 Chris Dennis, chris@starsoftanalysis.co.uk
-
+:

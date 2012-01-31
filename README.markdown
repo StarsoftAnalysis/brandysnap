@@ -28,16 +28,28 @@ Then it looks at all existing snapshots to see if any old
 snapshots can be deleted because they are no longer required, as
 defined by the configured 'specification'.  
 
+Features
+--------
+
+* Does (nearly) everything via rsync, which means that either the source or 
+the destination can be 'remote' (i.e. accessed via SSH or similar).  That also 
+means that, if root access is required, it only has to be granted specifically
+for rsync, not for the whole of brandysnap.
+
+* It ignores anything other than files and directories, but preserves hard
+and soft links. 
+
 Requirements
 ------------
 
-Brandysnap runs on Linux (it is currently being developed on Ubuntu 10.10).
+Brandysnap runs on Linux.
 I have heard that it also runs on Mac OS X, as long as the following
 requirements are met.
 
 It requires Perl 5 version 5.10.1 or later, and the following non-core modules:
 
 * Math::Combinatorics	
+* JSON
 
 It also requires rsync, which should available in your version of Linux.
 Brandysnap has been developed with rsync version 3.0.7.  It should work with 
@@ -53,16 +65,7 @@ There is not (yet) an installation script or package.  All you need to do is
     'Downloads' button on https://github.com/StarsoftAnalysis/brandysnap
     and unpack the files into a suitable directory on your computer.
 
-2.  Make sure you've got rsync and the necessary Perl modules, i.e. these
-    packages (on Ubuntu/Debian-type versions of Linux):
-
-    * rsync
-    * libmath-combinatorics-perl
-
-    which you can install with your favourite package manager, or from the 
-    command line with something like:
-
-        sudo apt-get install rsync libmath-combinatorics-perl libconfig-general-perl libfilesys-df-perl
+2.  Make sure you've got rsync and the necessary Perl modules (see above).
 
 3.  Use a text editor to create a configuration file -- refer to the user guide for details.
 

@@ -35,6 +35,7 @@ use POSIX qw(ceil floor strftime);
 use Date::Manip;    # see http://search.cpan.org/~sbeck/Date-Manip-6.23/lib/Date/Manip/DM6.pod
 use Getopt::Long qw(GetOptionsFromArray :config ignore_case auto_abbrev);
 use Math::Combinatorics;
+use JSON;           # for metadata file
 use File::Path qw(remove_tree);
 use File::Glob qw(:glob); 
 use File::Find;
@@ -62,7 +63,6 @@ my $Interrupted = 0;
 # Set the process group so that we can tidy up child processes:
 setpgrp(0, 0);
 # Ignore signals here; see also runRsync() systemCall() 
-# FIXME is this OK? -- it's a problem if the code loops!
 $SIG{HUP}  = 'IGNORE';
 $SIG{INT}  = 'IGNORE';
 $SIG{QUIT} = 'IGNORE';
@@ -73,7 +73,7 @@ $SIG{TERM} = 'IGNORE';
 $| = 1;
 
 # Version of this script
-my $Version = '0.1.17';
+my $Version = '0.1.17next';
 use constant VERSION => $Version;
 
 # A copy of @ARG before it gets shifted
@@ -91,7 +91,7 @@ my $ExitCode = EXITOK;
 
 # Options -- need some options to start with
 my %Opt = ();   
-$Opt{debug}    = 1; # Set this > 0 when debugging the processOptions()
+$Opt{debug}    = 0; # Set this > 0 when debugging the processOptions()
 $Opt{verbose}  = 1;
 $Opt{loglevel} = 1;
 
@@ -102,12 +102,13 @@ use constant STAMPFMT0 => '00000000-000000';
 
 # Hash of snapshots, keyed by snapshot Unix time,
 # each entry containing these fields:
-# name     - name of the snapshot directory e.g. 'docs-20111130-320234'
-# path     - directory path to name (NOT ending with '/')
-# fullname - same as path/name   
-# partial  - true if it's a partial (incomplete) snapshot, with a name ending with the suffix
-# remote   - true if it's on a remote destination
-# daemon   - true if it's remote and accessed via an rsync daemon
+#  name     - name of the snapshot directory e.g. 'docs-20111130-320234'
+#  path     - directory path to name (NOT ending with '/')
+#  fullname - same as path/name   
+#  partial  - true if it's a partial (incomplete) snapshot, with a name ending with the suffix
+#  size     - size of the snapshot in bytes
+#  remote   - true if it's on a remote destination
+#  daemon   - true if it's remote and accessed via an rsync daemon
 my %S;
 
 # Date/time constants and globals 
@@ -170,7 +171,7 @@ my @AllOpt = qw(
     snapshot delete delete-cp
     dry-run version help
     stacktrace weekstart
-    logfile lockfile logfile-temp
+    logfile lockfile 
     rsync-cmd rsync-opts remote-rsync-cmd
     include include-from exclude exclude-from
     expire-old
@@ -369,7 +370,6 @@ sub dumpSnapshots2 (\@) {
     # Return a list of snapshots as a string for printing
     # This version also uses %S to mark snapshots as good or bad
     my @S = @{(shift)};
-    #my %S = %{(shift)};
     return join(', ', map {time2stamp($_) . ($S{$_}{partial} ? '-b' : '-g')} @S);
 }
 
@@ -391,6 +391,19 @@ sub fmtFreq ($$) {
     } else {
         return "$freqmin-$freqmax";
     }
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub diskSpace ($) {
+    # Convert a file size to the space used on the disk
+    # by rounding it up to a multiple of the block size
+    # NOTE: we assume a blocksize of 512 -- that's good enough, as this is only for displaying
+    #       the approximate space used by a snapshot, and getting the real blocksize
+    #       is probably impossible since we want to use rsync for everything.
+    my $size = shift;
+    my $blocksize = 512;
+    return ceil($size / 512) * 512; 
 }
 
 # Date/time routines ===============================================================================
@@ -522,8 +535,8 @@ sub pair2range ($$) {
 
 # Options 
 # - defaults are in %defopt
-# - then read command line options (including config file name)
-# - then read config file (if any)
+# - then read command line options (including config file name) into %cmdopt
+# - then read config file (if any) into %confopt
 # - then merge defaults, config file, and command line options
 # - then validate
 
@@ -572,24 +585,6 @@ sub readConfig ($$) {
     debug "rC options: " . join(' ', map {$_ . '=' . $confopt{$_}} sort keys %confopt) . "\n", 1;
     return 0, %confopt;
 }
-
-#sub readConfig0 ($) { # old version
-#    # Read in options from the given filename
-#    my $cfile = shift;
-#    my %confopt = ();
-#    my $warning = '';
-#    # Trap any warnings from ParseConfig
-#    local $SIG{__WARN__} = sub { $warning = "@_"; }; # or $_[0]
-#    # Parse the config file, and store the results in %confopt
-#    %confopt = ParseConfig(
-#        -ConfigFile => $cfile,
-#        -LowerCaseNames => 1,
-#        -AutoTrue => 1,     # convert true,yes,on to 1; false,no,off to 0
-#    );
-#    debug "readConfig WARNING: '$warning'\n", 9;
-#    debug "read options: " . join(' ', map {$_ . '=' . $confopt{$_}} sort keys %confopt) . "\n", 9;
-#    return %confopt;
-#}
 
 #---------------------------------------------------------------------------------------------------
 
@@ -713,16 +708,10 @@ sub processOptions () {
         return 1 unless $GOok;  
     }
 
-    # If config file specified, make sure it's readable, and read it
+    # If config file specified, read it
     if ($cmdopt{config}) {
         $cmdopt{config} = absPath($cmdopt{config});
-        if (-f -r $cmdopt{config}) {
-            (my $rc, %confopt) = readConfig($cmdopt{config}, \@GOarray);    
-            return 1 if $rc;
-        } else {
-            printlog "ERROR: configuration file '$cmdopt{config}' can not be read -- stopping\n", 1;
-            return 1;
-        }
+        (my $rc, %confopt) = readConfig($cmdopt{config}, \@GOarray);    
     }
 
     debug "def  options: " . join(' ', 
@@ -736,12 +725,6 @@ sub processOptions () {
     # and command-line options override everything else;
     %Opt = mergeOpts(\%defopt, \%confopt, \%cmdopt);
 
-# (this is the point at which the new method meets the old)
-
-    ## Sneaky trick to avoid trying to use logfile before it's been validated:
-    #$Opt{'logfile-temp'} = $Opt{logfile} if defined $Opt{logfile};
-    #delete $Opt{logfile};
-    
     my $errorcount = 0;
     my $warningcount = 0;
 
@@ -1276,6 +1259,55 @@ sub sourceDir ($) {
 
 #---------------------------------------------------------------------------------------------------
 
+sub updateSnapshotSizes () {
+    # Make sure that each snapshot in %S has size information --
+    # if not, get the size of the snapshot via rsync.
+    # 
+    # rsync returns directory listings thusly (even for recent dates):
+    #    -rwxr-xr-x         149 2008/06/13 13:56:30 textsmart
+    #    drwxr-xr-x        4096 2011/05/07 17:41:48 40dnamer
+    # and gives return code 23 if the directory is not found
+    # 255 for wrong password, unknown host etc.
+    # Note the lack of nlink information, so we can't calculate 'delete size'.
+    foreach my $snapshot (keys %S) {
+        debug "uSS: initial snapshot size is $S{$snapshot}{size}\n", 1;
+        next if $S{$snapshot}{size} >= 0;
+        my $totalSize = 0;
+        # Get rsync listing into an array
+        my @items;
+        my $remPath = $Opt{'remote-rsync-cmd'} ? "--rsync-path '$Opt{'remote-rsync-cmd'}'" : '';
+        my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
+            "$remPath --recursive --bwlimit=$Opt{'bwlimit-in'} '$S{$snapshot}{fullname}/'", 1,1, \@items);
+        debug "uSS: snapshot=$snapshot rc=$rc rc2='$rc2'\n", 1;
+        if (!$rc) {
+            foreach my $item (@items) {
+                debug "uSS: item = $item", 9;
+                # matching e.g.: 'drwxr-xr-x        4096 2011/05/07 17:41:48 40dnamer'
+                if ($item =~ m|^(?<t>.)(?<p>.{9})\s+(?<size>\d+)\s\d{4}/\d{2}/\d{2}\s\d{2}:\d{2}:\d{2}\s(?<name>.*)$|) {
+                    next if $+{name} eq '.';
+                    next if $+{name} eq '..';
+                    if ($+{t} eq '-' or $+{t} eq 'l' or $+{t} eq 'd') {
+                        # file or symbolic link or directory
+                        # (we're not following the symbolic link, just counting the space of the link itself)
+                        # (and we're counting the directory itself, not its contents)
+                        debug "uSS: t=$+{t} size=$+{size} name=$+{name}\n", 9;
+                        $totalSize += diskSpace($+{size});
+                    } else {
+                        # (ignore anything other than files and directories)
+                        debug "uSS: ignoring non-file-or-dir $item\n", 9;
+                    }
+                } else {
+                    # (ignore any non-matching lines)
+                    debug "uSS: ignoring non-matching $item\n", 9;
+                }
+            }
+            $S{$snapshot}{size} = $totalSize;
+            debug "uSS: adding size information for $snapshot, size is $totalSize\n", 1;
+        }
+    }
+}
+
+# FIXME obsolete:
 sub snapshotInfoRemote ($) {
     # Get snapshot information for a remote destination via rsync.
     # rsync returns directory listings thusly (even for recent dates):
@@ -1315,7 +1347,7 @@ sub snapshotInfoRemote ($) {
                 # (we're not following the symbolic link, just counting the space of the link itself)
                 # (and we're counting the directory itself, not its contents)
                 debug "sIR: t=$+{t} size=$+{size} name=$+{name}\n", 9;
-                $totalSize += ceil($+{size} / 512) * 512; # a function for this TODO
+                $totalSize += diskSpace($+{size});
             } else {
                 # (ignore anything other than files and directories)
             }
@@ -1330,19 +1362,18 @@ sub snapshotInfoRemote ($) {
 
 #---------------------------------------------------------------------------------------------------
 
+# FIXME obsolete:
 sub snapshotInfo ($) {
     # Get the amount of space that would be freed by deleting a file or directory.
+    # FIXME -- now we only return the space that would be used without hard links
+    # --- is there a way to subtract the space NOT used because of hard links?
     # The value returned is a number of blocks, which ought to be 512 bytes each.
     # Because of hard links, deleting a file may not free any space.
-    # So this routine only counts files whose link count is 1.
+    # So this routine only counts files whose link count is 1.  NOT TRUE
     # Hard links /within/ the directory in question will 
     # give an underestimate of the amount of space that will be freed.
     # We'll assume that most of the links are between snapshots, not within them.
 
-    # TODO could use 'du', which gives very similar results for
-    # most snapshots, but picks one as the 'complete' one -- why?
-
-    #my $dest     = shift;
     my $snapshot = shift;   
 
     # FIXME always use remote i.e. rsync for perms purposes
@@ -1706,7 +1737,7 @@ sub status ($;\@) {
         printlog sprintf("%-*s   %13s %15s   %s\n", $nameLength, '-'x$nameLength, 
             '-----------', '-------------', @cSpecs ? '--------' : ''), $plevel,$llevel;
         foreach my $s (rsort keys %S) {
-            my ($dsize, $asize) = snapshotInfo($s);
+            my ($dsize, $asize) = (0, $S{$s}{size}); # FIXME  dsize no more!.         snapshotInfo($s);
             my $label = '';
             # Find which cSpec applies (complete snapshots only)
             if ($S{$s}{partial}) {
@@ -1821,6 +1852,7 @@ sub prevPeriod ($$) {
     #my $end = $beg;
     my $newbeg;
     # Subtract the delta for the relevant period:
+    # FIXME sort out DST and leap years
     # NO! any period can land in the missing hour in spring -- we need to check for that
     # Something like this:
     # * calculate the previous beg
@@ -1970,7 +2002,7 @@ sub calcPadding ($$$) {
 
 #---------------------------------------------------------------------------------------------------
 
-sub parseSpecs2 ($) {
+sub parseSpecs2 ($) {   # TODO finish this
     # New version -- doesn't do padding, -- that's now delayed and done in compileSpecs
     # Parse the user's requested snapshot regime, 
     # e.g. '0-4d7,1d7,2-7w,1m6'
@@ -2312,8 +2344,81 @@ sub processSpecs () {
 
 #===================================================================================================
 
+sub writeMetadata ($) {
+    # Store information from %S in the metadata file via rsync
+    my $dest = shift;
+
+    return if !%S;
+
+    my $mdfile = "$Opt{template}.status";
+
+    # Create subset of %S to store
+    my @S;
+    foreach my $s (sort keys %S) {
+        push @S, {snapshot => time2stamp($s), partial => $S{$s}{partial}, size => $S{$s}{size}};
+    }
+    my $json = to_json(\@S, {pretty => 1});
+    debug "wM: json is '$json'\n", 9;
+
+    # Write to a temporary local file
+    my ($tempfh, $tempfilename) = tempfile(UNLINK => 1);
+    my $succeeded = 0;
+    #if (open $tempfh, '>', $statusfile) {
+        print $tempfh "# Status of brandysnap backups for '$Opt{template}' on '$dest' as at <date>\n";
+        print $tempfh $json;
+        close $tempfh;
+        # Send the file via rsync
+        my @output;
+        my $remPath = $Opt{'remote-rsync-cmd'} ? "--rsync-path '$Opt{'remote-rsync-cmd'}'" : '';
+        my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
+            "$remPath '$tempfilename' '$dest/$mdfile'", 1,1, \@output);    
+        debug "wM: rc=$rc output: '@output'\n", 1;
+        $succeeded = 1 if !$rc;
+        #} 
+    if (!$succeeded) {
+        printlog "WARNING: Unable to create metadata file '$mdfile'\n";
+        printlog "         Metadata is:\n", 1;
+        printlog "$json\n\n", 1;
+    }
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub readMetadata ($) {
+    # Read the metadata into an array
+    my $dest = shift; 
+    my $mdArrayRef = (); 
+    my $mdfile = "$Opt{template}.status"; 
+    # Get the metadata file via rsync to a temporary file
+    my $tempdir = tempdir(CLEANUP => 1);  
+    debug "rM: tempdir is $tempdir\n", 1;
+    my @output; 
+    my $remPath = $Opt{'remote-rsync-cmd'} ? "--rsync-path '$Opt{'remote-rsync-cmd'}'" : '';  # FIXME commonise this
+    my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
+        "$remPath '$dest/$mdfile' '$tempdir/$mdfile'", 1,1, \@output);
+    debug "rM: rc=$rc output: '@output'\n", 1;
+    return $mdArrayRef if $rc;
+    # Read the metadata file
+    if (open MDF, '<', "$tempdir/$mdfile") { 
+        my $json = ''; 
+        while (<MDF>) { 
+            $json .= $_; 
+        } 
+        close MDF;
+        $mdArrayRef = from_json($json, {relaxed => 1});
+        foreach my $s (@$mdArrayRef) { 
+            debug "rM: $s->{snapshot} / $s->{partial} / $s->{size}\n", 1; 
+        } 
+    } else { 
+        debug "rM: Unable to read metadata file\n", 1;
+    }
+    return $mdArrayRef; 
+}
+
+#===================================================================================================
+
 sub getSnapshotList ($) {
-    # Read in the existing snapshots, storing it in global hash %S.
+    # Read in the existing snapshots, storing their details in global hash %S.
     # Uses rsync in case the destination is remote.
     my $dest = shift;
     my $template = $Opt{template};  
@@ -2353,12 +2458,30 @@ sub getSnapshotList ($) {
                 name     => "$+{name}$ps",
                 path     => $dest,
                 fullname => "$dest/$+{name}$ps",
-                partial  => $+{ps} ? 1 : 0,
+                partial  => $+{ps} ? 1 : 0, # obsolete -- suffixes will no longer be used
+                size     => -1,             # no size information yet
                 remote   => $remote,
                 daemon   => $daemon,
             };
         } else {
             debug "gSL: unmatched: $_\n", 9;
+        }
+    }
+    # Get the metadata
+    my $mdArrayRef = readMetadata($dest);
+    debug "gSL: mdArrayRef=$mdArrayRef\n";
+    # And combine the two:
+    # - warn about entries in metadata for which there is no snapshot
+    # - add any partial and size information for the existing snapshots
+    foreach my $md (@$mdArrayRef) {
+        debug "gSL: matching md: $md->{snapshot} / $md->{partial} / $md->{size}\n", 1;
+        my $s = stamp2time($md->{snapshot});
+        if ($S{$s}) {
+            debug "gSL: updating metadata for snapshot $md->{snapshot}\n", 1;
+            $S{$s}{partial} |= $md->{partial};  # It's partial if either source says it is
+            $S{$s}{size}     = $md->{size};
+        } else {
+            printlog "WARNING: snapshot '$template-$md->{snapshot}' is missing\n", 1;
         }
     }
 }
@@ -2470,9 +2593,9 @@ sub snapshotsInPeriod (\@$$;$) {
     # or an array of said snapshots, depending on the last parameter.
     # (Can't use wantarray, because this often gets
     # called in list context even when just the count is needed)
-    my @S   = @{(shift)};
-    my $beg = shift;
-    my $end = shift;
+    my @S           = @{(shift)};
+    my $beg         = shift;
+    my $end         = shift;
     my $returnArray = shift // 0;
     my $count = 0;
     my @SIP;
@@ -2513,7 +2636,6 @@ sub getMatchingSnapshots ($$$$\@) {
     my $beg     = shift;         # beginning of period 
     my $end     = shift;         # end of period
     my $best    = shift;         # seconds from $beg to preferred snapshot time
-#    my $freqmin = shift;         # minimum number of snapshots in period
     my $freqmax = shift;         # maximum number of snapshots in period
     my @S       = @{(shift)};    # array of timestamps of existing snapshots (just those in range)
                                  # in descending order
@@ -2867,7 +2989,7 @@ sub getDeleteList (\@;$) {
 
     } # foreach spec
 
-    # sort @D cos may not have been added in order
+    # sort @D cos may not have been added in ordegit search historyr
     @D = rsort @D;
 
     # Summarise keepers and deleters over whole period
@@ -3484,6 +3606,10 @@ sub runRsync ($\@$) {
             # so we'll have to do it manually
             # (It may already be there if there is more than one destination)
             # Destination is local, so just we can just use mkdir
+            # FIXME are we sure we've got permission to run mkdir?
+            # FIXME would '--recursive' avoid the need for this?
+            # -- maybe not, because --recursive is (obviously) part of --archive
+            # -- not, it only works if the extra dir is part of the source
             if (!$Opt{'dry-run'}) {
                 if (!-e "$destDir" and !mkdir("$destDir", 0755)) {
                     printlog "ERROR: Unable to create directory '$destDir' ($!)\n";
@@ -3732,7 +3858,10 @@ sub run ($\@) {
 
     # Display the current situation
     # after recompiling the specs to allow for changes
-    @cSpecs = compileSpecs($snapshot, @specs, 1);
+    @cSpecs = compileSpecs($snapshot, @specs, 1);  # FIXME this is just to make status more helpful -- is it really needed?
+    updateSnapshotSizes();
+    writeMetadata($dest);
+    # then status() just has to print the numbers.
     status($dest, @cSpecs);
 
 }
@@ -3781,8 +3910,12 @@ sub systemcall ($$$$;$$) {
         local *CATCHERR = IO::File->new_tmpfile;
         my $pid = open3(gensym, \*CATCHOUT, ">&CATCHERR", "$cmd $args");
         # Deal with stdout from $cmd
-        printlog "$cmd output:\n", $stdoutLevel unless $stdoutRef;
+        my $outputStarted = 0;
         while (<CATCHOUT>) {
+            if (!$outputStarted) {
+                printlog "------- $cmd output starts\n", $stdoutLevel unless $stdoutRef;
+                $outputStarted = 1;
+            }
             if (ref($stdoutRef) eq 'ARRAY') {
                 push @$stdoutRef, $_; 
             } elsif (ref($stdoutRef) eq 'GLOB') {
@@ -3791,13 +3924,20 @@ sub systemcall ($$$$;$$) {
                 printlog $_, $stdoutLevel;
             }
         }
+        if ($outputStarted) {
+            printlog "------- $cmd output ends\n", $stdoutLevel unless $stdoutRef;
+        }
         waitpid($pid, 0);
         $rc = $?;
         $rc2 = '';
         # Deal with stderr from $cmd
         seek CATCHERR, 0, 0;
-        printlog "$cmd errors:\n", $stderrLevel unless $stderrRef;
+        $outputStarted = 0;
         while (<CATCHERR>) {
+            if (!$outputStarted) {
+                printlog "------- $cmd errors start\n", $stderrLevel unless $stderrRef;
+                $outputStarted = 1;
+            }
             # scan for specific errors
             if (/No space left on device/) {    # (this text is not always there)
                 $rc2 = 'diskfull';
@@ -3812,17 +3952,20 @@ sub systemcall ($$$$;$$) {
                 printlog $_, $stderrLevel;
             }
         }
+        if ($outputStarted) {
+            printlog "------- $cmd errors end\n", $stderrLevel unless $stderrRef;
+        }
     }
     if ($rc == -1) {
-        printlog "Failed to execute command '$cmd': $!\n", 1;
+        debug "WARNING: Failed to execute command '$cmd': $!\n", 1;
     } elsif ($rc & 127) {
         my $sig = $rc & 127;
-        printlog "Command '$cmd' died with signal $sig\n", 1;
+        debug "WARNING: Command '$cmd' died with signal $sig\n", 1;
         #  ($? & 127),  ($? & 128) ? 'with' : 'without';
         $rc = ($rc & 127) + 1000;
     } else {
         $rc = $rc >> 8;
-        printlog "Command '$cmd' exited with value $rc\n", 1 if $rc;
+        debug "WARNING: Command '$cmd' exited with value $rc\n", 1 if $rc;
     }
     return ($rc, $rc2);
 }
@@ -3839,11 +3982,13 @@ sub testSuite {
     printlog   "===============\n";
 
     # Default options for testing
-    printlog "source: " . ref($Opt{source}) . "\n";
     ${$Opt{source}}[0]      = '~/tmp/bstestsource';
     ${$Opt{destination}}[0] = '~/tmp/bstestdest';
+    my $dest = ${$Opt{destination}}[0];
     $Opt{lockfile}       = '~/tmp/bstest.lock';
     $Opt{verbose}        = 3;
+    $Opt{template} = "test$Opt{test}";
+    my $template = $Opt{template};
     my $now = stamp2time('20110529-230000');
 
     given ($Opt{test}) {
@@ -3876,19 +4021,36 @@ sub testSuite {
             }
         }
 
+        # %S needs to look like this:
+        # Hash of snapshots, keyed by snapshot Unix time,
+        # each entry containing these fields:
+        #  name     - name of the snapshot directory e.g. 'docs-20111130-320234'
+        #  path     - directory path to name (NOT ending with '/')
+        #  fullname - same as path/name   
+        #  partial  - true if it's a partial (incomplete) snapshot, with a name ending with the suffix
+        #  remote   - true if it's on a remote destination
+        #  daemon   - true if it's remote and accessed via an rsync daemon
+        # Which makes it all very tedious.
         when (2) {
             # 2
             my ($warnings, $errors, @specs) = parseSpecs('3d1');
             %S = (
-                stamp2time('20110508-090000'),0,
-                stamp2time('20110508-100000'),0,
-                stamp2time('20110508-120000'),0,
-                stamp2time('20110508-180000'),0,
+                stamp2time('20110508-090000'), {name=>'$template-20110508-090000', path=>$dest, 
+                    fullname=>"$dest/$template-20110508-090000", partial=>0, remote=>0, daemon=>0},
+                stamp2time('20110508-100000'), {name=>'$template-20110508-100000', path=>$dest, 
+                    fullname=>"$dest/$template-20110508-100000", partial=>0, remote=>0, daemon=>0},
+                stamp2time('20110508-120000'), {name=>'$template-20110508-120000', path=>$dest, 
+                    fullname=>"$dest/$template-20110508-120000", partial=>0, remote=>0, daemon=>0},
+                stamp2time('20110508-180000'), {name=>'$template-20110508-180000', path=>$dest, 
+                    fullname=>"$dest/$template-20110508-180000", partial=>0, remote=>0, daemon=>0},
             );
             my @cSpecs = compileSpecs($now, @specs);
             displayCSpecs(@cSpecs);
         }
 
+        # FIXME the rest of the tests don't work anymore because of the 
+        # changes to %S -- maybe we'll abandon them.
+        # TODO unless we add a sub to generate %S entries.
         when (3) {
             # 3 
             my ($warnings, $errors, @specs) = parseSpecs('3d1');
