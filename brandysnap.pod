@@ -391,13 +391,13 @@ Options to pass to rsync, in addition to those that brandysnap will always use (
 
 =over
 
-=item B<all-failed I<keep/rename/delete>>
+=item B<all-failed I<keep/delete>>
 
 What to do with the snapshot if none of the sources are copied successfully.
-B<I<keep>> will mean that the incomplete snapshot will be considered complete, and is not recommended.
-B<I<rename>> will cause the incomplete snapshot to be renamed with a 'B<-x>' suffix: this
+B<I<keep>> will keep the incomplete snapshot and mark it as 'partial' in the metadata file.
+This
 means that it will not be considered as a proper snapshot when making future
-decisions about what keep.
+decisions about which snapshots to get rid of.
 If you specify B<I<delete>>, the incomplete snapshot will be deleted immediately, in the expectation
 that future snapshots will be more successful.
 See also B<--some-failed>.
@@ -426,14 +426,15 @@ with [options yet to be implemented] to tune the behaviour of brandysnap. (defau
 =item B<restart I<yes/no>>
 
 If a previous run of brandysnap was interrupted for any reason, use this option to re-do the same snapshot (simply by relying on rsync's ability to not copy files that have not changed).  Any files in the source that have changed since the previous run _will_ be updated.  If more than one destination is being used, rsync will be run for _all_ destinations, even if some of them completed successfully before.
+Implies B<--restart>.
 
 =item B<snapshot I<yes/no>>
 
 Create a new snapshot.  If this option is turned off, no new snapshot will be created during this run of brandysnap but old snapshots may be deleted. (default: B<yes>)
 
-=item B<some-failed I<keep/rename/delete>>
+=item B<some-failed I<keep/delete>>
 
-What to do with the snapshot if some of the sources are not copied successfully.  See B<--all-failed> for details. (default: B<rename>)
+What to do with the snapshot if some of the sources are not copied successfully.  See B<--all-failed> for details. (default: B<keep>)
 
 =item B<status I<yes/no>>
 
@@ -519,13 +520,15 @@ As of 5 November 2011 and version 0.1.14, the following issues and bugs are know
 
 =item * 
 
-The option B<--remote-rsync-cmd> can only be specified once, and applies to all remote sources and directories.
+Option B<--remote-rsync-cmd> can only be specified once, and applies to all remote sources and directories.
+Likewise the include/exclude options apply to all source/directory pairs.
 
 =item * 
 
 Under certain circumstances, rsync can fail if the source contains files that are hard-linked together
 and for which you do not have read permission.  This is fixed in rsync 3.0.9 and later.  You can get
-round it by specifying B<--rsync-opts> with the usual options but omitting B<--hard-links>.
+round it by specifying B<--rsync-opts> with the usual options but omitting B<--hard-links>
+at the cost of using more disk space.
 
 =item * 
 
@@ -538,7 +541,7 @@ because it is less than 24 hours ago, so it will be deleted.  A fix is planned t
 
 =item *
 
-When using the B<--dry-run--> option, rsync sometimes displays an error message that C<--link-dest arg does not exist>.  
+When using the B<--dry-run> option, rsync sometimes displays an error message that C<--link-dest arg does not exist>.  
 This can be safely ignored.
 
 =item *
@@ -546,10 +549,11 @@ This can be safely ignored.
 When daylight savings ends (or the clock goes backwards for any other reason), it is possible
 that brandysnap will try to create a new snapshot at exactly the same time as an existing one.
 The results of that are 'undefined' -- i.e. I haven't tried it.
+There are other obscure issues with daylight savings and leap years to be addressed too.
 
 =back
 
 =head1 AUTHOR
 
 Chris Dennis, chris@starsoftanalysis.co.uk
-:
+

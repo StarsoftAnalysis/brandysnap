@@ -43,7 +43,6 @@ use File::Temp qw(tempfile tempdir);
 use File::Spec::Functions qw(rel2abs splitdir catfile catdir);
 use File::Basename;
 use Fcntl qw(:flock);
-use Filesys::Df;        # FIXME still needed?
 use Scalar::Util qw(looks_like_number);
 use IPC::Open3;
 use Symbol qw(gensym);
@@ -933,6 +932,9 @@ sub processOptions () {
         $errorcount += checkBoolean $opt;
     }
 
+    # --restart implies --snapshot
+    $Opt{snapshot} = 1 if $Opt{restart};
+
     # 'Best' options
     if ($Opt{hbest} and !($Opt{hbest} >= 0 and $Opt{hbest} <= 59)) {
         printlog "ERROR: Invalid option: 'hbest' must be a whole number between 0 and 59, " .
@@ -1003,17 +1005,10 @@ sub processOptions () {
     foreach my $opt (qw(all-failed some-failed)) {
         if (index('keep', lc($Opt{$opt})) == 0) {
             $Opt{$opt} = 'keep';
-        } elsif (index('rename', lc($Opt{$opt})) == 0) {
-            $Opt{$opt} = 'rename';
-            if (anyDestRemoteDaemon()) {
-                printlog "ERROR: Invalid option: '$opt' can not be 'rename' when any\n", 1;
-                printlog "       of the destinations are using an rsync daemon\n", 1;
-                $errorcount += 1;
-            }
         } elsif (index('delete', lc($Opt{$opt})) == 0) {
             $Opt{$opt} = 'delete';
         } else {
-            printlog "ERROR: Invalid option: '$opt' must be one of 'keep', 'rename', or 'delete'\n", 1;
+            printlog "ERROR: Invalid option: '$opt' must be either 'keep' or 'delete'\n", 1;
             $errorcount += 1;
         }
     }
@@ -1148,8 +1143,8 @@ Rsync options
 --remote-rsync-cmd file  location of the rsync programme on the remote
                           computer (optional, no default)
 Advanced options
---all-failed   keep|rename|delete   (default: delete)
---some-failed  keep|rename|delete   (default: rename)
+--all-failed   keep|delete   (default: delete)
+--some-failed  keep|delete   (default: keep)
                          what to do with the snapshot if all or some of the 
                           sources are not copied successfully
                           (values can be abbreviated)
@@ -1161,6 +1156,7 @@ Advanced options
 --expire-old   yes/no    delete oldest snapshots when disk is full (default: no)
 --ldcount      n         number of --link-dest options to create (default: 1)
 --restart      yes/no    continue previous snapshot (default: no)
+                          (implies --snapshot)
 --snapshot     yes/no    create new snapshots (default: yes)
 --status       yes/no    print a status report only (default: no)
 --strict       yes/no    use strict mode (default: no)
@@ -1259,6 +1255,23 @@ sub sourceDir ($) {
 
 #---------------------------------------------------------------------------------------------------
 
+sub stdArgs ($) {
+    # Return the standard arguments for rsync calls
+    my $sending = shift;  # True for sending, false for receiving
+    my $args = '';
+    if ($Opt{'remote-rsync-cmd'}) {
+        $args .= "--rsync-path '$Opt{'remote-rsync-cmd'}' ";
+    }
+    if ($sending) {
+        $args .= "--bwlimit=$Opt{'bwlimit-out'} ";
+    } else {
+        $args .= "--bwlimit=$Opt{'bwlimit-in'} ";
+    }
+    return $args;
+}
+
+#---------------------------------------------------------------------------------------------------
+
 sub updateSnapshotSizes () {
     # Make sure that each snapshot in %S has size information --
     # if not, get the size of the snapshot via rsync.
@@ -1275,9 +1288,9 @@ sub updateSnapshotSizes () {
         my $totalSize = 0;
         # Get rsync listing into an array
         my @items;
-        my $remPath = $Opt{'remote-rsync-cmd'} ? "--rsync-path '$Opt{'remote-rsync-cmd'}'" : '';
+        #my $remPath = $Opt{'remote-rsync-cmd'} ? "--rsync-path '$Opt{'remote-rsync-cmd'}'" : '';
         my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
-            "$remPath --recursive --bwlimit=$Opt{'bwlimit-in'} '$S{$snapshot}{fullname}/'", 1,1, \@items);
+            stdArgs(0) . " --recursive '$S{$snapshot}{fullname}/'", 9,9, \@items);
         debug "uSS: snapshot=$snapshot rc=$rc rc2='$rc2'\n", 1;
         if (!$rc) {
             foreach my $item (@items) {
@@ -1307,123 +1320,6 @@ sub updateSnapshotSizes () {
     }
 }
 
-# FIXME obsolete:
-sub snapshotInfoRemote ($) {
-    # Get snapshot information for a remote destination via rsync.
-    # rsync returns directory listings thusly (even for recent dates):
-    #    -rwxr-xr-x         149 2008/06/13 13:56:30 textsmart
-    #    drwxr-xr-x        4096 2011/05/07 17:41:48 40dnamer
-    # and gives return code 23 if the directory is not found
-    # 255 for wrong password, unknown host etc.
-    # Note the lack of nlink information, so we can't calculate 'delete size'.
-
-    #my $dest     = shift;
-    my $snapshot = shift;  
-    #my $path  = "$dest/$sName";    # not catdir() because $dest may be an rsync URI
-    debug "sIR: snapshot " . dumpSnapshot($snapshot) . "\n", 3;
-
-    my $totalSize = 0;
-
-    # Get rsync listing into a temporary file
-    my @items;
-    my ($fh, $filename) = tempfile(UNLINK => 1);
-    my $remPath = $Opt{'remote-rsync-cmd'} ? "--rsync-path '$Opt{'remote-rsync-cmd'}'" : '';
-    my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
-        "$remPath --recursive --bwlimit=$Opt{'bwlimit-in'} '$S{$snapshot}{fullname}/'", 9,9, $fh);
-    debug "sIR: rc=$rc rc2='$rc2' filename=$filename\n", 3;
-    if ($rc) {
-        return (0, 0);
-    }
-
-    seek $fh, 0, 0;
-    while (my $item = readline $fh) {
-        debug "sIR: item = $item", 9;
-        # matching e.g.: 'drwxr-xr-x        4096 2011/05/07 17:41:48 40dnamer'
-        if ($item =~ m|^(?<t>.)(?<p>.{9})\s+(?<size>\d+)\s\d{4}/\d{2}/\d{2}\s\d{2}:\d{2}:\d{2}\s(?<name>.*)$|) {
-            next if $+{name} eq '.';
-            next if $+{name} eq '..';
-            if ($+{t} eq '-' or $+{t} eq 'l' or $+{t} eq 'd') {
-                # file or symbolic link or directory
-                # (we're not following the symbolic link, just counting the space of the link itself)
-                # (and we're counting the directory itself, not its contents)
-                debug "sIR: t=$+{t} size=$+{size} name=$+{name}\n", 9;
-                $totalSize += diskSpace($+{size});
-            } else {
-                # (ignore anything other than files and directories)
-            }
-        } else {
-            # (ignore any non-matching lines)
-            debug "sIR: ignoring $item\n", 9;
-        }
-    }
-
-    return $totalSize;
-}
-
-#---------------------------------------------------------------------------------------------------
-
-# FIXME obsolete:
-sub snapshotInfo ($) {
-    # Get the amount of space that would be freed by deleting a file or directory.
-    # FIXME -- now we only return the space that would be used without hard links
-    # --- is there a way to subtract the space NOT used because of hard links?
-    # The value returned is a number of blocks, which ought to be 512 bytes each.
-    # Because of hard links, deleting a file may not free any space.
-    # So this routine only counts files whose link count is 1.  NOT TRUE
-    # Hard links /within/ the directory in question will 
-    # give an underestimate of the amount of space that will be freed.
-    # We'll assume that most of the links are between snapshots, not within them.
-
-    my $snapshot = shift;   
-
-    # FIXME always use remote i.e. rsync for perms purposes
-    # FIXME but that loses 'delete size' stuff and is very slow
-    if (1 or $S{$snapshot}{remote}) {
-        return (0, snapshotInfoRemote($snapshot));
-    }
-
-    # FIXME the rest of this is probably redundant
-    # Now we're dealing with a local snapshot
-    #my $snapshotPath = "$dest/$sName";   #snapshotPath($dest, $snapshot);
-    #debug "sI: snapshotPath = $snapshotPath\n", 7;
-
-    # These totals have 'state' because otherwise Perl gives warnings
-    # about sharing, not because we want them to retain their value.
-    state $DStotalBlocks;
-    state $AStotalBlocks;
-    $DStotalBlocks = 0;
-    $AStotalBlocks = 0;
-
-    if (!-d $S{$snapshot}{fullname}) {
-        return (0,0);
-    }
-
-    # Use 'find' to traverse the directory, and accumulate totals
-    find({ wanted => \&processItem, no_chdir => 1 }, $S{$snapshot}{fullname}); 
-    debug "\nDSTotal blocks: $DStotalBlocks    that's ". $DStotalBlocks*512 . " bytes\n", 7;
-
-    sub processItem {
-        # called from find().  $_ is the file name
-        # FIXME need to run as root, or otherwise get permissions on all these files
-        my ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,
-            $atime,$mtime,$ctime,$blksize,$blocks) = stat($_);
-        if (-f _) {
-            debug "file: $_  n=$nlink  size=$size  blocks=$blocks\n", 7;
-            $DStotalBlocks += $blocks if $nlink == 1;
-            $AStotalBlocks += $blocks;
-        } elsif (-d _) {
-            debug "dir : $_  n=$nlink  size=$size  blocks=$blocks\n", 7;
-            # dirs are never hard-linked, so always count them
-            $DStotalBlocks += $blocks;
-            $AStotalBlocks += $blocks;
-        }
-        # (ignore anything other than files and directories)
-    }
-
-    # Assume block size is 512  # FIXME
-    return ($DStotalBlocks * 512, $AStotalBlocks * 512);
-}
-
 #===================================================================================================
 
 # Snapshot stuff 
@@ -1449,20 +1345,18 @@ sub deleteSnapshot ($) {
     # This involves copying an empty directory onto the snapshot, and
     # removing the snapshot directory itself with filter cleverness.
     my @output;
-    debug "dS: deleting snapshot the new way\n", 1;
-    #my $cmd = "$Opt{'rsync-cmd'} --dirs -f 'R /$sName/**' -f '-!r /$sName' --delete $EmptyDir/ $dest/";
-    my $remPath = $Opt{'remote-rsync-cmd'} ? "--rsync-path '$Opt{'remote-rsync-cmd'}'" : '';
+    debug "dS: deleting snapshot the new way\n", 9;
+    #my $remPath = $Opt{'remote-rsync-cmd'} ? "--rsync-path '$Opt{'remote-rsync-cmd'}'" : '';
     my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
-        #"$remPath --dirs -f 'R /$S{$snapshot}{name}/**' -f '-!r /$S{$snapshot}{name}' --delete $EmptyDir/ $dest/", 
-        "$remPath --dirs -f 'R /$S{$snapshot}{name}/**' -f '-!r /$S{$snapshot}{name}' --delete $EmptyDir/ $S{$snapshot}{path}", 
+        stdArgs(1) . " --dirs -f 'R /$S{$snapshot}{name}/**' -f '-!r /$S{$snapshot}{name}' " .
+        "--delete $EmptyDir/ $S{$snapshot}{path}", 
         9,9, \@output); 
-    #debug "dS: delete cmd: '$cmd'\n", 3;
-    #my $output = `$cmd`;
-    debug "dS: rsync output: \n@output", 1;
-    debug "dS: rsync returned $rc, '$rc2'\n", 1;
+    debug "dS: rsync output: \n@output", 9;
+    debug "dS: rsync returned $rc, '$rc2'\n", 9;
     # This returns no error if the snapshot didn't exist, which is fine
     if ($rc) {
-        printlog "ERROR: failed to delete remote snapshot '$S{$snapshot}{name}' from '$S{$snapshot}{path}' (code $rc)", 1,1;
+        printlog "ERROR: failed to delete remote snapshot '$S{$snapshot}{name}' " .
+            "from '$S{$snapshot}{path}' (code $rc)", 1,1;
         return 1;
     }
     delete $S{$snapshot};   # delete it from %S too
@@ -1522,7 +1416,7 @@ sub deleteOldSnapshots (\@;$) {
 
 #---------------------------------------------------------------------------------------------------
 
-sub renameOrDeleteSnapshot ($$) {
+sub markOrDeleteSnapshot ($$) {
     # Rename or delete a snapshot, depending on options and errors.
     #
     # The standard thing to do is to rename a partially-complete snapshot
@@ -1534,17 +1428,15 @@ sub renameOrDeleteSnapshot ($$) {
     # And it depends on whether the snapshot is local or remote: 
     # in particular there is no way to rename a snapshot via the rsync daemon.
     #
-    # Returns 1 for renamed, 2 for deleted, 3 for kept, 0 for error     # FIXME is this required?
     my $snapshot         = shift; 
     my $sourcesCompleted = shift;
 
-    my $rc = 0;
     my $sName = $S{$snapshot}{name};   # for convenience
 
-    my $action;
+    my $action; # delete or don't
     if ($Interrupted and $Opt{'allow-restart'}) {
         # Don't delete if we want to restart
-        $action = 'rename';
+        $action = 'keep';
     } else {
         if ($sourcesCompleted == 0) {
             $action = $Opt{'all-failed'};
@@ -1555,155 +1447,26 @@ sub renameOrDeleteSnapshot ($$) {
         }
     }
 
-    if ($action eq 'keep') {
-        printlog "NOTE: Snapshot has been kept despite being incomplete\n", 1;
-        return 3;
+    if ($Opt{'dry-run'} and ($action eq 'delete')) {
+        printlog "Dry run: would have deleted incomplete snapshot '$sName'\n", 1;
+        return;
     }
 
-    if ($action eq 'rename' and ($sName =~ /-$PartialSuffix$/)) {
-        # It already has a suffix -- don't add another
-        printlog "NOTE: Snapshot '$sName' has already been renamed (this shouldn't happen!)\n", 1;
-        return 1;
-    }
-
-    if ($Opt{'dry-run'}) {
-        if ($action eq 'rename') {
-            printlog "Dry run: would have renamed incomplete snapshot '$sName' to '$sName-$PartialSuffix'\n", 1;
-            return 1;
-        } else {
-            printlog "Dry run: would have deleted incomplete snapshot '$sName'\n", 1;
-            return 2;
-        }
-    }
-
-    if ($S{snapshot}{daemon}) {
-        if ($action eq 'rename' and $Interrupted and $Opt{'allow-restart'}) {
-            printlog "WARNING: Incomplete snapshot is being kept for possible restart,", 1;
-            printlog "         but it can not be renamed via the rsync daemon.", 1;
-            printlog "         It will be kept, without the addition of the 'incomplete suffix'.", 1;
-            return 3;
-        } else {
-           # Can't rename, just delete it (see all-failed/some-failed option validation)
-            $rc = deleteSnapshot($snapshot);
-            return $rc == 0 ? 2 : 0; 
-        }
-    }
-
-    if ($S{$snapshot}{remote}) {
-        my ($rc, $rc2);
-        if ($action eq 'rename') {
-            # Use SSH to rename it 
-            # (as usual, we're assuming passwords are taken care of elsewhere)
-            my ($host, $path) = $S{$snapshot}{path} =~ /^([^:]*):(.*)$/;
-            ($rc, $rc2) = systemcall('ssh', "$host mv '$path/$sName' '$path/$sName-$PartialSuffix'", 9,9);
-            #my ($rc, $rc2) = (1,'');
-            # returns 0 for success
-            debug "rODS: remote: rc=$rc rc2=$rc2\n", 1;
-            if ($rc == 0) {
-                $S{$snapshot}{name}     .= "-$PartialSuffix";
-                $S{$snapshot}{fullname} .= "-$PartialSuffix";
-                $S{$snapshot}{partial}   = 1;
-                printlog "NOTE: Snapshot renamed with '-$PartialSuffix' suffix\n", 1;
-                return 1;
-            } else {
-                if ($Interrupted and $Opt{'allow-restart'}) {
-                    printlog "WARNING: Incomplete snapshot is being kept for possible restart,", 1;
-                    printlog "         but it could not be renamed (error $rc/'$rc2').", 1;
-                    printlog "         It will be kept, without the addition of the 'incomplete suffix'.", 1;
-                    return 3;
-                } else {
-                    printlog "WARNING: Snapshot could not be renamed (error $rc/'$rc2') -- it will be deleted instead\n", 1;
-                    # (fall through to 'delete' action)
-                }
-            }
-        }
-        if ($action eq 'delete' or $rc) {
-            # Delete requested, or renaming failed
-            # (because, for example, the user may have sudo permission for rsync but not for mv)
-            $rc = deleteSnapshot($snapshot);
-            if ($rc == 0) {
-                printlog "NOTE: Snapshot deleted\n", 1;
-                return 2;
-            } else {
-                printlog "WARNING: Snapshot could not be deleted (error $rc/'$rc2')\n", 1;
-                return 0; 
-            }
-        }
-    }
-
-    # ...else, it's a local destination
-    if ($action eq 'rename') {
-        $rc = rename "$S{$snapshot}{fullname}", "$S{$snapshot}{fullname}-$PartialSuffix";
-        # returns 1 for success
-        if ($rc == 1) {
-            $S{$snapshot}{name}     .= "-$PartialSuffix";
-            $S{$snapshot}{fullname} .= "-$PartialSuffix";
-            $S{$snapshot}{partial}   = 1;
-            printlog "NOTE: Snapshot renamed to '$S{$snapshot}{fullname}-$PartialSuffix'\n", 1;
-        } else {
-            printlog "WARNING: Snapshot could not be renamed\n", 1;
-        }
-        # If renaming fails, deleting will too, so don't try.
-        debug "rODS: rc=$rc\n", 1;
-        return $rc == 1 ? 1 : 0; 
-    }
     if ($action eq 'delete') {
-        debug "rODS: local: delete\n", 1;
-        $rc = deleteSnapshot($snapshot); # returns 0 for success
+        my $rc = deleteSnapshot($snapshot);
         if ($rc == 0) {
             printlog "NOTE: Snapshot deleted\n", 1;
+            return;
         } else {
             printlog "WARNING: Snapshot could not be deleted (error $rc)\n", 1;
         }
-        debug "rODS: rc=$rc\n", 1;
-        return $rc == 0 ? 2 : 0; 
     }
+
+    # Mark it as partial
+    $S{$snapshot}{partial} = 1;
 }
 
 #---------------------------------------------------------------------------------------------------
-
-sub clearSuffix ($) {
-    # Remove any suffix from a snapshot and update the entry in %S
-    my $snapshot = shift;
-    debug "clearSuffix: snapshot=$snapshot partial=$S{$snapshot}{partial} \n", 1;
-    return if !$S{$snapshot}{partial};   # nothing to clear
-    if ($S{$snapshot}{daemon}) {
-        # Shouldn't happen because suffix would not have been added
-        debug "cS: daemon -- can't happen\n", 1;
-        return;
-    }
-    my $oldname = $S{$snapshot}{name};
-    (my $newname = $oldname) =~ s/-$PartialSuffix//; # remove suffix 
-    if ($S{$snapshot}{remote}) {
-        # Non-daemon remote destination -- try to use ssh/mv to rename it
-        # (as usual, we're assuming passwords are taken care of elsewhere)
-        my ($rc, $rc2);
-        (my ($host, $path) = $S{$snapshot}{path}) =~ /^([^:]*):(.*)$/;
-        debug "cS: ssh $host mv '$path/$oldname' '$path/$newname'\n", 1;
-        ($rc, $rc2) = systemcall('ssh', "$host mv '$path/$oldname' '$path/$newname'", 9,9);
-        if ($rc) {
-            debug "cS: failed to remove remote suffix ($rc/'$rc2')\n", 1;
-        } else {
-            $S{$snapshot}{name}     = $newname;
-            $S{$snapshot}{fullname} = "$S{$snapshot}{path}/$S{$snapshot}{newname}";
-            $S{$snapshot}{partial}  = 0;
-        }
-        return;
-    }
-    # Else it's local
-    debug "cS: rename '$S{$snapshot}{path}/$oldname', '$S{$snapshot}{path}/$newname'\n", 1;
-    my $rc = rename "$S{$snapshot}{path}/$oldname", "$S{$snapshot}{path}/$newname";
-    # returns 1 for success
-    if ($rc == 1) {
-        $S{$snapshot}{name}     = $newname;
-        $S{$snapshot}{fullname} = "$S{$snapshot}{path}/$S{$snapshot}{newname}";
-        $S{$snapshot}{partial}  = 0;
-    } else {
-        debug "cS: failed to remove local suffix\n", 1;
-    }
-}
-
-#===================================================================================================
 
 sub status ($;\@) {
     # Print a status report on existing snapshots
@@ -1713,8 +1476,7 @@ sub status ($;\@) {
 
     my $count  = 0; # complete
     my $xcount = 0; # incomplete
-    my $totald = 0;
-    my $totala = 0;
+    my $total  = 0;
     my $ci = 0; # index into @cSpecs
 
     my $plevel = 2;
@@ -1732,12 +1494,12 @@ sub status ($;\@) {
     }
     else {
         my $nameLength = max(length($Opt{template}) + 18, 35);
-        printlog sprintf("%-*s   %13s %15s   %s\n", $nameLength, 'Snapshot (most recent first)', 
-            'Delete Size', 'Apparent Size', @cSpecs ? 'Spec' : ''), $plevel,$llevel;
-        printlog sprintf("%-*s   %13s %15s   %s\n", $nameLength, '-'x$nameLength, 
+        printlog sprintf("%-*s   %15s   %s\n", $nameLength, 'Snapshot (most recent first)', 
+            'Size', @cSpecs ? 'Spec' : ''), $plevel,$llevel;
+        printlog sprintf("%-*s   %15s   %s\n", $nameLength, '-'x$nameLength, 
             '-----------', '-------------', @cSpecs ? '--------' : ''), $plevel,$llevel;
         foreach my $s (rsort keys %S) {
-            my ($dsize, $asize) = (0, $S{$s}{size}); # FIXME  dsize no more!.         snapshotInfo($s);
+            my $size = $S{$s}{size};
             my $label = '';
             # Find which cSpec applies (complete snapshots only)
             if ($S{$s}{partial}) {
@@ -1751,37 +1513,20 @@ sub status ($;\@) {
                 $label .= ' ' . $LevelName{$cSpecs[$ci]->{period}}.'ly' if @cSpecs;
                 $count += 1;
             }
-            printlog sprintf("%-*s   %13s %15s   %s\n", $nameLength, $S{$s}{name}, 
-                bytes($dsize), bytes($asize) || 'empty', $label), $plevel,$llevel;
-            $totald += $dsize;
-            $totala += $asize;
+            printlog sprintf("%-*s   %15s   %s\n", $nameLength, $S{$s}{name}, 
+                bytes($size) || 'empty', $label), $plevel,$llevel;
+            $total += $size;
         }
-        printlog sprintf("%-*s   %13s %15s\n", $nameLength, '-'x$nameLength, 
-            '-----------', '-----------'), $plevel,$llevel;
-        #printlog sprintf("%8s %*d   %13s %15s\n", 'Totals: ', $nameLength-9, $count, 
-        ##        '', bytes($totala)), $plevel,$llevel;
+        printlog sprintf("%-*s   %15s\n", $nameLength, '-'x$nameLength, 
+            '-----------'), $plevel,$llevel;
         my $incomplete = '';
         $incomplete = "(+$xcount incomplete)" if $xcount;
-        printlog sprintf("%8s %s %-16s %3d   %13s %15s\n", 'Totals: ', ' 'x($nameLength-30), 
-            $incomplete, $count, '', bytes($totala)), $plevel,$llevel;
+        printlog sprintf("%8s %s %-16s %3d   %15s\n", 'Total:', ' 'x($nameLength-30), 
+            $incomplete, $count, bytes($total)), $plevel,$llevel;
         if ($count > 0) {
-            my $averaged = floor($totald/$count);
-            my $averagea = floor($totala/$count);
-            printlog sprintf("%-*s   %13s %15s\n", $nameLength, 'Averages:', 
-                bytes($averaged), bytes($averagea)), $plevel,$llevel;
-        }
-        if (!remote($dest)) {
-            my $ref = df($dest, 1);
-            if (defined($ref)) {
-                #printlog sprintf("%-*s     %15s\n", $nameLength+12, 
-                #    'Disk space used (not just by these snapshots):', bytes($ref->{used})), $plevel,$llevel;  
-                printlog sprintf("%-*s     %15s\n", $nameLength+12, 
-                    'Disk space available:', bytes($ref->{bfree})), $plevel,$llevel;
-                printlog sprintf("%-*s     %15s\n", $nameLength+12, 
-                    'Disk size:', bytes($ref->{blocks})), $plevel,$llevel;
-            } else {
-                printlog "Couldn't get disk space for $dest\n", $plevel,$llevel;
-            }
+            my $average = floor($total/$count);
+            printlog sprintf("%-*s   %15s\n", $nameLength, 'Average:', 
+                bytes($average)), $plevel,$llevel;
         }
     }
 }
@@ -1928,7 +1673,7 @@ sub fullPeriod ($$$) {
         $beg2 = date2time(DateCalc(time2date($end), $PrevP[$periodn], 1));
     }
     debug 'fP: ' . pair2range($beg, $end) . ' is' . (($beg == $beg2) ? '' : ' not') .
-        " a full $LevelName[$periodn]\n", 1;
+        " a full $LevelName[$periodn]\n", 9;
     return $beg == $beg2;
 }
 
@@ -2345,7 +2090,7 @@ sub processSpecs () {
 #===================================================================================================
 
 sub writeMetadata ($) {
-    # Store information from %S in the metadata file via rsync
+    # Store information from %S in the metadata file via rsync using JSON 
     my $dest = shift;
 
     return if !%S;
@@ -2363,18 +2108,19 @@ sub writeMetadata ($) {
     # Write to a temporary local file
     my ($tempfh, $tempfilename) = tempfile(UNLINK => 1);
     my $succeeded = 0;
-    #if (open $tempfh, '>', $statusfile) {
-        print $tempfh "# Status of brandysnap backups for '$Opt{template}' on '$dest' as at <date>\n";
-        print $tempfh $json;
-        close $tempfh;
-        # Send the file via rsync
-        my @output;
-        my $remPath = $Opt{'remote-rsync-cmd'} ? "--rsync-path '$Opt{'remote-rsync-cmd'}'" : '';
-        my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
-            "$remPath '$tempfilename' '$dest/$mdfile'", 1,1, \@output);    
-        debug "wM: rc=$rc output: '@output'\n", 1;
-        $succeeded = 1 if !$rc;
-        #} 
+    print $tempfh "# Status of brandysnap backups for '$Opt{template}' on '$dest' as at " . time2stamp(time()) . "\n";
+    print $tempfh "# Do not edit or delete this file\n";
+    print $tempfh $json;
+    close $tempfh;
+
+    # Send the file via rsync
+    my @output;
+    #my $remPath = $Opt{'remote-rsync-cmd'} ? "--rsync-path '$Opt{'remote-rsync-cmd'}'" : '';
+    my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
+        stdArgs(1) . " '$tempfilename' '$dest/$mdfile'", 9,9, \@output);    
+    debug "wM: rc=$rc output: '@output'\n", 1;
+    $succeeded = 1 if !$rc;
+
     if (!$succeeded) {
         printlog "WARNING: Unable to create metadata file '$mdfile'\n";
         printlog "         Metadata is:\n", 1;
@@ -2387,17 +2133,20 @@ sub writeMetadata ($) {
 sub readMetadata ($) {
     # Read the metadata into an array
     my $dest = shift; 
+
     my $mdArrayRef = (); 
     my $mdfile = "$Opt{template}.status"; 
+
     # Get the metadata file via rsync to a temporary file
     my $tempdir = tempdir(CLEANUP => 1);  
     debug "rM: tempdir is $tempdir\n", 1;
     my @output; 
-    my $remPath = $Opt{'remote-rsync-cmd'} ? "--rsync-path '$Opt{'remote-rsync-cmd'}'" : '';  # FIXME commonise this
+    #my $remPath = $Opt{'remote-rsync-cmd'} ? "--rsync-path '$Opt{'remote-rsync-cmd'}'" : '';  # FIXME commonise this
     my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
-        "$remPath '$dest/$mdfile' '$tempdir/$mdfile'", 1,1, \@output);
+        stdArgs(0) . " '$dest/$mdfile' '$tempdir/$mdfile'", 9,9, \@output);
     debug "rM: rc=$rc output: '@output'\n", 1;
     return $mdArrayRef if $rc;
+
     # Read the metadata file
     if (open MDF, '<', "$tempdir/$mdfile") { 
         my $json = ''; 
@@ -2407,6 +2156,9 @@ sub readMetadata ($) {
         close MDF;
         $mdArrayRef = from_json($json, {relaxed => 1});
         foreach my $s (@$mdArrayRef) { 
+            # Check that all values are there
+            $s->{partial} =  0 if !defined $s->{partial};
+            $s->{size}    = -1 if !defined $s->{size};
             debug "rM: $s->{snapshot} / $s->{partial} / $s->{size}\n", 1; 
         } 
     } else { 
@@ -2426,12 +2178,12 @@ sub getSnapshotList ($) {
     # Start with an empty list
     %S = ();
     my @listing;
-    my $remPath = '';
-    if (remote($dest) and $Opt{'remote-rsync-cmd'}) {
-       $remPath = "--rsync-path '$Opt{'remote-rsync-cmd'}'";
-    }
+    #my $remPath = '';
+    #if (remote($dest) and $Opt{'remote-rsync-cmd'}) {
+    #   $remPath = "--rsync-path '$Opt{'remote-rsync-cmd'}'";
+    #}
     my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
-        "$remPath --bwlimit=$Opt{'bwlimit-in'} '$dest/'", 9,9, \@listing);    
+        stdArgs(0) . " '$dest/'", 9,9, \@listing);    
     debug "gsL: rc=$rc listing: @listing n=" . scalar @listing ."\n", 9;
     return if $rc;
     my $remote = remote($dest);
@@ -2469,19 +2221,21 @@ sub getSnapshotList ($) {
     }
     # Get the metadata
     my $mdArrayRef = readMetadata($dest);
-    debug "gSL: mdArrayRef=$mdArrayRef\n";
-    # And combine the two:
-    # - warn about entries in metadata for which there is no snapshot
-    # - add any partial and size information for the existing snapshots
-    foreach my $md (@$mdArrayRef) {
-        debug "gSL: matching md: $md->{snapshot} / $md->{partial} / $md->{size}\n", 1;
-        my $s = stamp2time($md->{snapshot});
-        if ($S{$s}) {
-            debug "gSL: updating metadata for snapshot $md->{snapshot}\n", 1;
-            $S{$s}{partial} |= $md->{partial};  # It's partial if either source says it is
-            $S{$s}{size}     = $md->{size};
-        } else {
-            printlog "WARNING: snapshot '$template-$md->{snapshot}' is missing\n", 1;
+    if ($mdArrayRef) {
+        debug "gSL: mdArrayRef=$mdArrayRef\n", 9;
+        # And combine the two:
+        # - warn about entries in metadata for which there is no snapshot
+        # - add any partial and size information for the existing snapshots
+        foreach my $md (@$mdArrayRef) {
+            debug "gSL: matching md: $md->{snapshot} / $md->{partial} / $md->{size}\n", 1;
+            my $s = stamp2time($md->{snapshot});
+            if ($S{$s}) {
+                debug "gSL: updating metadata for snapshot $md->{snapshot}\n", 1;
+                $S{$s}{partial} |= $md->{partial};  # It's partial if either source says it is
+                $S{$s}{size}     = $md->{size};
+            } else {
+                printlog "WARNING: snapshot '$template-$md->{snapshot}' is missing\n", 1;
+            }
         }
     }
 }
@@ -2684,7 +2438,7 @@ sub getMatchingSnapshots ($$$$\@) {
         # (shouldn't happen because snapshots can't share a date)
         my $closeness = ($p+$n == 0) ? 9999999999 : $range/($p+$n);
         debug "gMS: this=" . time2stamp($S[$s]) . " previous=" . time2stamp($previous) . 
-            " next=" . time2stamp($next) . " p=$p n=$n c=$closeness\n", 1;
+            " next=" . time2stamp($next) . " p=$p n=$n c=$closeness\n", 9;
         push @closeness, $closeness;
         $totalC += $closeness;
     }
@@ -2825,7 +2579,7 @@ sub getMatchingSnapshots ($$$$\@) {
         }
     }
 
-    debug " ideals: @I total: " . @I . "\n";
+    debug "gMS: ideals: @I total: " . @I . "\n", 9;
 
     # Generate all combinations of the ideal number of snapshots
     # out of the existing snapshots, then calculate a score for each combination
@@ -3459,12 +3213,11 @@ sub getExpirableSnapshots (\@\@$) {
     # Return a list of snapshots that are 'expirable'
     # because they fall within range of the last 'unlimited' spec,
     # or because the expire-old option allows it
-    #my %S      = %{(shift)};
-    my @S      = rsort keys %S;
     my @specs  = @{(shift)};
     my @cSpecs = @{(shift)};
     my $now    = shift;
 
+    my @S = rsort keys %S;
     debug "gES: \@S=@S \@specs=@specs \$now=$now\n", 3;
     my @expirable;
     # The current snapshot and any that we're linking to
@@ -3480,7 +3233,7 @@ sub getExpirableSnapshots (\@\@$) {
     foreach my $s (@S) {
         if ($S{$s}{partial}) {
             unshift @expirable, $s;
-            delete $S{$s};  
+            #delete $S{$s};  FIXME why was that there?
         }
     }
     debug "gES: expiring partials: " . join(' ', map {time2stamp($_)} @expirable) . "\n", 3;
@@ -3490,7 +3243,7 @@ sub getExpirableSnapshots (\@\@$) {
     if ($Opt{'expire-old'}) {
         # Any snapshot is expirable so return @S in oldest-first order.
         push @expirable, reverse @S;
-        debug "gES: expire-old: they're all expirable EXCEPT the first two: \n", 3;
+        debug "gES: expire-old: they're all expirable EXCEPT the first one(s): \n", 3;
         debug "       " . join(' ', map {time2stamp($_)} @expirable) . "\n", 3;
         return @expirable;
     }
@@ -3498,7 +3251,7 @@ sub getExpirableSnapshots (\@\@$) {
     if ($lastSpec->{count} == UNLIMITED) {
         my $lastraw = $lastSpec->{rawspec};
         my $i = $#cSpecs;
-        # Pick out snapshots in the 'unlimited' cSpecs, which are always at the end
+        # Pick out snapshots in the 'unlimited' cSpec, which is always at the end
         while (($i >= 0) and ($cSpecs[$i]->{label} =~ /^($lastraw)/)) {
             debug "gES: lastC is unlimited, getting expirables\n", 9; 
             unshift @expirable, snapshotsInPeriod(@S, $cSpecs[$i]->{beg}, $cSpecs[$i]->{end}, 1);
@@ -3535,6 +3288,7 @@ sub newSnapshot ($) {
         path     => $dest,
         fullname => $fullname,
         partial  => 0,
+        size     => -1, # not known yet
         remote   => remote($dest),
         daemon   => remoteDaemon($dest),
     };
@@ -3553,12 +3307,9 @@ sub runRsync ($\@$) {
     my $snapshot           = shift;
     #my %S                 = %{(shift)};
     my @S = rsort keys %S;
-    debug "runRsync: \@eS='@expirableSnapshots' snapshot " . dumpSnapshot($snapshot) . ")\n", 1;
-
-        #my $sName = snapshotName($snapshotTime, $S{$snapshotTime});
+    debug "runRsync: \@eS='@expirableSnapshots' snapshot " . dumpSnapshot($snapshot) . ")\n", 9;
 
     # Set up verbosity option
-    # TODO option to have stats without the file listing that --verbose gives
     my $verbose = '';
     $verbose = '--verbose' if $Opt{verbose} > 2;
     $verbose .= ' --verbose --stats' if $Opt{verbose} > 3;  
@@ -3628,7 +3379,7 @@ sub runRsync ($\@$) {
         my $s = 1;  # start at snapshot 1 (i.e. skip the 0th one that we're creating now)
         my $linkdest = '';
         while ($ld < $Opt{ldcount} and $s <= $#S) {
-            debug "rR: linking: s=$s S[s]=$S[$s] S{S[s]}{name}=$S{$S[$s]}{name}\n", 1;
+            debug "rR: linking: s=$s S[s]=$S[$s] S{S[s]}{name}=$S{$S[$s]}{name}\n", 9;
             $linkdest .= "--link-dest='$upDir../$S{$S[$s]}{name}/$subDir' ";
             $ld += 1 if !$S{$S[$s]}{partial};
             $s += 1;
@@ -3758,14 +3509,13 @@ sub runRsync ($\@$) {
     } else {
         printlog "\nWARNING: rsync did NOT create a complete new snapshot on destination '$dest'\n", 1;
         printlog   "         $sourcesSucceeded out of " . @{$Opt{source}} . " sources were completed\n", 1;
-        #if ($sourcesSucceeded < @{$Opt{source}}) {  # FIXME is this needed?
         if ($Interrupted and $Opt{'allow-restart'}) {
             printlog "NOTE: partial snapshot has been left to allow the run to be restarted\n", 1;
             printlog "      (use the --restart option to do so)\n", 1;
-            # (renameOrDeleteSnapshot will take note of the $Interrupted flag
+            # (markOrDeleteSnapshot will take note of the $Interrupted flag
             #  to avoid deleting the snapshot)
         } 
-        my $rc = renameOrDeleteSnapshot($snapshot, $sourcesSucceeded);
+        markOrDeleteSnapshot($snapshot, $sourcesSucceeded);
     }
 
     return $succeeded;
@@ -3789,25 +3539,19 @@ sub run ($\@) {
         $Opt{restart} = 0;
     }
 
-    # TODO ?rework logic re $Opt{snapshot} -- it's a bit messy,
     # but compileSpecs requires a %S entry
     my $snapshot;
     if ($Opt{restart}) {
-        # Restarting the previous snapshot, which will (probably) be marked as partial
+        # Restarting the previous snapshot
         $snapshot = $S[0];
         debug "run: restarting with snapshot=$snapshot: " . dumpSnapshot($snapshot) . "\n", 9;
-        if ($Opt{snapshot}) {
-            clearSuffix($snapshot);   
-            printlog "NOTE: Restarting snapshot $S{$snapshot}{name}\n", 1;
-        } else {
-            debug "run: not restarting because !\$Opt{snapshot}", 1;
-        }
+        printlog "NOTE: Restarting snapshot $S{$snapshot}{name}\n", 1;
     } else {
         # Normal run, creating a new snapshot.
-        # Create the new entry in %S, and get the new time stamp,
+        # Create the new entry in %S, and get the new time stamp
         $snapshot = newSnapshot($dest);
         # and include it in the list 
-        unshift @S, $snapshot if $Opt{snapshot};;
+        unshift @S, $snapshot; # if $Opt{snapshot};;
     }
     if ($Opt{snapshot}) {
         printlog "\nCreating snapshot $S{$snapshot}{name} on destination $dest\n", 1;
@@ -3837,13 +3581,12 @@ sub run ($\@) {
             my $rsyncOK = runRsync($dest, @expirableSnapshots, $snapshot);  
             if (!$rsyncOK and $Opt{delete}) {
                 # Failed to create a new snapshot, so re-do the list of deletions
-                @S = grep {$_ != $snapshot} @S;
-                getSnapshotList($dest);   # is this enough or too much?  FIXME needed?
-                @D = getDeleteList(@cSpecs, 3); # 3 should be 9 FIXME -- level, and needed?
+                #getSnapshotList($dest);   # is this enough or too much?  FIXME needed?
+                #@D = getDeleteList(@cSpecs, 3); # 3 should be 9 FIXME -- level, and needed?
             }
         }
     } else {
-        printlog "Option 'no-snapshot' given -- no new snapshot will be created\n", 2;
+        printlog "NOTE: Option 'no-snapshot' given -- no new snapshot will be created\n", 2;
     }
 
     return if ($Interrupted);
@@ -3851,17 +3594,17 @@ sub run ($\@) {
     if ($Opt{delete}) {
         deleteSnapshots(@D, @cSpecs, $deleteNew);
         # Get new snapshot list after deletions 
-        getSnapshotList($dest); # FIXME needed?
+        #getSnapshotList($dest); # FIXME needed?
     } else {
-        printlog "Option 'no-delete' given, so no existing snapshots will be deleted\n", 2;
+        printlog "NOTE: Option 'no-delete' given, so no existing snapshots will be deleted\n", 2;
     }
 
-    # Display the current situation
-    # after recompiling the specs to allow for changes
-    @cSpecs = compileSpecs($snapshot, @specs, 1);  # FIXME this is just to make status more helpful -- is it really needed?
+    # Complete and store the metadata
     updateSnapshotSizes();
     writeMetadata($dest);
-    # then status() just has to print the numbers.
+    # Display the current situation
+    # after recompiling the specs to allow for changes
+    #@cSpecs = compileSpecs($snapshot, @specs, 1);  # FIXME this is just to make status more helpful -- is it really needed?
     status($dest, @cSpecs);
 
 }
@@ -3988,8 +3731,18 @@ sub testSuite {
     $Opt{lockfile}       = '~/tmp/bstest.lock';
     $Opt{verbose}        = 3;
     $Opt{template} = "test$Opt{test}";
-    my $template = $Opt{template};
-    my $now = stamp2time('20110529-230000');
+    state $template = $Opt{template};   # 'state' to avoid sharing warning
+    state $now = stamp2time('20110529-230000');
+
+    sub mks ($) {
+        # Generate a snapshot entry for %S, given it's time stamp
+        # and variables local to testSuite
+        my $stamp = shift;
+        return (stamp2time($stamp) => 
+            {name=>'$template-$stamp', path=>$dest, 
+                fullname=>"$dest/$template-$stamp", 
+                partial=>0, size=>-1, remote=>0, daemon=>0});
+    }
 
     given ($Opt{test}) {
 
@@ -4035,14 +3788,10 @@ sub testSuite {
             # 2
             my ($warnings, $errors, @specs) = parseSpecs('3d1');
             %S = (
-                stamp2time('20110508-090000'), {name=>'$template-20110508-090000', path=>$dest, 
-                    fullname=>"$dest/$template-20110508-090000", partial=>0, remote=>0, daemon=>0},
-                stamp2time('20110508-100000'), {name=>'$template-20110508-100000', path=>$dest, 
-                    fullname=>"$dest/$template-20110508-100000", partial=>0, remote=>0, daemon=>0},
-                stamp2time('20110508-120000'), {name=>'$template-20110508-120000', path=>$dest, 
-                    fullname=>"$dest/$template-20110508-120000", partial=>0, remote=>0, daemon=>0},
-                stamp2time('20110508-180000'), {name=>'$template-20110508-180000', path=>$dest, 
-                    fullname=>"$dest/$template-20110508-180000", partial=>0, remote=>0, daemon=>0},
+                mks('20110508-090000'),
+                mks('20110508-100000'),
+                mks('20110508-120000'),
+                mks('20110508-180000'),
             );
             my @cSpecs = compileSpecs($now, @specs);
             displayCSpecs(@cSpecs);
@@ -4055,11 +3804,11 @@ sub testSuite {
             # 3 
             my ($warnings, $errors, @specs) = parseSpecs('3d1');
             %S = (
-                stamp2time('20110508-030000'),0,
-                stamp2time('20110508-060000'),0,
-                stamp2time('20110508-100000'),0,
-                stamp2time('20110508-150000'),0,
-                stamp2time('20110508-180000'),0,
+                mks('20110508-030000'),
+                mks('20110508-060000'),
+                mks('20110508-100000'),
+                mks('20110508-150000'),
+                mks('20110508-180000'),
             );
             my @cSpecs = compileSpecs($now, @specs);
             displayCSpecs(@cSpecs);
@@ -4069,16 +3818,16 @@ sub testSuite {
             # 4 - good test for combinations etc:
             my ($warnings, $errors, @specs) = parseSpecs('6d1');
             %S = (
-                stamp2time('20110508-010000'),0,
-                stamp2time('20110508-011000'),0,
-                stamp2time('20110508-012000'),0,
-                stamp2time('20110508-013000'),0,
-                stamp2time('20110508-090000'),0,
-                stamp2time('20110508-120000'),0,
-                stamp2time('20110508-150000'),0,
-                stamp2time('20110508-180000'),0,
-                stamp2time('20110508-203000'),0,
-                stamp2time('20110508-210000'),0,
+                mks('20110508-010000'),
+                mks('20110508-011000'),
+                mks('20110508-012000'),
+                mks('20110508-013000'),
+                mks('20110508-090000'),
+                mks('20110508-120000'),
+                mks('20110508-150000'),
+                mks('20110508-180000'),
+                mks('20110508-203000'),
+                mks('20110508-210000'),
             );
             my @cSpecs = compileSpecs($now, @specs);
             displayCSpecs(@cSpecs);
@@ -4088,16 +3837,16 @@ sub testSuite {
             # 5 - more than one day's worth
             my ($warnings, $errors, @specs) = parseSpecs('8d1,7d3,1d4');
             %S = (
-                stamp2time('20110506-010000'),0,
-                stamp2time('20110506-011000'),0,
-                stamp2time('20110506-012000'),0,
-                stamp2time('20110507-013000'),0,
-                stamp2time('20110507-090000'),0,
-                stamp2time('20110507-120000'),0,
-                stamp2time('20110508-150000'),0,
-                stamp2time('20110508-180000'),0,
-                stamp2time('20110508-203000'),0,
-                stamp2time('20110508-210000'),0,
+                mks('20110506-010000'),
+                mks('20110506-011000'),
+                mks('20110506-012000'),
+                mks('20110507-013000'),
+                mks('20110507-090000'),
+                mks('20110507-120000'),
+                mks('20110508-150000'),
+                mks('20110508-180000'),
+                mks('20110508-203000'),
+                mks('20110508-210000'),
             );
             my @cSpecs = compileSpecs($now, @specs);
             displayCSpecs(@cSpecs);
@@ -4110,10 +3859,10 @@ sub testSuite {
             # Test 6 -- example of bad choice with close snapshots:  
             my ($warnings, $errors, @specs) = parseSpecs('3w1');
             %S = (
-                stamp2time('20110426-050000'),0,
-                stamp2time('20110427-050000'),0,
-                stamp2time('20110428-050000'),0,
-                stamp2time('20110428-060000'),0,
+                mks('20110426-050000'),
+                mks('20110427-050000'),
+                mks('20110428-050000'),
+                mks('20110428-060000'),
             );
             my @cSpecs = compileSpecs($now, @specs);
             displayCSpecs(@cSpecs);
@@ -4123,29 +3872,29 @@ sub testSuite {
             # Test 5 - testing goodPeriods
             my ($warnings, $errors, @specs) = parseSpecs('6d1,2d4,3w1');  # note total of 5d -- not run at w/e
             %S = (
-                stamp2time('20110506-010000'),0,
-                stamp2time('20110506-020000'),0,
-                stamp2time('20110506-030000'),0,
-                stamp2time('20110506-040000'),0,
-                stamp2time('20110506-044000'),0,
-                stamp2time('20110506-050000'),0,
-                stamp2time('20110505-090000'),0,
-                stamp2time('20110505-140000'),0,
-                stamp2time('20110505-180000'),0,
-                stamp2time('20110504-090000'),0,
-                stamp2time('20110504-140000'),0,
-                stamp2time('20110504-180000'),0,
-                stamp2time('20110503-090000'),0,
-                stamp2time('20110503-140000'),0,
-                stamp2time('20110503-180000'),0,
-                stamp2time('20110501-090000'),0,
-                stamp2time('20110501-140000'),0,
-                stamp2time('20110501-180000'),0,
-                stamp2time('20110428-050000'),0,
-                stamp2time('20110427-050000'),0,
-                stamp2time('20110426-060000'),0,
-                stamp2time('20110426-040000'),0,
-                #   stamp2time('20100428-0500'),0,
+                mks('20110506-010000'),
+                mks('20110506-020000'),
+                mks('20110506-030000'),
+                mks('20110506-040000'),
+                mks('20110506-044000'),
+                mks('20110506-050000'),
+                mks('20110505-090000'),
+                mks('20110505-140000'),
+                mks('20110505-180000'),
+                mks('20110504-090000'),
+                mks('20110504-140000'),
+                mks('20110504-180000'),
+                mks('20110503-090000'),
+                mks('20110503-140000'),
+                mks('20110503-180000'),
+                mks('20110501-090000'),
+                mks('20110501-140000'),
+                mks('20110501-180000'),
+                mks('20110428-050000'),
+                mks('20110427-050000'),
+                mks('20110426-060000'),
+                mks('20110426-040000'),
+                #   mks('20100428-0500'),
             )   ;
             my @cSpecs = compileSpecs($now, @specs);
             displayCSpecs(@cSpecs);
@@ -4155,23 +3904,23 @@ sub testSuite {
             # Test 8 - wonky spec
             my ($warnings, $errors, @specs) = parseSpecs('2d7,3w1,1d1,2m1'); # 2d7,3w1,1d1,2m1
             %S = (
-                stamp2time('20110529-090000'),0, stamp2time('20110529-120000'),0, stamp2time('20110529-180000'),0,  # current
-                stamp2time('20110528-090000'),0, stamp2time('20110528-120000'),0, stamp2time('20110528-180000'),0,  # 2d7...
-                stamp2time('20110527-090000'),0, stamp2time('20110527-120000'),0, stamp2time('20110527-180000'),0,
-                stamp2time('20110526-090000'),0, stamp2time('20110526-120000'),0, stamp2time('20110526-180000'),0,
-                stamp2time('20110525-090000'),0, stamp2time('20110525-120000'),0, stamp2time('20110525-180000'),0,
-                stamp2time('20110524-090000'),0, stamp2time('20110524-120000'),0, stamp2time('20110524-180000'),0,
-                stamp2time('20110523-090000'),0, stamp2time('20110523-120000'),0, stamp2time('20110523-180000'),0,
-                stamp2time('20110522-090000'),0, stamp2time('20110522-120000'),0, stamp2time('20110522-180000'),0,  
-                stamp2time('20110521-090000'),0, stamp2time('20110521-120000'),0, stamp2time('20110521-180000'),0,  # 3w1...
-                stamp2time('20110518-090000'),0, stamp2time('20110518-120000'),0, stamp2time('20110518-180000'),0,
-                stamp2time('20110515-090000'),0, stamp2time('20110515-120000'),0, stamp2time('20110515-180000'),0,  # 1d1
-                stamp2time('20110512-090000'),0, stamp2time('20110512-090100'),0, stamp2time('20110512-090200'),0,  
-                stamp2time('20110512-090300'),0, stamp2time('20110512-090400'),0, stamp2time('20110512-090400'),0,  
-                stamp2time('20110512-090600'),0, stamp2time('20110512-090700'),0, stamp2time('20110512-090800'),0,  
-                stamp2time('20110512-090900'),0, stamp2time('20110512-091000'),0, stamp2time('20110512-091100'),0,  
-                stamp2time('20110403-090000'),0, stamp2time('20110403-120000'),0, stamp2time('20110403-180000'),0,  # 4m1
-                stamp2time('20110301-125900'),0,
+                mks('20110529-090000'), mks('20110529-120000'), mks('20110529-180000'),  # current
+                mks('20110528-090000'), mks('20110528-120000'), mks('20110528-180000'),  # 2d7...
+                mks('20110527-090000'), mks('20110527-120000'), mks('20110527-180000'),
+                mks('20110526-090000'), mks('20110526-120000'), mks('20110526-180000'),
+                mks('20110525-090000'), mks('20110525-120000'), mks('20110525-180000'),
+                mks('20110524-090000'), mks('20110524-120000'), mks('20110524-180000'),
+                mks('20110523-090000'), mks('20110523-120000'), mks('20110523-180000'),
+                mks('20110522-090000'), mks('20110522-120000'), mks('20110522-180000'),  
+                mks('20110521-090000'), mks('20110521-120000'), mks('20110521-180000'),  # 3w1...
+                mks('20110518-090000'), mks('20110518-120000'), mks('20110518-180000'),
+                mks('20110515-090000'), mks('20110515-120000'), mks('20110515-180000'),  # 1d1
+                mks('20110512-090000'), mks('20110512-090100'), mks('20110512-090200'),  
+                mks('20110512-090300'), mks('20110512-090400'), mks('20110512-090400'),  
+                mks('20110512-090600'), mks('20110512-090700'), mks('20110512-090800'),  
+                mks('20110512-090900'), mks('20110512-091000'), mks('20110512-091100'),  
+                mks('20110403-090000'), mks('20110403-120000'), mks('20110403-180000'),  # 4m1
+                mks('20110301-125900'),
             );
             my $now = stamp2time('20110529-230000');
             debug "\nTest run on $now " . time2stamp($now) . "\n";
@@ -4234,25 +3983,25 @@ sub testSuite {
             $Opt{logfile} = './bstest10.log';
             my (undef, undef, @specs) = parseSpecs('1h24,4d6');
             %S = (
-                stamp2time('20110530-003000'),0, stamp2time('20110530-013000'),0, stamp2time('20110530-023000'),0,  
-                stamp2time('20110530-033000'),0, stamp2time('20110530-043000'),0, stamp2time('20110530-053000'),0,  
-                stamp2time('20110530-063000'),0, stamp2time('20110530-073000'),0, stamp2time('20110530-083000'),0,  
-                stamp2time('20110530-093000'),0, stamp2time('20110530-103000'),0, stamp2time('20110530-113000'),0,  
-                stamp2time('20110530-123000'),0, stamp2time('20110530-133000'),0, stamp2time('20110530-143000'),0,  
-                stamp2time('20110530-153000'),0, stamp2time('20110530-163000'),0, stamp2time('20110530-173000'),0,  
-                stamp2time('20110530-183000'),0, stamp2time('20110530-193000'),0, stamp2time('20110530-203000'),0,  
-                stamp2time('20110530-213000'),0, stamp2time('20110530-223000'),0, stamp2time('20110530-233000'),0,  
+                mks('20110530-003000'), mks('20110530-013000'), mks('20110530-023000'),  
+                mks('20110530-033000'), mks('20110530-043000'), mks('20110530-053000'),  
+                mks('20110530-063000'), mks('20110530-073000'), mks('20110530-083000'),  
+                mks('20110530-093000'), mks('20110530-103000'), mks('20110530-113000'),  
+                mks('20110530-123000'), mks('20110530-133000'), mks('20110530-143000'),  
+                mks('20110530-153000'), mks('20110530-163000'), mks('20110530-173000'),  
+                mks('20110530-183000'), mks('20110530-193000'), mks('20110530-203000'),  
+                mks('20110530-213000'), mks('20110530-223000'), mks('20110530-233000'),  
 
-                stamp2time('20110529-003000'),0, stamp2time('20110529-013000'),0, stamp2time('20110529-023000'),0,  
-                stamp2time('20110529-033000'),0, stamp2time('20110529-043000'),0, stamp2time('20110529-053000'),0,  
-                stamp2time('20110529-063000'),0, stamp2time('20110529-073000'),0, stamp2time('20110529-083000'),0,  
-                stamp2time('20110529-093000'),0, stamp2time('20110529-103000'),0, stamp2time('20110529-113000'),0,  
-                stamp2time('20110529-123000'),0, stamp2time('20110529-133000'),0, stamp2time('20110529-143000'),0,  
-                stamp2time('20110529-153000'),0, stamp2time('20110529-163000'),0, stamp2time('20110529-173000'),0,  
-                stamp2time('20110529-183000'),0, stamp2time('20110529-193000'),0, stamp2time('20110529-203000'),0,  
-                stamp2time('20110529-213000'),0, stamp2time('20110529-223000'),0, stamp2time('20110529-233000'),0,  
+                mks('20110529-003000'), mks('20110529-013000'), mks('20110529-023000'),  
+                mks('20110529-033000'), mks('20110529-043000'), mks('20110529-053000'),  
+                mks('20110529-063000'), mks('20110529-073000'), mks('20110529-083000'),  
+                mks('20110529-093000'), mks('20110529-103000'), mks('20110529-113000'),  
+                mks('20110529-123000'), mks('20110529-133000'), mks('20110529-143000'),  
+                mks('20110529-153000'), mks('20110529-163000'), mks('20110529-173000'),  
+                mks('20110529-183000'), mks('20110529-193000'), mks('20110529-203000'),  
+                mks('20110529-213000'), mks('20110529-223000'), mks('20110529-233000'),  
 
-                stamp2time('20110528-213000'),0, stamp2time('20110528-223000'),0, stamp2time('20110528-233000'),0,  
+                mks('20110528-213000'), mks('20110528-223000'), mks('20110528-233000'),  
             )
             ;
             my $now = stamp2time('20110531-003000');
@@ -4266,15 +4015,15 @@ sub testSuite {
             $Opt{logfile} = './bstest11.log';
             my (undef, undef, @specs) = parseSpecs('1h9,4d6');
             %S = (
-                stamp2time('20110530-093000'),0, stamp2time('20110530-103000'),0, stamp2time('20110530-113000'),0,  
-                stamp2time('20110530-123000'),0, stamp2time('20110530-133000'),0, stamp2time('20110530-143000'),0,  
-                stamp2time('20110530-153000'),0, stamp2time('20110530-163000'),0, stamp2time('20110530-173000'),0,  
+                mks('20110530-093000'), mks('20110530-103000'), mks('20110530-113000'),  
+                mks('20110530-123000'), mks('20110530-133000'), mks('20110530-143000'),  
+                mks('20110530-153000'), mks('20110530-163000'), mks('20110530-173000'),  
 
-                stamp2time('20110529-093000'),0, stamp2time('20110529-103000'),0, stamp2time('20110529-113000'),0,  
-                stamp2time('20110529-123000'),0, stamp2time('20110529-133000'),0, stamp2time('20110529-143000'),0,  
-                stamp2time('20110529-153000'),0, stamp2time('20110529-163000'),0, stamp2time('20110529-173000'),0,  
+                mks('20110529-093000'), mks('20110529-103000'), mks('20110529-113000'),  
+                mks('20110529-123000'), mks('20110529-133000'), mks('20110529-143000'),  
+                mks('20110529-153000'), mks('20110529-163000'), mks('20110529-173000'),  
 
-                stamp2time('20110528-213000'),0, stamp2time('20110528-223000'),0, stamp2time('20110528-233000'),0,  
+                mks('20110528-213000'), mks('20110528-223000'), mks('20110528-233000'),  
             )
             ;
             my $now = stamp2time('20110531-003000');
@@ -4301,15 +4050,15 @@ sub testSuite {
             ##$Opt{delete} = 1;
             #
             %S = (
-                stamp2time('20110530-093000'),0, stamp2time('20110530-103000'),0, stamp2time('20110530-113000'),0,  
-                stamp2time('20110529-123000'),0, stamp2time('20110529-133000'),0, stamp2time('20110529-143000'),0,  
-                stamp2time('20110528-153000'),0, stamp2time('20110528-163000'),0, stamp2time('20110528-173000'),0,  
+                mks('20110530-093000'), mks('20110530-103000'), mks('20110530-113000'),  
+                mks('20110529-123000'), mks('20110529-133000'), mks('20110529-143000'),  
+                mks('20110528-153000'), mks('20110528-163000'), mks('20110528-173000'),  
 
-                stamp2time('20110527-093000'),0, stamp2time('20110527-103000'),0, stamp2time('20110527-113000'),0,  
-                stamp2time('20110526-123000'),0, stamp2time('20110526-133000'),0, stamp2time('20110526-143000'),0,  
-                stamp2time('20110525-153000'),0, stamp2time('20110525-163000'),0, stamp2time('20110525-173000'),0,  
+                mks('20110527-093000'), mks('20110527-103000'), mks('20110527-113000'),  
+                mks('20110526-123000'), mks('20110526-133000'), mks('20110526-143000'),  
+                mks('20110525-153000'), mks('20110525-163000'), mks('20110525-173000'),  
 
-                stamp2time('20110524-213000'),0, stamp2time('20110524-223000'),0, stamp2time('20110524-233000'),0,  
+                mks('20110524-213000'), mks('20110524-223000'), mks('20110524-233000'),  
             )
             ;
             my $dest = ${$Opt{destination}}[0];
@@ -4346,7 +4095,7 @@ sub testSuite {
             #
             %S = rsort(
                 # just one will do
-                stamp2time('20110627-093000'),0,
+                mks('20110627-093000'),
             )
             ;
             my $dest = ${$Opt{destination}}[0];
@@ -4366,16 +4115,13 @@ sub testSuite {
             #
             %S = (
                 # a good day, then space, then a good day
-                stamp2time('20110627-093000'),0, stamp2time('20110627-103000'),0, stamp2time('20110627-113000'),0,  
-                stamp2time('20110626-123000'),0, stamp2time('20110625-133000'),0, stamp2time('20110624-143000'),0,  
-                stamp2time('20110623-153000'),0, stamp2time('20110623-163000'),0, stamp2time('20110623-173000'),0,
-
+                mks('20110627-093000'), mks('20110627-103000'), mks('20110627-113000'),  
+                mks('20110626-123000'), mks('20110625-133000'), mks('20110624-143000'),  
+                mks('20110623-153000'), mks('20110623-163000'), mks('20110623-173000'),
                 # then space, then a good week
-#                stamp2time('20110622-093000'), stamp2time('20110619-103000'), stamp2time('20110612-113000'),  
-                stamp2time('20110604-143000'),0, stamp2time('20110604-133000'),0, stamp2time('20110604-123000'),0,
-
+                mks('20110604-143000'), mks('20110604-133000'), mks('20110604-123000'),
                 # then space forever...
-                stamp2time('20110524-213000'),0, stamp2time('20110424-223000'),0, stamp2time('20110324-233000'),0,
+                mks('20110524-213000'), mks('20110424-223000'), mks('20110324-233000'),
             )
             ;
             my $dest = ${$Opt{destination}}[0];
@@ -4386,11 +4132,11 @@ sub testSuite {
         }
 
         when (16) {
-            print "Testing renameOrDeleteSnapshot\n";
+            print "Testing markOrDeleteSnapshot\n";
             $Opt{template} = 'test1';
             $Opt{destination} = '/home/chris/tmp';
-            #renameOrDeleteSnapshot("/home/chris/tmp", "test1-20110716-164234");
-            #renameOrDeleteSnapshot('chris@localhost:/home/chris/tmp', "test1-20110809-170104");
+            #markOrDeleteSnapshot("/home/chris/tmp", "test1-20110716-164234");
+            #markOrDeleteSnapshot('chris@localhost:/home/chris/tmp', "test1-20110809-170104");
             %S = getSnapshotList("/home/chris/tmp");
             print "%S: ";
             foreach my $s (rsort keys %S) {
@@ -4409,9 +4155,9 @@ sub testSuite {
             my $now = stamp2time('20111027-224500');
             %S = (
                 # days with 0,1,2,3 snapshots 
-                stamp2time('20111026-093000'),0, 
-                stamp2time('20111025-093000'),0, stamp2time('20111025-103000'),0, 
-                stamp2time('20111024-093000'),0, stamp2time('20111024-103000'),0, stamp2time('20111024-113000'),0,  
+                mks('20111026-093000'), 
+                mks('20111025-093000'), mks('20111025-103000'), 
+                mks('20111024-093000'), mks('20111024-103000'), mks('20111024-113000'),  
             )
             ;
             my $dest = ${$Opt{destination}}[0];
