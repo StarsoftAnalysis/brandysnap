@@ -35,6 +35,10 @@ Brandysnap tries to cope with any situation.  Either the source or the destinati
 
 Brandysnap is designed to be run regularly from cron (or similar automation system).  It can also be run manually if required without upsetting things.
 
+One of the features of brandysnap is that it uses rsync to do all the work, even for deleting old snapshots locally etc.  That means
+that, if you need root access to create the snapshot maintaining ownership and permissions, the script only needs sudo access 
+for rsync, not for any other command nor for the script itself.  (e.g. use B<--rsync-cmd = 'sudo rsync'> and B<--remote-rsync-cmd = 'sudo rsync'> to avoid the need for passwords [need more explanation here])
+
 Brandysnap has been developed on Linux.  It is written in Perl and uses a selection of fairly standard modules (all available in Ubuntu repositories, and no doubt elsewhere too).  It relies on hard links [see ...] and will only work properly when creating snapshots on a filing system that can handle hard links, such as ext3 or ext4 [and others...].
 
 Lots of snapshots don't make a file more secure: if the file hasn't changed, and is the same in all snapshots, then it is only stored once on the disk.  If it gets corrupted for any reason, then it will be corrupted in all snapshots.  (If the file is DELETED from one snapshot, it will still exist in the others, because of the way hard links work.) Think of the whole set of snapshots as one backup, with multiple versions of files that have changed.

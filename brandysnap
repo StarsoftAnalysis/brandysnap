@@ -47,6 +47,7 @@ use Scalar::Util qw(looks_like_number);
 use IPC::Open3;
 use Symbol qw(gensym);
 use IO::File;
+use Sys::Hostname;
 
 # get a stack trace: (may get turned off later)
 use Carp;
@@ -287,9 +288,10 @@ sub max ($$) {
 
 sub bytes ($) {
     # Simple routine for displaying a file size
-    # (return '' if size is zero)
+    # Return '' if size is zero or less
+    # (it could be -1 for a new snapshot during a dry-run)
     my $n = shift;
-    return '' if $n == 0;
+    return '' if $n <= 0;
     my $base = 1024;
     my @suffix = ('B', 'kiB', 'MiB', 'GiB', 'TiB');
     my $mult = 0;
@@ -299,7 +301,7 @@ sub bytes ($) {
     }
     return sprintf(
         ($n == floor($n)) ? "%s%d %s" : "%s%.2f %s", 
-        ($n < 0) ? '-' : '', $n, $suffix[$mult]
+        ($n < 0) ? '-' : '', abs($n), $suffix[$mult]
     );
 }
 
@@ -351,8 +353,8 @@ sub dumpSnapshot ($) {
     # Return a printable version of a %S entry
     my $s = shift;
     return "$s (" . time2stamp($s) . ") => {name=>$S{$s}{name} path=>$S{$s}{path} " 
-        . "fullname=>$S{$s}{fullname} partial=>$S{$s}{partial} remote=>$S{$s}{remote} " 
-        . "daemon=>$S{$s}{daemon}}";
+        . "fullname=>$S{$s}{fullname} partial=>$S{$s}{partial} size=>$S{$s}{size} "
+        . "remote=>$S{$s}{remote} daemon=>$S{$s}{daemon}}";
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -636,7 +638,7 @@ sub processOptions () {
     $defopt{'rsync-opts'}   = '--hard-links --numeric-ids --archive --one-file-system';
     $defopt{safe}           = 1;        
     $defopt{snapshot}       = 1;
-    $defopt{'some-failed'}  = 'rename';
+    $defopt{'some-failed'}  = 'keep';
     $defopt{stacktrace}     = 1;
     $defopt{status}         = 0;
     $defopt{strict}         = 0;
@@ -1234,21 +1236,19 @@ sub safeAbsPath ($) {
 sub sourceDir ($) { 
     # Remote sources require an enclosing directory on the destination
     # to ensure that there is no overlap.
-    # For example, two sources chris@example.com:~/home and fred@example.com:~/home
+    # For example, two sources chris@host1:~/home and chris@host2:~/home
     # would both put files into /home on the destination without this.
     #
     # rsync deals with remote sources in the following formats:
     #   [USER@]HOST:SRC                 
     #   [USER@]HOST::SRC                
     #   rsync://[USER@]HOST[:PORT]/SRC  
-    # In each case, the enclosing directory will be [USER-at-]HOST
+    # In each case, the enclosing directory will just be HOST
     my $source = shift;
     return '' if !remote($source);
     my $dir;
-    if ($source =~ m{^(rsync://|)(?<u>[^@]*)@(?<h>[^:/]+)}) {  
-        $dir = "$+{u}-at-$+{h}";
-    } elsif ($source =~ m{^(rsync://|)(?<h>[^:/]+)}) {  
-        $dir = $+{h};
+    if ($source =~ m{^(rsync://|)((?<u>[^@]*)@)?(?<h>[^:/]+)}) {  
+        $dir = "$+{h}";
     }
     return $dir;
 }
@@ -1289,7 +1289,7 @@ sub updateSnapshotSizes () {
         # Get rsync listing into an array
         my @items;
         #my $remPath = $Opt{'remote-rsync-cmd'} ? "--rsync-path '$Opt{'remote-rsync-cmd'}'" : '';
-        my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
+        my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'}, 
             stdArgs(0) . " --recursive '$S{$snapshot}{fullname}/'", 9,9, \@items);
         debug "uSS: snapshot=$snapshot rc=$rc rc2='$rc2'\n", 1;
         if (!$rc) {
@@ -1315,9 +1315,25 @@ sub updateSnapshotSizes () {
                 }
             }
             $S{$snapshot}{size} = $totalSize;
-            debug "uSS: adding size information for $snapshot, size is $totalSize\n", 1;
+            debug "uSS: adding size information for $S{$snapshot}{name}, size is $totalSize\n", 1;
         }
     }
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub mkdirRsync ($) { 
+    # Use rsync to create a directory
+    # (rsync will only create one level of directory normally)
+    #my $dest   = shift;
+    my $newdir = shift;  # full path of dir to be created
+    my @output;
+    my @errors;
+    my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'},
+        stdArgs(1) . " -v --recursive --chmod=ug=rwx,o=rx $EmptyDir/ $newdir", 
+        9,9, \@output, \@errors);# FIXME 9,9
+    debug "mkdirRsync: rc=$rc output='@output' errors='@errors'\n", 9;
+    return $rc;
 }
 
 #===================================================================================================
@@ -1333,7 +1349,7 @@ sub deleteSnapshot ($) {
     my $snapshot = shift; 
     debug "deleteSnapshot: doing $S{$snapshot}{fullname}\n", 3;
     if ($Opt{'dry-run'}) {
-        printlog "Dry run: would have deleted '$${$snapshot}{name}'\n", 1;
+        printlog "Dry run: would have deleted '$S{$snapshot}{name}'\n", 1;
         return 0;
     }
     if (!$Opt{delete}) {
@@ -1347,7 +1363,7 @@ sub deleteSnapshot ($) {
     my @output;
     debug "dS: deleting snapshot the new way\n", 9;
     #my $remPath = $Opt{'remote-rsync-cmd'} ? "--rsync-path '$Opt{'remote-rsync-cmd'}'" : '';
-    my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
+    my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'}, 
         stdArgs(1) . " --dirs -f 'R /$S{$snapshot}{name}/**' -f '-!r /$S{$snapshot}{name}' " .
         "--delete $EmptyDir/ $S{$snapshot}{path}", 
         9,9, \@output); 
@@ -1417,17 +1433,7 @@ sub deleteOldSnapshots (\@;$) {
 #---------------------------------------------------------------------------------------------------
 
 sub markOrDeleteSnapshot ($$) {
-    # Rename or delete a snapshot, depending on options and errors.
-    #
-    # The standard thing to do is to rename a partially-complete snapshot
-    # so that we know that it's not complete; if renaming can't be done,
-    # then delete it.
-    # It's all a balance between keeping files that have been backed up,
-    # and not relying on snapshots that are incomplete.
-    #
-    # And it depends on whether the snapshot is local or remote: 
-    # in particular there is no way to rename a snapshot via the rsync daemon.
-    #
+    # Mark or delete a snapshot, depending on options and errors.
     my $snapshot         = shift; 
     my $sourcesCompleted = shift;
 
@@ -1440,10 +1446,10 @@ sub markOrDeleteSnapshot ($$) {
     } else {
         if ($sourcesCompleted == 0) {
             $action = $Opt{'all-failed'};
-            printlog "WARNING: All sources failed, will $action snapshot\n", 1;
+            printlog "NOTE: All sources failed, will $action snapshot\n", 1;
         } else {
             $action = $Opt{'some-failed'};
-            printlog "WARNING: Some sources failed, will $action snapshot\n", 1;
+            printlog "NOTE: Some sources failed, will $action snapshot\n", 1;
         }
     }
 
@@ -1456,14 +1462,13 @@ sub markOrDeleteSnapshot ($$) {
         my $rc = deleteSnapshot($snapshot);
         if ($rc == 0) {
             printlog "NOTE: Snapshot deleted\n", 1;
-            return;
         } else {
             printlog "WARNING: Snapshot could not be deleted (error $rc)\n", 1;
         }
+    } else {
+        # Mark it as partial
+        $S{$snapshot}{partial} = 1;
     }
-
-    # Mark it as partial
-    $S{$snapshot}{partial} = 1;
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -1499,21 +1504,23 @@ sub status ($;\@) {
         printlog sprintf("%-*s   %15s   %s\n", $nameLength, '-'x$nameLength, 
             '-----------', '-------------', @cSpecs ? '--------' : ''), $plevel,$llevel;
         foreach my $s (rsort keys %S) {
+            my $name = $S{$s}{name};
+            $name .= ' (p)' if $S{$s}{partial};
             my $size = $S{$s}{size};
             my $label = '';
-            # Find which cSpec applies (complete snapshots only)
             if ($S{$s}{partial}) {
                 $xcount += 1;
             } else {
+                # Find which cSpec applies (complete snapshots only)
                 while (@cSpecs and $cSpecs[$ci]->{beg} > $s) { 
                     $ci += 1; 
                 }; 
                 $label = $cSpecs[$ci]->{label} if @cSpecs;
                 # Is this easier?:
-                $label .= ' ' . $LevelName{$cSpecs[$ci]->{period}}.'ly' if @cSpecs;
+                $label .= ' ' . $LevelName{$cSpecs[$ci]->{period}} if @cSpecs;
                 $count += 1;
             }
-            printlog sprintf("%-*s   %15s   %s\n", $nameLength, $S{$s}{name}, 
+            printlog sprintf("%-*s   %15s   %s\n", $nameLength, $name, 
                 bytes($size) || 'empty', $label), $plevel,$llevel;
             $total += $size;
         }
@@ -2116,8 +2123,9 @@ sub writeMetadata ($) {
     # Send the file via rsync
     my @output;
     #my $remPath = $Opt{'remote-rsync-cmd'} ? "--rsync-path '$Opt{'remote-rsync-cmd'}'" : '';
-    my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
-        stdArgs(1) . " '$tempfilename' '$dest/$mdfile'", 9,9, \@output);    
+    my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'}, 
+        stdArgs(1) . " --chmod=ug=rw,o=r '$tempfilename' '$dest/$mdfile'", 
+        9,9, \@output);    
     debug "wM: rc=$rc output: '@output'\n", 1;
     $succeeded = 1 if !$rc;
 
@@ -2138,13 +2146,17 @@ sub readMetadata ($) {
     my $mdfile = "$Opt{template}.status"; 
 
     # Get the metadata file via rsync to a temporary file
+    # (note the hacky way we override the --dry-run option)
     my $tempdir = tempdir(CLEANUP => 1);  
-    debug "rM: tempdir is $tempdir\n", 1;
+    debug "rM: tempdir is $tempdir\n", 9;
     my @output; 
-    #my $remPath = $Opt{'remote-rsync-cmd'} ? "--rsync-path '$Opt{'remote-rsync-cmd'}'" : '';  # FIXME commonise this
-    my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
-        stdArgs(0) . " '$dest/$mdfile' '$tempdir/$mdfile'", 9,9, \@output);
-    debug "rM: rc=$rc output: '@output'\n", 1;
+    my $dryrun = $Opt{'dry-run'};
+    $Opt{'dry-run'} = 0;
+    my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'}, 
+        stdArgs(0) . " '$dest/$mdfile' '$tempdir/'", 
+        9,9, \@output);
+    $Opt{'dry-run'} = $dryrun;
+    debug "rM: rc=$rc output: '@output'\n", 9;
     return $mdArrayRef if $rc;
 
     # Read the metadata file
@@ -2162,7 +2174,7 @@ sub readMetadata ($) {
             debug "rM: $s->{snapshot} / $s->{partial} / $s->{size}\n", 1; 
         } 
     } else { 
-        debug "rM: Unable to read metadata file\n", 1;
+        debug "rM: Unable to read temporary metadata file '$tempdir/$mdfile'\n", 1;
     }
     return $mdArrayRef; 
 }
@@ -2182,7 +2194,7 @@ sub getSnapshotList ($) {
     #if (remote($dest) and $Opt{'remote-rsync-cmd'}) {
     #   $remPath = "--rsync-path '$Opt{'remote-rsync-cmd'}'";
     #}
-    my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, 
+    my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'}, 
         stdArgs(0) . " '$dest/'", 9,9, \@listing);    
     debug "gsL: rc=$rc listing: @listing n=" . scalar @listing ."\n", 9;
     return if $rc;
@@ -2237,6 +2249,11 @@ sub getSnapshotList ($) {
                 printlog "WARNING: snapshot '$template-$md->{snapshot}' is missing\n", 1;
             }
         }
+    }
+    # Set empty snapshots as partial (this shouldn't happen, but 
+    # we might as well encourage the system to prune empty snapshots)
+    foreach my $s (keys %S) {
+        $S{$s}{partial} = 1 if $S{$s} == 0;
     }
 }
 
@@ -2948,6 +2965,8 @@ sub compileSpecs ($\@;$) {
         # In 'quiet' mode, override the print and log levels
         # so that the user doesn't see unnecessary messages
         # (there may only be debug messages here later) TODO
+        # TODO in fact quiet mode may not be needed any more if 
+        # compileSpecs is only called once
         $pl = 9;
     }    
     debug "compileSpecs: now=" . time2stamp($now) . " quiet=$quiet\n", 3;
@@ -3000,7 +3019,7 @@ sub compileSpecs ($\@;$) {
                     sbad    => snapshotsInPeriod(@Sbad, $beg, $end),
                 };  
                 # If $end>$oldestS, we should append 'empty' to the label 
-                $cSpecs[-1]->{label} .= ' empty (1)' if $end <= $oldestS;  # is this a nasty hack?  YES -- maybe we should stop printing out the cSpecs once there are no more snapshots   FIXME
+                $cSpecs[-1]->{label} .= ' empty (1)' if $end <= $oldestS;  # is this a nasty hack?  YES -- maybe we should stop compiling or at least printing out the cSpecs once there are no more snapshots   FIXME
                 debug "cS: created cSpec [1] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) . " freq=$cSpecs[-1]->{freqmin}-$cSpecs[-1]->{freqmax} count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . time2stamp($cSpecs[-1]->{beg}+$cSpecs[-1]->{best}) . " label=$cSpecs[-1]->{label} snapshots=$cSpecs[-1]->{sgood}/$cSpecs[-1]->{sbad}\n", 3;
                 # move to previous complete period
                 ($beg, $end) = prevPeriod($beg, $spec->{periodn});   
@@ -3071,13 +3090,13 @@ sub compileSpecs ($\@;$) {
         my $count = ($spec->{count} == UNLIMITED) ? 1 : $spec->{count};
         debug "cS: any left over? gpCount=$gpCount, count=$count \n", 3;
         for my $i (($gpCount+1)..$count) {
-            # HERE THERE ARE NO MORE SPECS!! 
+            # HERE THERE ARE NO MORE SPECS!! FIXME should that be NO MORE SNAPSHOTS ? 
             # WE'RE JUST ITERATING THE REMAINING PERIODS OF REMAINING SPECS
             push @cSpecs, {
                 beg     => $beg,
                 end     => $end,
                 freqmin => $spec->{freqmin},
-                freqmax => -1,
+                freqmax => $spec->{freqmax},    # no reason for -1 here
                 period  => $spec->{period},
                 count   => $spec->{count},    # or 0,  ?
                 best    => 0,
@@ -3162,7 +3181,7 @@ sub displayCSpecs (\@;\%) {
             $c->{sgood} + $c->{sbad} > $c->{freqmax}) {
             $excess = $c->{sgood}+$c->{sbad} - $c->{freqmax};
         }
-        printlog sprintf("%s - %s  %2d-%2d  %1s  %5s  %-30s  %4d  %4d  %4.0d\n",
+        printlog sprintf("%s - %s  %2d:%2d  %1s  %5s  %-30s  %4d  %4d  %4.0d\n",
             time2stamp($c->{beg}), 
             time2stamp($c->{end}),
             $c->{freqmin}, 
@@ -3266,8 +3285,7 @@ sub getExpirableSnapshots (\@\@$) {
 
 sub newSnapshot ($) {
     # Create a new snapshot stamped with the current time,
-    # add the entry to the %S hash,
-    # and return its time stamp
+    # add the entry to the %S hash, and return its time stamp
     # (making sure that a directory with the corresponding
     # name doesn't already exist).
     my $dest = shift;
@@ -3298,14 +3316,12 @@ sub newSnapshot ($) {
 #---------------------------------------------------------------------------------------------------
 
 sub runRsync ($\@$) {
-    # Run rsync.
+    # Run rsync to create the snapshot.
     # If it fails for lack of disk space, delete expirable snapshots and try again.
     # Returns 1 for successful creation of a new snapshot.
-    #my $ref = shift;
     my $dest               = shift;
     my @expirableSnapshots = @{(shift)};
     my $snapshot           = shift;
-    #my %S                 = %{(shift)};
     my @S = rsort keys %S;
     debug "runRsync: \@eS='@expirableSnapshots' snapshot " . dumpSnapshot($snapshot) . ")\n", 9;
 
@@ -3350,24 +3366,18 @@ sub runRsync ($\@$) {
         my $upDir   = '';
 
         if ($remoteSource) {
-            # Destination directory includes a sub-directory if the source is remote
             $subDir = sourceDir($source);
-            $upDir  = '../';
-            # The extra directory level won't be created by rsync normally,
-            # so we'll have to do it manually
-            # (It may already be there if there is more than one destination)
-            # Destination is local, so just we can just use mkdir
-            # FIXME are we sure we've got permission to run mkdir?
-            # FIXME would '--recursive' avoid the need for this?
-            # -- maybe not, because --recursive is (obviously) part of --archive
-            # -- not, it only works if the extra dir is part of the source
-            if (!$Opt{'dry-run'}) {
-                if (!-e "$destDir" and !mkdir("$destDir", 0755)) {
-                    printlog "ERROR: Unable to create directory '$destDir' ($!)\n";
-                    # rsync will also fail
-                }
-            }
-            $destDir = "$destDir/$subDir";  # can't use catdir because it nobbles rsync:// URLs
+        } else {
+            $subDir = hostname;
+        }
+        # The extra directory level won't be created by rsync normally,
+        # so we'll have to do it manually
+        # (It may already be there)
+        my $mdrc = mkdirRsync("$destDir");
+        printlog "WARNING: Unable to create directory '$destDir' ($!)\n" if $mdrc;
+        unless ($mdrc or $Opt{'dry-run'}) {
+            $destDir = "$destDir/$subDir"; # can't use catdir because it nobbles rsync:// URLs
+            $upDir = '../'; 
         }
 
         # Set up link-dest options if there are any previous snapshots
@@ -3424,7 +3434,7 @@ sub runRsync ($\@$) {
             while ($keepTrying and !$Interrupted) {
                 $tries += 1;
                 printlog "Running rsync -- try $tries of $maxTries\n", 2;
-                my ($rc, $rc2) = systemcall($Opt{'rsync-cmd'}, $args, 2,2);
+                my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'}, $args, 2,2);
                 debug "after rsync rc=$rc rc2='$rc2'\n", 3;
                 given ($rc) {
                     #* success
@@ -3434,16 +3444,14 @@ sub runRsync ($\@$) {
                         $keepTrying = 0;    # no need to try this source again
                         $sourcesSucceeded += 1;
                     }
-                    ##* source not found
-                    #when (($_ == 23) and ($rc2 eq 'nofileordir')) {
-                    #}
+                    #* source not found
+                    when (($_ == 23) and ($rc2 eq 'nofileordir')) {
+                        printlog "NOTE: source '$source' could not be read -- will continue with any other sources\n", 1;
+                        $keepTrying = 0;    # don't try this source again
+                        $succeeded = 0;
+                    }
                     #* errors that can (usually) be ignored, treat as successful 
                     when ([22, 23, 24]) {   
-                        if ($rc2) {
-                            # it's more serious -- fall through to the default case
-                            continue;
-                        }
-                        debug "rR: ignored errors, so success\n", 1;
                         # Errors on some files such as problems with permissions,
                         # or files that have vanished -- carry on
                         printlog "NOTE: some errors from rsync have been ignored\n", 2;
@@ -3473,7 +3481,7 @@ sub runRsync ($\@$) {
                     }
                     #* error that means rename/delete/abandon whole destination
                     # 11 e.g. include-from file not found
-                    # 23 with rc2 = 'nofileordir'
+                    # 12 with rc2 = 'nofileordir' i.e. bad destination
                     # 5 - failed to start rsyncd protocol
                     # 255, various, including wrong ssh password, 
                     # -1
@@ -3512,8 +3520,6 @@ sub runRsync ($\@$) {
         if ($Interrupted and $Opt{'allow-restart'}) {
             printlog "NOTE: partial snapshot has been left to allow the run to be restarted\n", 1;
             printlog "      (use the --restart option to do so)\n", 1;
-            # (markOrDeleteSnapshot will take note of the $Interrupted flag
-            #  to avoid deleting the snapshot)
         } 
         markOrDeleteSnapshot($snapshot, $sourcesSucceeded);
     }
@@ -3611,7 +3617,7 @@ sub run ($\@) {
 
 #---------------------------------------------------------------------------------------------------
     
-sub systemcall ($$$$;$$) {
+sub systemCall ($$$$;$$) {
     # Run a system command, given as a program name and argument string.
     # Return the command's return code and extra info if possible.
     # Elaborate scheme for catching STDOUT and STDERR taken from the PERL FAQ 
@@ -3635,7 +3641,7 @@ sub systemcall ($$$$;$$) {
             return 0;
         }
     }
-    debug "systemcall: cmd=|$cmd| args=|$args|\n", 5;
+    debug "systemCall: cmd=|$cmd| args=|$args|\n", 5;
     printlog "Running command: $cmd $args\n", $stdoutLevel;
     {
         # Get the return code instead of stopping if $cmd is interrupted
@@ -3700,15 +3706,15 @@ sub systemcall ($$$$;$$) {
         }
     }
     if ($rc == -1) {
-        debug "WARNING: Failed to execute command '$cmd': $!\n", 1;
+        debug "sC: Failed to execute command '$cmd $args': $!\n", 1;
     } elsif ($rc & 127) {
         my $sig = $rc & 127;
-        debug "WARNING: Command '$cmd' died with signal $sig\n", 1;
+        debug "sC: Command '$cmd $args' died with signal $sig\n", 1;
         #  ($? & 127),  ($? & 128) ? 'with' : 'without';
         $rc = ($rc & 127) + 1000;
     } else {
         $rc = $rc >> 8;
-        debug "WARNING: Command '$cmd' exited with value $rc\n", 1 if $rc;
+        debug "sC: Command '$cmd $args' exited with value $rc\n", 1 if $rc;
     }
     return ($rc, $rc2);
 }
@@ -3725,13 +3731,14 @@ sub testSuite {
     printlog   "===============\n";
 
     # Default options for testing
+    $Opt{template} = "test$Opt{test}";
     ${$Opt{source}}[0]      = '~/tmp/bstestsource';
     ${$Opt{destination}}[0] = '~/tmp/bstestdest';
-    my $dest = ${$Opt{destination}}[0];
-    $Opt{lockfile}       = '~/tmp/bstest.lock';
-    $Opt{verbose}        = 3;
-    $Opt{template} = "test$Opt{test}";
+    $Opt{lockfile} = '~/tmp/bstest.lock';
+    $Opt{verbose}  = 3;
+    $Opt{debug}    = 3;
     state $template = $Opt{template};   # 'state' to avoid sharing warning
+    state $dest = ${$Opt{destination}}[0];
     state $now = stamp2time('20110529-230000');
 
     sub mks ($) {
@@ -4211,14 +4218,20 @@ if ($Opt{stacktrace}) {
 }
 
 # Create a lock to prevent overlapping runs
-open(LOCKFILE, '>', $Opt{lockfile}) 
-    or die "Can not open lock-file '$Opt{lockfile}' for writing: $!\n";
-flock(LOCKFILE, LOCK_EX | LOCK_NB) 
-    or die <<ENDOFMESSAGE;
-Can not lock lock-file '$Opt{lockfile}'.  
-$Script is probably already running with that lock-file.  
-If you're sure it isn't, delete the lock-file and try again.
-ENDOFMESSAGE
+#open(LOCKFILE, '>', $Opt{lockfile}) 
+#    or die "Can not open lock-file '$Opt{lockfile}' for writing: $!\n";
+#flock(LOCKFILE, LOCK_EX | LOCK_NB) 
+#    or die <<ENDOFMESSAGE;
+#Can not lock lock-file '$Opt{lockfile}'.  
+#$Script is probably already running with that lock-file.  
+#If you're sure it isn't, delete the lock-file and try again.
+#ENDOFMESSAGE
+unless (open(LOCKFILE, '>', $Opt{lockfile}) and
+        flock(LOCKFILE, LOCK_EX | LOCK_NB)      ) {
+    printlog "Can not open and lock lock-file '$Opt{lockfile}'.\n" .
+        "$Script is probably already running with that lock-file.\n" .
+        "If you're sure it isn't, delete the lock-file and try again.\n", 1;
+}
 
 displayOptions();
 
