@@ -1,5 +1,17 @@
 Changelog for Brandysnap
 
+0.1.18	6/2/12
+* replace '-x' suffix on partial snapshots with metadata in a status file
+  - that makes a lot of things easier, but we now rely on the metadata file
+    to know which backups are partial.
+* simplified the status listing
+* correctly deal with multiple remote sources
+* always add a host-name subdirectory, even for local sources (because it's
+  more consistent, and doesn't lead to problems if a jobs is changed
+  from push to pull.
+* corrections to systemCall to prevent segfault with Perl 5.14.2
+* code tidying, including the test cases
+
 0.1.17  30/1/12
 * fix bug in clearSuffix(), so --restart works again
 * use GetOpt::Long (and some extra code) instead of Config::General for reading 

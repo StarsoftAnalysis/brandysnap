@@ -73,7 +73,7 @@ $SIG{TERM} = 'IGNORE';
 $| = 1;
 
 # Version of this script
-my $Version = '0.1.17next';
+my $Version = '0.1.18';
 use constant VERSION => $Version;
 
 # A copy of @ARG before it gets shifted
@@ -1401,7 +1401,8 @@ sub deleteSnapshots (\@\@$) {
             # Don't need to delete the new snapshot because we avoided creating it
             debug "dS: not deleting newest snapshot because it was not created\n", 3;
         } else {
-           printlog "Deleting snapshot $S{$d}{name}" . 
+            my $partial = $S{$d}{partial} ? 'partial ' : '';
+           printlog "Deleting ${partial}snapshot $S{$d}{name}" . 
                 " because there are too many for spec '" . $cSpecs[$ci]->{label} . "'\n", 1;
            $errors += deleteSnapshot($d);
         }
@@ -3648,7 +3649,7 @@ sub systemCall ($$$$;$$) {
         sub killgroup {
             # Make sure all child processes are killed too.
             my $sig = shift;
-            local $SIG{$sig} = 'IGNORE'; # don't kill ourselves again
+            $SIG{$sig} = 'IGNORE'; # don't kill ourselves again
             $Interrupted = 1; 
             kill($sig, -$$);
         };

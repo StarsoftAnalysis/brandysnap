@@ -4,7 +4,7 @@
 <head>
 <title>brandysnap - rsync snapshot manager</title>
 <meta http-equiv="content-type" content="text/html; charset=utf-8" />
-<link rev="made" href="mailto:root@localhost" />
+<link rev="made" href="mailto:kevin@archlinux.org" />
 </head>
 
 <body style="background-color: white">
@@ -78,7 +78,7 @@
 <h1><a name="description">DESCRIPTION</a></h1>
 <pre>
  This is part of the brandysnap documentation.
- Copyright &amp;copy; 2011  Chris Dennis  chris@starsoftanalysis.co.uk
+ Copyright &amp;copy; 2011,2012  Chris Dennis  chris@starsoftanalysis.co.uk
  See the file fdl-1.3.txt for copying conditions.</pre>
 <p>Brandysnap is (yet another) script that uses rsync to create snapshot backups of files and directories.</p>
 <p>It is still being developed, and should be considered very experimental software.  Use it at your own risk!
@@ -89,6 +89,9 @@ On the other hand, it's getting better: the author already uses it 'in productio
 <p>It therefore creates a new snapshot every time it is run, and then thinks about which snapshots, if any, are no longer required.</p>
 <p>Brandysnap tries to cope with any situation.  Either the source or the destination can be on a remote computer (but not both at the same time).</p>
 <p>Brandysnap is designed to be run regularly from cron (or similar automation system).  It can also be run manually if required without upsetting things.</p>
+<p>One of the features of brandysnap is that it uses rsync to do all the work, even for deleting old snapshots locally etc.  That means
+that, if you need root access to create the snapshot maintaining ownership and permissions, the script only needs sudo access 
+for rsync, not for any other command nor for the script itself.  (e.g. use <strong>--rsync-cmd = 'sudo rsync'</strong> and <strong>--remote-rsync-cmd = 'sudo rsync'</strong> to avoid the need for passwords [need more explanation here])</p>
 <p>Brandysnap has been developed on Linux.  It is written in Perl and uses a selection of fairly standard modules (all available in Ubuntu repositories, and no doubt elsewhere too).  It relies on hard links [see ...] and will only work properly when creating snapshots on a filing system that can handle hard links, such as ext3 or ext4 [and others...].</p>
 <p>Lots of snapshots don't make a file more secure: if the file hasn't changed, and is the same in all snapshots, then it is only stored once on the disk.  If it gets corrupted for any reason, then it will be corrupted in all snapshots.  (If the file is DELETED from one snapshot, it will still exist in the others, because of the way hard links work.) Think of the whole set of snapshots as one backup, with multiple versions of files that have changed.</p>
 <p>
@@ -189,12 +192,13 @@ of the way hard links work.)</p>
 <p>
 </p>
 <h2><a name="options">Options</a></h2>
-<p>All options can be given either on the command line or in the configuration file.  Command line options override configuration file ones.  They are case-insensitive.</p>
+<p>All options can be given either on the command line or in the configuration file.  Command line options override configuration file ones (but see below regarding multiple options).  They are case-insensitive.</p>
 <p>On the command line, options must be preceded by one or two hyphens, and can be abbreviated as long as they do not become ambiguous.  An 'equals' sign (<strong>=</strong>) is optional.  For example:</p>
 <pre>
     brandysnap --source xyz -verbose=1 --conf=bs1.conf -cal false</pre>
-<p>In the configuration file, leave off the hyphens and don't abbreviate the options.  Lines beginning with '#' are considered to be comments and are ignored.  [These differences between the command line and the configuration file will be fixed...]</p>
-<p>Some options (such as <strong>source</strong> and <strong>destination</strong>) can be specified more than once.  Note that command line options _always_ override configuration file ones, even for multiple options.  So if you have a list of <strong>exclude</strong> options in the configuration file, and try to add an extra one on the command line, those in the file will be ignored.</p>
+<p>In the configuration file the hyphens are optional, but options can still be abbreviated.  Lines beginning with '#' are considered to be comments and are ignored.</p>
+<p>Some options (such as <strong>source</strong> and <strong>destination</strong>) can be specified more than once.  In this case, command line options 
+are added to configuration file one.  For example, if the configuration files includes <strong>exclude foo</strong> and <strong>exclude bar</strong>, and you put <strong>--exclude thing</strong> on the command line, all three items (<strong>foo</strong>, <strong>bar</strong>, and <strong>thing</strong>) will be excluded.</p>
 <p><strong>~</strong> can be used to specify local files and directories e.g.</p>
 <pre>
     --logfile = ~/brandysnap.log</pre>
@@ -403,14 +407,14 @@ The user running brandysnap must have permission to create and delete this file.
 </p>
 <h2><a name="advanced_options">Advanced options</a></h2>
 <dl>
-<dt><strong><a name="all_failed_keep_rename_delete" class="item"><strong>all-failed <em>keep/rename/delete</em></strong></a></strong></dt>
+<dt><strong><a name="all_failed_keep_delete" class="item"><strong>all-failed <em>keep/delete</em></strong></a></strong></dt>
 
 <dd>
 <p>What to do with the snapshot if none of the sources are copied successfully.
-<strong><em>keep</em></strong> will mean that the incomplete snapshot will be considered complete, and is not recommended.
-<strong><em>rename</em></strong> will cause the incomplete snapshot to be renamed with a '<strong>-x</strong>' suffix: this
+<strong><em>keep</em></strong> will keep the incomplete snapshot and mark it as 'partial' in the metadata file.
+This
 means that it will not be considered as a proper snapshot when making future
-decisions about what keep.
+decisions about which snapshots to get rid of.
 If you specify <strong><em>delete</em></strong>, the incomplete snapshot will be deleted immediately, in the expectation
 that future snapshots will be more successful.
 See also <strong>--some-failed</strong>.
@@ -443,17 +447,18 @@ with [options yet to be implemented] to tune the behaviour of brandysnap. (defau
 <dt><strong><a name="restart_yes_no" class="item"><strong>restart <em>yes/no</em></strong></a></strong></dt>
 
 <dd>
-<p>If a previous run of brandysnap was interrupted for any reason, use this option to re-do the same snapshot (simply by relying on rsync's ability to not copy files that have not changed).  Any files in the source that have changed since the previous run _will_ be updated.  If more than one destination is being used, rsync will be run for _all_ destinations, even if some of them completed successfully before.</p>
+<p>If a previous run of brandysnap was interrupted for any reason, use this option to re-do the same snapshot (simply by relying on rsync's ability to not copy files that have not changed).  Any files in the source that have changed since the previous run _will_ be updated.  If more than one destination is being used, rsync will be run for _all_ destinations, even if some of them completed successfully before.
+Implies <strong>--restart</strong>.</p>
 </dd>
 <dt><strong><a name="snapshot_yes_no" class="item"><strong>snapshot <em>yes/no</em></strong></a></strong></dt>
 
 <dd>
 <p>Create a new snapshot.  If this option is turned off, no new snapshot will be created during this run of brandysnap but old snapshots may be deleted. (default: <strong>yes</strong>)</p>
 </dd>
-<dt><strong><a name="some_failed_keep_rename_delete" class="item"><strong>some-failed <em>keep/rename/delete</em></strong></a></strong></dt>
+<dt><strong><a name="some_failed_keep_delete" class="item"><strong>some-failed <em>keep/delete</em></strong></a></strong></dt>
 
 <dd>
-<p>What to do with the snapshot if some of the sources are not copied successfully.  See <strong>--all-failed</strong> for details. (default: <strong>rename</strong>)</p>
+<p>What to do with the snapshot if some of the sources are not copied successfully.  See <strong>--all-failed</strong> for details. (default: <strong>keep</strong>)</p>
 </dd>
 <dt><strong><a name="status_yes_no" class="item"><strong>status <em>yes/no</em></strong></a></strong></dt>
 
@@ -535,15 +540,17 @@ deleting any partially completed snapshot if possible.</p>
 </p>
 <hr />
 <h1><a name="known_issues">KNOWN ISSUES</a></h1>
-<p>As of 5 November 2011 and version 0.1.14, the following issues and bugs are known.</p>
+<p>As of 6 February 2012 and version 0.1.18, the following issues and bugs are known.</p>
 <ul>
 <li>
-<p>The option <strong>--remote-rsync-cmd</strong> can only be specified once, and applies to all remote sources and directories.</p>
+<p>Option <strong>--remote-rsync-cmd</strong> can only be specified once, and applies to all remote sources and directories.
+Likewise the include/exclude options apply to all source/directory pairs.  This will be addressed in the future.</p>
 </li>
 <li>
 <p>Under certain circumstances, rsync can fail if the source contains files that are hard-linked together
 and for which you do not have read permission.  This is fixed in rsync 3.0.9 and later.  You can get
-round it by specifying <strong>--rsync-opts</strong> with the usual options but omitting <strong>--hard-links</strong>.</p>
+round it by specifying <strong>--rsync-opts</strong> with the usual options but omitting <strong>--hard-links</strong>
+at the cost of using more disk space.</p>
 </li>
 <li>
 <p>If the timings of snapshots are slightly out, a snapshot may appear to be in 
@@ -554,13 +561,10 @@ then yesterday's will be considered as part of today,
 because it is less than 24 hours ago, so it will be deleted.  A fix is planned to address this issue.</p>
 </li>
 <li>
-<p>When using the <strong>--dry-run--</strong> option, rsync sometimes displays an error message that <code>--link-dest arg does not exist</code>.  
-This can be safely ignored.</p>
-</li>
-<li>
 <p>When daylight savings ends (or the clock goes backwards for any other reason), it is possible
 that brandysnap will try to create a new snapshot at exactly the same time as an existing one.
-The results of that are 'undefined' -- i.e. I haven't tried it.</p>
+The results of that are 'undefined' -- i.e. I haven't tried it.
+There are other obscure issues with daylight savings and leap years to be addressed too.</p>
 </li>
 </ul>
 <p>

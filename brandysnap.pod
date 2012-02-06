@@ -518,14 +518,14 @@ deleting any partially completed snapshot if possible.
 
 =head1 KNOWN ISSUES
 
-As of 5 November 2011 and version 0.1.14, the following issues and bugs are known.
+As of 6 February 2012 and version 0.1.18, the following issues and bugs are known.
 
 =over
 
 =item * 
 
 Option B<--remote-rsync-cmd> can only be specified once, and applies to all remote sources and directories.
-Likewise the include/exclude options apply to all source/directory pairs.
+Likewise the include/exclude options apply to all source/directory pairs.  This will be addressed in the future.
 
 =item * 
 
@@ -542,11 +542,6 @@ For example, when doing one snapshot a day with calendar mode turned off, if
 yesterday's snapshot was at 11:40:03, and today's is at 11:40:01, 
 then yesterday's will be considered as part of today, 
 because it is less than 24 hours ago, so it will be deleted.  A fix is planned to address this issue.
-
-=item *
-
-When using the B<--dry-run> option, rsync sometimes displays an error message that C<--link-dest arg does not exist>.  
-This can be safely ignored.
 
 =item *
 
