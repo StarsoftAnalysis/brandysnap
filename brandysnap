@@ -49,31 +49,39 @@ use Symbol qw(gensym);
 use IO::File;
 use Sys::Hostname;
 
+# Interrupts and other housekeeping ===============================================================
+
 # get a stack trace: (may get turned off later)
 use Carp;
 $SIG{__DIE__} = sub { Carp::confess(@_) };
+
+# Make this script robust against interruptions.
+# $Interrupted becomes true if the script has been interrupted
+my $Interrupted = '';
+# Set the process group so that we can tidy up child processes:
+setpgrp(0, 0);
+# Trap interrupts: set a flag and make sure any children are killed
+sub killgroup {
+    my $sig = shift;
+    $SIG{$sig} = 'IGNORE'; # don't kill ourselves again
+    $Interrupted = $sig; 
+    kill($sig, -$$);
+};
+local $SIG{HUP}  = \&killgroup;
+local $SIG{INT}  = \&killgroup;
+local $SIG{QUIT} = \&killgroup;
+local $SIG{ABRT} = \&killgroup;
+local $SIG{TERM} = \&killgroup;
+
+# Turn off buffering on STDOUT to get full error messages
+$| = 1;
 
 # Globals and constants ============================================================================
 
 my $Script = 'brandysnap';
 
-# Make this script robust against interruptions.
-# $Interrupted becomes true if the script has been interrupted
-my $Interrupted = 0;
-# Set the process group so that we can tidy up child processes:
-setpgrp(0, 0);
-# Ignore signals here; see also runRsync() systemCall() 
-$SIG{HUP}  = 'IGNORE';
-$SIG{INT}  = 'IGNORE';
-$SIG{QUIT} = 'IGNORE';
-$SIG{ABRT} = 'IGNORE';
-$SIG{TERM} = 'IGNORE';
-
-# Turn off buffering on STDOUT to get full error messages
-$| = 1;
-
 # Version of this script
-my $Version = '0.1.18';
+my $Version = '0.1.19';
 use constant VERSION => $Version;
 
 # A copy of @ARG before it gets shifted
@@ -160,6 +168,10 @@ use constant WEEK   => DAY * 7;
 # An empty temporary directory for use in deleteSnapshot() and mkdirRsync()
 # (yes, I know, this is a bit of a kludge)
 my $EmptyDir = tempdir(CLEANUP => 1);
+
+# Summary of results for each destination/source
+# (initialised in processOptions())
+my %Summary;
 
 # Arrays defining types of options
 # All options
@@ -907,6 +919,14 @@ sub processOptions () {
         printlog "ERROR: At least one source or destination must be local\n", 1;
         $errorcount += 1;
     }
+    
+    # Set up summary structure for results
+    foreach my $dest (@{$Opt{destination}}) {
+        $Summary{$dest}{'result'} = 'not attempted';
+        foreach my $source (@{$Opt{source}}) {
+            $Summary{$dest}{$source} = 'not attempted';
+        }
+    }
 
     # Output levels
     sub checkOutput ($) {
@@ -1283,7 +1303,7 @@ sub updateSnapshotSizes () {
     # 255 for wrong password, unknown host etc.
     # Note the lack of nlink information, so we can't calculate 'delete size'.
     foreach my $snapshot (keys %S) {
-        debug "uSS: initial snapshot size is $S{$snapshot}{size}\n", 1;
+        debug "uSS: initial snapshot size is $S{$snapshot}{size}\n", 9;
         next if $S{$snapshot}{size} >= 0;
         my $totalSize = 0;
         # Get rsync listing into an array
@@ -1291,7 +1311,7 @@ sub updateSnapshotSizes () {
         #my $remPath = $Opt{'remote-rsync-cmd'} ? "--rsync-path '$Opt{'remote-rsync-cmd'}'" : '';
         my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'}, 
             stdArgs(0) . " --recursive '$S{$snapshot}{fullname}/'", 9,9, \@items);
-        debug "uSS: snapshot=$snapshot rc=$rc rc2='$rc2'\n", 1;
+        debug "uSS: snapshot=$snapshot rc=$rc rc2='$rc2'\n", 9;
         if (!$rc) {
             foreach my $item (@items) {
                 debug "uSS: item = $item", 9;
@@ -1315,7 +1335,7 @@ sub updateSnapshotSizes () {
                 }
             }
             $S{$snapshot}{size} = $totalSize;
-            debug "uSS: adding size information for $S{$snapshot}{name}, size is $totalSize\n", 1;
+            debug "uSS: adding size information for $S{$snapshot}{name}, size is $totalSize\n", 9;
         }
     }
 }
@@ -1397,7 +1417,7 @@ sub deleteSnapshots (\@\@$) {
         while ($cSpecs[$ci]->{beg} > $d) { 
             $ci += 1; 
         }; 
-        if ($di == 0 and $deleteNew) {
+        if ($di == 0 and ($deleteNew or !$Opt{delete})) {
             # Don't need to delete the new snapshot because we avoided creating it
             debug "dS: not deleting newest snapshot because it was not created\n", 3;
         } else {
@@ -1423,8 +1443,10 @@ sub deleteOldSnapshots (\@;$) {
         my $e = pop @$expirablesR;
         $n -= 1;
         printlog "Expiring old snapshot $S{$e}{name}\n", 2;
-        if (deleteDirectory($S{$e}{name}) == 0) {
+        if (deleteSnapshot($e) == 0) {  
             $deleted += 1;
+        } else {
+            debug "dOS: failed to delete snapshot $S{$e}{name}\n", 1;
         }
     }
     debug "dOS: deleted $deleted oldest snapshots\n", 3;
@@ -1433,15 +1455,16 @@ sub deleteOldSnapshots (\@;$) {
 
 #---------------------------------------------------------------------------------------------------
 
-sub markOrDeleteSnapshot ($$) {
+sub markOrDeleteSnapshot ($$$) {
     # Mark or delete a snapshot, depending on options and errors.
     my $snapshot         = shift; 
     my $sourcesCompleted = shift;
+    my $restartable      = shift;
 
     my $sName = $S{$snapshot}{name};   # for convenience
 
-    my $action; # delete or don't
-    if ($Interrupted and $Opt{'allow-restart'}) {
+    my $action; # 'delete' or 'keep'
+    if ($restartable and $Opt{'allow-restart'}) {
         # Don't delete if we want to restart
         $action = 'keep';
     } else {
@@ -1535,6 +1558,22 @@ sub status ($;\@) {
             my $average = floor($total/$count);
             printlog sprintf("%-*s   %15s\n", $nameLength, 'Average:', 
                 bytes($average)), $plevel,$llevel;
+        }
+    }
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub displaySummary () {
+    # Print out the results summary
+    printlog "\nResults Summary\n", 1;
+    printlog   "---------------\n", 1;
+    foreach my $dest (sort @{$Opt{destination}}) {
+        printlog "Destination $dest:\n", 1;
+        printlog "\t$Summary{$dest}{'result'}\n", 1;
+        foreach my $source (sort @{$Opt{source}}) {
+            printlog "\tSource $source:\n", 1;
+            printlog "\t\t$Summary{$dest}{$source}\n", 1;
         }
     }
 }
@@ -2127,7 +2166,7 @@ sub writeMetadata ($) {
     my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'}, 
         stdArgs(1) . " --chmod=ug=rw,o=r '$tempfilename' '$dest/$mdfile'", 
         9,9, \@output);    
-    debug "wM: rc=$rc output: '@output'\n", 1;
+    debug "wM: rc=$rc output: '@output'\n", 9;
     $succeeded = 1 if !$rc;
 
     if (!$succeeded) {
@@ -2414,7 +2453,7 @@ sub getMatchingSnapshots ($$$$\@) {
 
     my $range  = $end - $beg;   # the length of the period in seconds
     debug "getMatchingSnapshots: beg=$beg end=$end range=$range best=$best freqmax=$freqmax\n", 3;
-    debug " (first S = $S[0]    last S = $S[-1]  -- in descending order)\n", 9;
+    debug " (first S = $S[0]    last S = $S[-1]  -- in descending order)\n", 9 if @S;
 
     # Special case: if freqmax is zero, delete all snapshots (i.e. keep none)
     if ($freqmax == 0) {
@@ -3186,7 +3225,7 @@ sub displayCSpecs (\@;\%) {
             time2stamp($c->{beg}), 
             time2stamp($c->{end}),
             $c->{freqmin}, 
-            $c->{freqmax}, 
+            $c->{freqmax} == -1 ? 99 :$c->{freqmax},    # i.e. all
             $c->{period}, 
             $c->{count} eq UNLIMITED ? 'all' : $c->{count},
             $c->{label}, 
@@ -3343,6 +3382,7 @@ sub runRsync ($\@$) {
 
     my $succeeded = 1;  # stays true if ALL sources are copied successfully
     my $sourcesSucceeded = 0;   # count of successfully backed-up sources
+    my $restartable = 0;        # becomes true if partial snapshot should be kept for restarting
 
     my $deletionsAllSources = 0;
 
@@ -3422,10 +3462,11 @@ sub runRsync ($\@$) {
             # and trap interrupts so that the block becomes (sort of) atomic,
             # i.e. if rsync fails, the partial snapshot will be deleted or 
             # renamed before we give up completely.
-            local $SIG{INT}  = sub { $Interrupted = 1; };
-            local $SIG{QUIT} = sub { $Interrupted = 1; };
-            local $SIG{ABRT} = sub { $Interrupted = 1; };
-            local $SIG{TERM} = sub { $Interrupted = 1; };
+            # TODO not needed? -- cos this is now done globally
+            #local $SIG{INT}  = sub { $Interrupted = 1; };
+            #local $SIG{QUIT} = sub { $Interrupted = 1; };
+            #local $SIG{ABRT} = sub { $Interrupted = 1; };
+            #local $SIG{TERM} = sub { $Interrupted = 1; };
 
             my $maxTries = @expirableSnapshots + 1; 
             my $keepTrying = $maxTries;  
@@ -3435,21 +3476,25 @@ sub runRsync ($\@$) {
             while ($keepTrying and !$Interrupted) {
                 $tries += 1;
                 printlog "Running rsync -- try $tries of $maxTries\n", 2;
+                my $rsyncInterrupted = '';     # only true of interrupted during the main rsync  
                 my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'}, $args, 2,2);
-                debug "after rsync rc=$rc rc2='$rc2'\n", 3;
+                $rsyncInterrupted = $Interrupted;
+                debug "after rsync rc=$rc rc2='$rc2' rsyncInterrupted='$rsyncInterrupted'\n", 1;
                 given ($rc) {
                     #* success
                     when (0) {
-                    #when ($_ == 0 and (!($source =~ /cache/) or rand()>0.5 )) { # for debugging!
+                    #when ($_ == 0 and (!($source =~ /cache/) or rand()>0.5 ))  # for debugging!
                         debug "rR: success\n", 1;
                         $keepTrying = 0;    # no need to try this source again
                         $sourcesSucceeded += 1;
+                        $Summary{$dest}{$source} = 'succeeded';
                     }
                     #* source not found
                     when (($_ == 23) and ($rc2 eq 'nofileordir')) {
                         printlog "NOTE: source '$source' could not be read -- will continue with any other sources\n", 1;
                         $keepTrying = 0;    # don't try this source again
                         $succeeded = 0;
+                        $Summary{$dest}{$source} = 'source not found';
                     }
                     #* errors that can (usually) be ignored, treat as successful 
                     when ([22, 23, 24]) {   
@@ -3458,6 +3503,17 @@ sub runRsync ($\@$) {
                         printlog "NOTE: some errors from rsync have been ignored\n", 2;
                         $keepTrying = 0;
                         $sourcesSucceeded += 1;
+                        $Summary{$dest}{$source} = 'succeeded (minor errors ignored)';
+                    }
+                    #* interrupted
+                    when ($rsyncInterrupted ne '' or $rc2 eq 'interrupted') {
+                        printlog "NOTE: rsync was interrupted with signal '$rsyncInterrupted' -- " .
+                            "the snapshot will be kept to allow restart\n", 1;
+                        $keepTrying = 0;
+                        $succeeded = 0;
+                        $restartable = 1;
+                        $Summary{$dest}{$source} = 'interrupted';
+                        last SOURCE;
                     }
                     #* errors that can be recovered from -- i.e. lack of space (sometimes)
                     when (($_ == 12) and ($rc2 eq 'diskfull') and ($keepTrying > 0)) {
@@ -3471,12 +3527,14 @@ sub runRsync ($\@$) {
                             $deletions += $deleted;
                             $deletionsAllSources += $deleted;
                             $keepTrying -= $deleted;
+                            $Summary{$dest}{$source} = 'failed (will try again)';
                         } else {
                             # No snapshots deleted, so stop trying
                             printlog "ERROR: unable to delete old snapshot to make space\n", 1;
                             $keepTrying = 0;
                             $succeeded = 0;
                             $ExitCode = EXITRSYNC;
+                            $Summary{$dest}{$source} = 'failed (not enough space)';
                             last SOURCE;
                         }
                     }
@@ -3492,6 +3550,7 @@ sub runRsync ($\@$) {
                         $keepTrying = 0;
                         $succeeded = 0;
                         $ExitCode = $rc >= 1000 ? EXITINT : EXITRSYNC;
+                        $Summary{$dest}{$source} = "failed (error $rc / '$rc2')";
                         last SOURCE;
                     }
                 } # given
@@ -3515,14 +3574,18 @@ sub runRsync ($\@$) {
             printlog "NOTE: $deletionsAllSources expirable snapshots were deleted from destination '$dest'\n", 2;
             printlog "(dry run: no snapshots actually deleted)\n", 2 if $Opt{'dry-run'};
         }
+        $Summary{$dest}{'result'} = 'succeeded';
     } else {
         printlog "\nWARNING: rsync did NOT create a complete new snapshot on destination '$dest'\n", 1;
         printlog   "         $sourcesSucceeded out of " . @{$Opt{source}} . " sources were completed\n", 1;
-        if ($Interrupted and $Opt{'allow-restart'}) {
+        if ($restartable and $Opt{'allow-restart'}) {
             printlog "NOTE: partial snapshot has been left to allow the run to be restarted\n", 1;
             printlog "      (use the --restart option to do so)\n", 1;
-        } 
-        markOrDeleteSnapshot($snapshot, $sourcesSucceeded);
+            $Summary{$dest}{'result'} = 'incomplete (restartable)';
+        } else {
+            $Summary{$dest}{'result'} = "failed -- $sourcesSucceeded sources succeeded";
+        }
+        markOrDeleteSnapshot($snapshot, $sourcesSucceeded, $restartable);
     }
 
     return $succeeded;
@@ -3579,6 +3642,8 @@ sub run ($\@) {
     # See if the new snapshot would be one of the ones deleted
     my $deleteNew = grep {$_ == $snapshot} @D;
 
+#my $x = <STDIN>; # pause
+
     if ($Opt{snapshot}) {
         if ($deleteNew and $Opt{delete} and $Opt{'delete-cp'} and !$Opt{'allow-restart'}) {
             printlog "NOTE: new snapshot would be immediately deleted, so rsync will NOT be run\n", 1;
@@ -3596,9 +3661,9 @@ sub run ($\@) {
         printlog "NOTE: Option 'no-snapshot' given -- no new snapshot will be created\n", 2;
     }
 
-    return if ($Interrupted);
+    #return if ($Interrupted);  NOOOOOOOOOO!
 
-    if ($Opt{delete}) {
+    if ($Opt{delete} and !$Interrupted) {
         deleteSnapshots(@D, @cSpecs, $deleteNew);
         # Get new snapshot list after deletions 
         #getSnapshotList($dest); # FIXME needed?
@@ -3645,18 +3710,19 @@ sub systemCall ($$$$;$$) {
     debug "systemCall: cmd=|$cmd| args=|$args|\n", 5;
     printlog "Running command: $cmd $args\n", $stdoutLevel;
     {
-        # Get the return code instead of stopping if $cmd is interrupted
-        sub killgroup {
-            # Make sure all child processes are killed too.
-            my $sig = shift;
-            $SIG{$sig} = 'IGNORE'; # don't kill ourselves again
-            $Interrupted = 1; 
-            kill($sig, -$$);
-        };
-        local $SIG{INT}  = \&killgroup;
-        local $SIG{QUIT} = \&killgroup;
-        local $SIG{ABRT} = \&killgroup;
-        local $SIG{TERM} = \&killgroup;
+        # TODO tidy this up -- it's global now
+        ## Get the return code instead of stopping if $cmd is interrupted
+        #sub killgroup {
+        #    # Make sure all child processes are killed too.
+        #    my $sig = shift;
+        #    $SIG{$sig} = 'IGNORE'; # don't kill ourselves again
+        #    $Interrupted = $sig; 
+        #    kill($sig, -$$);
+        #};
+        #local $SIG{INT}  = \&killgroup;
+        #local $SIG{QUIT} = \&killgroup;
+        #local $SIG{ABRT} = \&killgroup;
+        #local $SIG{TERM} = \&killgroup;
         local *CATCHERR = IO::File->new_tmpfile;
         my $pid = open3(gensym, \*CATCHOUT, ">&CATCHERR", "$cmd $args");
         # Deal with stdout from $cmd
@@ -3689,10 +3755,12 @@ sub systemCall ($$$$;$$) {
                 $outputStarted = 1;
             }
             # scan for specific errors
-            if (/No space left on device/) {    # (this text is not always there)
+            if (/No space left on device/i) {    # (this text is not always there)
                 $rc2 = 'diskfull';
-            } elsif (/No such file or directory/) {
+            } elsif (/No such file or directory/i) {
                 $rc2 = 'nofileordir';
+            } elsif (/received SIGINT/i) {
+                $rc2 = 'interrupted';
             }
             if (ref($stderrRef) eq 'ARRAY') {
                 push @$stderrRef, $_; 
@@ -4072,7 +4140,7 @@ sub testSuite {
             my $dest = ${$Opt{destination}}[0];
             # generate initial state
             foreach my $s (keys %S) {
-                mkdir "$dest/" . snapshotName($s, 0);
+                #    mkdir "$dest/" . snapshotName($s, 0);  # FIXME no more snapshotName
             }
             my $now = stamp2time('20110531-003000');
             my ($warnings, $errors, @specs) = parseSpecs('2d'); 
@@ -4143,8 +4211,8 @@ sub testSuite {
             print "Testing markOrDeleteSnapshot\n";
             $Opt{template} = 'test1';
             $Opt{destination} = '/home/chris/tmp';
-            #markOrDeleteSnapshot("/home/chris/tmp", "test1-20110716-164234");
-            #markOrDeleteSnapshot('chris@localhost:/home/chris/tmp', "test1-20110809-170104");
+            #markOrDeleteSnapshot("/home/chris/tmp", "test1-20110716-164234", '');
+            #markOrDeleteSnapshot('chris@localhost:/home/chris/tmp', "test1-20110809-170104", '');
             %S = getSnapshotList("/home/chris/tmp");
             print "%S: ";
             foreach my $s (rsort keys %S) {
@@ -4258,6 +4326,12 @@ if ($Opt{test}) {
     }
 }
 
+displaySummary();
+
+if ($Interrupted) { # FIXME is this useful?
+    printlog "\n(Interrupted with signal '$Interrupted')\n", 1;
+    $ExitCode = EXITINT if $ExitCode != EXITOK;
+}
 printlog "\n$Script stopping at " . (strftime "%H:%M:%S", localtime) . " with exit code $ExitCode\n", 1,1;
 logit '-' x 80, 1;
 
