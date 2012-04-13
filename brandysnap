@@ -1301,11 +1301,15 @@ sub updateSnapshotSizes () {
     #    -rwxr-xr-x         149 2008/06/13 13:56:30 textsmart
     #    drwxr-xr-x        4096 2011/05/07 17:41:48 40dnamer
     # and gives return code 23 if the directory is not found
-    # 255 for wrong password, unknown host etc.
+    #                       255 for wrong password, unknown host etc.
     # Note the lack of nlink information, so we can't calculate 'delete size'.
-    foreach my $snapshot (keys %S) {
+    # Process in latest-first order so that we can always update the latest one
+    # which will be non-zero if we restarted it.
+    my $firstOne = 1;
+    foreach my $snapshot (rsort keys %S) {
         debug "uSS: initial snapshot size is $S{$snapshot}{size}\n", 9;
-        next if $S{$snapshot}{size} >= 0;
+        next if !$firstOne and $S{$snapshot}{size} >= 0;
+        $firstOne = 0;
         my $totalSize = 0;
         # Get rsync listing into an array
         my @items;
