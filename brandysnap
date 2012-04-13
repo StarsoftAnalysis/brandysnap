@@ -326,6 +326,7 @@ sub combinations ($@) {
     my @combs;
     my $generator = Math::Combinatorics->new(count => $n, data => [@list],);
     while (my @combo = $generator->next_combination) {
+        # (elements in @combo are in same order as in @list)
         push @combs, [@combo];
     }
     return @combs;
@@ -1570,11 +1571,11 @@ sub displaySummary () {
     printlog   "---------------\n", 1;
     foreach my $dest (sort @{$Opt{destination}}) {
         printlog "Destination $dest:\n", 1;
-        printlog "\t$Summary{$dest}{'result'}\n", 1;
         foreach my $source (sort @{$Opt{source}}) {
             printlog "\tSource $source:\n", 1;
             printlog "\t\t$Summary{$dest}{$source}\n", 1;
         }
+        printlog "\t$Summary{$dest}{'result'}\n", 1;
     }
 }
 
@@ -2643,16 +2644,18 @@ sub getMatchingSnapshots ($$$$\@) {
     # and choose the one with the best score
     # FIXME -- maybe we should leave first and last fixed if they're already aligned
     my @combs = combinations(scalar @I, 0..$#S); 
-    my $minct = MAXTIME;
-    my $mincti = 0;
-    my $ci = 0; 
-    foreach my $comb (@combs) {
+    my $minct = MAXTIME;    # smallest combination total so far
+    my $mincti = 0;         # index of smallest combination so far 
+    #my $ci = 0; 
+    #foreach my $comb (@combs) {
+    for my $ci (0..$#combs) {
+        my @comb = @{$combs[$ci]};
         my $combtotal = 0;
         # Note: ideals are already in ascending order, need to sort the comb
         # (in descending order of indexes, i.e. ascending order of dates)
-        @$comb = sort {$b <=> $a} @$comb;
-        foreach my $i (0..$#I) {
-            my $c = $$comb[$i];
+        @comb = sort {$b <=> $a} @comb;
+        foreach my $i (0..$#I) { # for each ideal:
+            my $c = $comb[$i];  # choose the corresponding existing snapshot
             # The score for each existing snapshot is:
             #    (distance to ideal * closeness) + offset for being bad
             my $score = abs($I[$i] - $S[$c]) * $closeness[$c] + $badoffset[$c];
@@ -2664,7 +2667,7 @@ sub getMatchingSnapshots ($$$$\@) {
             $minct = $combtotal;
             $mincti = $ci;
         }
-        $ci += 1;
+        #$ci += 1;
     }
     debug "gMS: " . @combs . " combinations tested\n", 5;
     debug "gMS: best combination, with total $minct, is " . 
