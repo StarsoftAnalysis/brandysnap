@@ -325,6 +325,12 @@ Determines the favoured day within a month.  For example, to prefer monthly snap
 
 Determines the favoured day within a year.  In leap years, the value B<366> is automatically changed to B<365>, so B<366> always means 'the last day of the year'. For example, to prefer yearly snapshots in the middle of the year, use B<ybest 180>. (default: B<366>)
 
+=item B<min-interval I<1..>>
+
+Sets the minimum interval between snapshots, in minutes.  This is useful on a client, such as a laptop, that is
+not running or not connected to the network all the time: cron can be used to schedule brandysnap frequently, and this option
+used to make sure that snapshots are only created every hour, say.
+
 =item B<weekstart I<1..7>>
 
 Sets the first day of week.  If you consider that weeks start on Monday, use B<weekstart 2>.  B<1>=Sunday, B<7>=Saturday.  (default: B<1>)
@@ -515,6 +521,17 @@ That format is fixed -- it is used to identify snapshots; any directory that doe
 Brandysnap is designed to be robust: if it receives an interrupt signal, for example if the computer
 is shutting down, or the user has pressed ctrl-C, while rsync is running, it traps the signal and stops cleanly, 
 deleting any partially completed snapshot if possible.
+
+=head2 Other notes
+
+=over
+
+=item *
+
+Brandysnap ignores 'minor' errors from rsync, which includes errors regarding permissions.  So check the output to make sure
+that there are no 'Permission denied' messages.  If there are, you may need to run brandysnap as root -- see xxx.
+
+=back
 
 =head1 KNOWN ISSUES
 

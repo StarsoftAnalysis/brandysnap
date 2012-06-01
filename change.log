@@ -1,5 +1,8 @@
 Changelog for Brandysnap
 
+0.1.20	01/6/12
+* add 'min-interval' option
+
 0.1.19	14/4/12
 * better/simpler interrupt handling
 * add summary of successes and failures
@@ -17,12 +20,12 @@ Changelog for Brandysnap
 * corrections to systemCall to prevent segfault with Perl 5.14.2
 * code tidying, including the test cases
 
-0.1.17  30/1/12
+0.1.17	30/1/12
 * fix bug in clearSuffix(), so --restart works again
 * use GetOpt::Long (and some extra code) instead of Config::General for reading 
   the configuration file
 
-0.1.16  16/1/12
+0.1.16	16/1/12
 * fix error handling when no remote sources are readable
 * fix handling of interrupts and --allow-restart option
 * Improved error checking in deleteOrRenameSnapshot(); and interaction with --allow-restart option.
