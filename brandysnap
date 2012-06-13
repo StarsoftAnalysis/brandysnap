@@ -1,5 +1,15 @@
 #!/usr/bin/perl
 
+WIP -- this version won't run
+
+# to do for sections:
+# - MUCH NICER: all dests and sources have option-overriding structures, even if some are empty
+#    - then we don't need two loops for different sorts of destinations etc.
+# - required options is not so simple
+# - add bits to printableOptions
+# - more (or less?) validation
+# - status(?)
+# - resultsSummary
 #########################################################################
 # brandysnap: rsync-based backup snapshot creation and management       #
 # Copyright (C) 2011,2012 Chris Dennis, chris@starsoftanalysis.co.uk    #
@@ -34,6 +44,7 @@ use Time::Local;
 use POSIX qw(ceil floor strftime);
 use Date::Manip;    # see http://search.cpan.org/~sbeck/Date-Manip-6.23/lib/Date/Manip/DM6.pod
 use Getopt::Long qw(GetOptionsFromArray :config ignore_case auto_abbrev);
+use Config::General;
 use Math::Combinatorics;
 use JSON;           # for metadata file
 use File::Path qw(remove_tree);
@@ -48,6 +59,7 @@ use IPC::Open3;
 use Symbol qw(gensym);
 use IO::File;
 use Sys::Hostname;
+use Data::Dumper;   # only for dev
 
 # Interrupts and other housekeeping ===============================================================
 
@@ -81,7 +93,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-my $Version = '0.1.20';
+my $Version = '0.1.20-sections';
 use constant VERSION => $Version;
 
 # A copy of @ARG before it gets shifted
@@ -98,8 +110,8 @@ my $ExitCode = EXITOK;
 #my $SymlinkExists = eval { symlink("",""); 1 };  not used
 
 # Options -- need some options to start with
-my %Opt = ();   
-$Opt{debug}    = 0; # Set this > 0 when debugging the processOptions()
+our %Opt = ();   
+$Opt{debug}    = 1; # Set this > 0 when debugging the processOptions()
 $Opt{verbose}  = 1;
 $Opt{loglevel} = 1;
 
@@ -173,6 +185,13 @@ my $EmptyDir = tempdir(CLEANUP => 1);
 # (initialised in processOptions())
 my %Summary;
 
+#sub qwhash (\@) {
+#	# Fill a hash with 'true' entries,
+#	# given an array of keys
+#	my %hash = map {$_ => 1} @_;
+#	return \%hash;
+#}
+
 # Arrays defining types of options
 # All options
 my @AllOpt = qw(
@@ -197,16 +216,62 @@ my %AllOpt = (map {$_ => 1} @AllOpt);
 # Required options (not including those that have a default value)
 my @ReqOpt = qw(destination source template lockfile spec);
 # Multi-value options (are also all string options)
-my %MultiOpt = qw(source 1  include 1  include-from 1  
-    exclude 1  exclude-from 1  destination 1);
+my %MultiOpt = (map {$_ => 1} qw(source include include-from
+    exclude exclude-from destination));
 # Boolean options
 my @BoolOpt  = qw(safe calendar snapshot delete delete-cp dry-run 
     stacktrace version expire-old status compress restart allow-restart);
 # String options (NOT the multi-value ones)
-my @StringOpt = qw(config lockfile logfile template rsync-cmd rsync-opts remote-rsync-cmd
+my @StringOpt = qw(config lockfile logfile template 
+    rsync-cmd rsync-opts remote-rsync-cmd
     all-failed some-failed);
 # Level options (take values 0..9)
 my @LevelOpt = qw(verbose loglevel debug);
+
+# Contexts
+
+# Set up global contexts structure, seeded with
+# empty arrays for destinations and sources
+my %Context = (
+    destinations => [],
+    sources      => [],
+);
+# Valid contexts and nesting thereof:
+my %ValidContext = (general=>1, destination=>1, source=>1);
+my %AllowedContext = (
+    general     => {source=>1, destination=>1},
+    destination => {source=>1},
+    source      => {},
+);
+# Matrix defining which contexts each option is allowed in
+# (no spec within destination -- spec is only parsed once)
+my %Matrix = (
+	general => {map {$_ => 1} @AllOpt},      # all allowed
+	destination => {map {$_ => 1} qw(
+        hbest dbest wbest mbest ybest
+        safe calendar strict
+        source
+        snapshot delete delete-cp
+        weekstart
+        rsync-cmd rsync-opts remote-rsync-cmd
+        expire-old
+        bwlimit-in bwlimit-out
+        compress restart
+        allow-restart ldcount
+        all-failed some-failed
+        min-interval
+    )},
+    # some dest-related options can be specified per-source
+    # so that each dest-source combination can be different
+	source => {map {$_ => 1} qw(
+        rsync-cmd rsync-opts remote-rsync-cmd
+        include include-from exclude exclude-from
+        bwlimit-in bwlimit-out
+        compress restart
+        allow-restart 
+        min-interval
+    )},
+);
 
 # Suffix used to indicate that a snapshot is incomplete
 my $PartialSuffix = 'x';  
@@ -546,6 +611,20 @@ sub pair2range ($$) {
     return time2stamp($beg) . '--' . time2stamp($end);
 }
 
+#---------------------------------------------------------------------------------------------------
+
+sub fullName ($) {
+    # Return the full version of an option name
+    # (most of this is done by GetOptions, so here we only deal with
+    #  context names 'source' and 'destination'
+    my $name = shift;
+    my @fullnames = ('destination', 'source');
+    foreach my $fullname (@fullnames) {
+        return $fullname if 'destination' =~ /^$name/i;
+    }
+    return "\L$name";   
+}
+
 #===================================================================================================
 
 # Options 
@@ -557,54 +636,200 @@ sub pair2range ($$) {
 
 #---------------------------------------------------------------------------------------------------
 
+sub dumpContexts () {
+    # Debugging: print the contents of %Context
+    printlog "Context:\n", 1;
+    printlog Dumper(\%Context), 1;
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub getOptionsFromArray ($$$) {
+    # Process command-line-like array of options into a hash,
+    # using the global list of definitions
+    my $argRef     = shift;
+    my $optRef     = shift;
+    my $GOarrayRef = shift;
+    debug "gOFA: args=@$argRef\n";
+    my $rc = 0;
+    my @GOFAerrors;
+    local $SIG{__WARN__} = sub { push @GOFAerrors, @_; };
+    if (!GetOptionsFromArray($argRef, $optRef, @$GOarrayRef)) {
+        # Print the error messages
+        foreach my $error (@GOFAerrors) {
+            printlog "ERROR: $error\n", 1;
+        }
+        $rc = @GOFAerrors;  # error count
+    }
+}
+
+#---------------------------------------------------------------------------------------------------
+
 sub readConfig ($$) {
     # Read in options from the given configuration filename
-    my $cfile      = shift;
-    my $GOarrayRef = shift;
+    # and shove them into an array for GetOptionsFromArray
+    # Returns non-zero if there were any errors,
+    # and the hash of top-level config file options.
+    # Sets global hash %Context.
 
-    my %confopt = ();
-    my @args;   # array of things to pass to GetOpt instead of letting it use @ARGV
+    state $cfile   = shift;     # ('state' to allow use in nested sub)
+    my $GOarrayRef = shift;
+    debug "rC: cfile=$cfile GOarrayRef=$GOarrayRef\n", 1;
+    
+    my $rc = 0;
+
+    # array of arguments per context
+    my @argRefStack;
+    my $argRef = [];
+
+    my @contextRefStack;    # starts empty
+    my $contextRef = \%Context; # start with top-level context
+
+    my @contextNameStack;
+    my $contextName = 'general';
+
+    my $skipping = 0;
+    debug "rc: starting with argRef=$argRef contextRef=$contextRef contextName=$contextName\n";
+
+    sub confLine ($) {
+        my $lineno = shift;
+        return "in configuration file '$cfile' at line $lineno";
+    }
+
     if (open CONFIG, '<', $cfile) {
         # Parse the config file, extracting options and values
         # The format is home-made and simple:
         # Definition:
-        #   - ignore blank lines, or lines with first non-whitespace '#' (comments)
-        #   - leading and trailing whitespace of whole line
+        #   - ignore blank lines, and lines with first non-whitespace '#' (comments)
+        #   - strip leading and trailing whitespace of whole line
         #   - option lines are of the form
-        #       <option>  whitespace|:|= <value>
-        #       <option>
-        #   - <option> is non-whitespace i.e. a single word, with any leading - or -- stripped
-        #   - <value> has surrounding whitespace stripped, but otherwise is anything
+        #       option  whitespace|:|= value
+        #       option
+        #       <option whitespace|:|= value>
+        #           # options in new context go here
+        #       </option>
+        #   - option is non-whitespace i.e. a single word, with any leading - or -- stripped
+        #   - value has surrounding whitespace stripped, but otherwise is anything
+        my $lineno = 0;
         while (<CONFIG>) {
             chomp;
+            $lineno += 1;
+            debug "rc: config line $lineno is '$_'\n", 1;
             next if /^\s*$/;	# Skip blank lines
             next if /^\s*#/;	# Skip comments
-            if (/^\s*-{0,2}(?<option>\S+)\s*[:=]?\s*(?<value>.+)?\s*$/) {
-                push @args, "--$+{option}";
-                push @args, $+{value} if exists $+{value};
-                debug "rC: $+{option} = $+{value}\n", 1 if exists $+{value};
-                debug "rC: $+{option}\n", 1 if !exists $+{value};
+
+            if (/^\s*-*(?<option>[[:alpha:]-]+)\s*[:=]?\s*(?<value>.+)?\s*$/) {
+                # Plain option line
+                if ($skipping) {
+                    debug "rC: skipping ($skipping) option '$+{option}'\n", 1;
+                } else {
+                    my $option = fullName($+{option});
+                    if (!$AllOpt{$option}) {
+                        printlog "ERROR: unknown option '$option' " . confLine($lineno) . "\n", 1;
+                        $rc += 1;
+                    } elsif (!$Matrix{$contextName}{$option}) {
+                        printlog "ERROR: option '$option' not allowed within context '$contextName' " 
+                            . confLine($lineno) . "\n", 1;
+                        $rc += 1;
+                    } else {
+                        # whatever level, we just need to use @$argRef
+                        push @$argRef, "--$+{option}";
+                        push @$argRef, $+{value} if exists $+{value};
+                        debug "rC: $+{option} = $+{value}\n", 1 if exists $+{value};
+                        debug "rC: $+{option}\n", 1 if !exists $+{value};
+                    }
+                }
+
+            } elsif (/^\s*<\s*(?<option>[[:alpha:]-]+)\s*[:=]?\s*(?<value>.+)?\s*>/) {
+                # Start of new context
+                my $newContextName = fullName($+{option});
+                my $newContextRef  = {$newContextName => $+{value}};  
+                debug "\nrC: >>>>>> new context=$newContextName  newContextRef=$newContextRef\n";
+
+                if ($skipping) {
+                    debug "rC: skipping ($skipping) nested context\n", 1;
+                    $skipping += 1;
+                } elsif (!$ValidContext{$newContextName}) {
+                    printlog "ERROR: unknown context '$contextName' " . confLine($lineno) 
+                        . " -- context skipped\n", 1;
+                    $skipping = 1;
+                    $rc += 1;
+                } elsif (!$AllowedContext{$contextName}{$newContextName}) {
+                    printlog "ERROR: context '$newContextName' not allowed within context '$contextName' " 
+                        . confLine($lineno) . " -- context skipped\n", 1;
+                    $skipping = 1;
+                    $rc += 1;
+                } else {
+                    # OK, it's a valid context
+                    if ($newContextName eq 'destination') {
+                        debug "rc: pushing 'destination'\n";
+                        push @{$contextRef->{destinations}}, $newContextRef;
+                        # create an array to hold sources for this dest
+                        $newContextRef->{sources} = [];
+                    } elsif ($newContextName eq 'source') {
+                        debug "rc: pushing 'source'\n";
+                        push @{$contextRef->{sources}}, $newContextRef;
+                    }
+                    push @argRefStack, $argRef;
+                    $argRef = []; 
+                    push @contextRefStack, $contextRef;
+                    $contextRef = $newContextRef; 
+                    push @contextNameStack, $contextName;
+                    $contextName = $newContextName;
+                    debug "rc: pushed stacks: argRef=$argRef contextRef=$contextRef\n";
+                }
+
+            } elsif (/^\s*<\/\s*(?<option>[[:alpha:]]*)[^>]*>/) {
+                # End of context: ignore the name -- just match on any </...>
+                if ($skipping) {
+                    debug "rC: skipping ($skipping) closing context\n", 1;
+                    $skipping -= 1;
+                } else {
+                    if ($argRef) {
+                        my %confopt;
+                        $rc += getOptionsFromArray($argRef, \%confopt, $GOarrayRef);
+                        $contextRef->{options} = \%confopt; # if $contextRef;  
+                        # pop context
+                        $argRef      = pop @argRefStack;
+                        $contextRef  = pop @contextRefStack;
+                        $contextName = pop @contextNameStack;
+                        debug "rc: popped stacks: argRef=$argRef contextRef=$contextRef\n";
+                    } else {
+                        # unexpected </...> - ignore it  FIXME flag an error here?
+                        printlog "ERROR: unmatched end-of-context " 
+                            . confLine($lineno) . ": '$+{option}'\n", 1;
+                        $rc += 1;
+                    }
+                    debug "rC: <<<<<< end of context (option=$+{option})\n\n";
+                }
+
             } else {
                 debug "rC: strange line: '$_'\n", 1;
+                printlog "ERROR: invalid line " . confLine($lineno) . ": '$_'\n", 1;
+                $rc += 1;
             }
+
         }
     } else {
         # Shouldn't happen if we've already tested for readability
         printlog "ERROR: failed to open config file '$cfile'\n", 1;
-        return 1, %confopt;
+        $rc += 1;
     }
 
-    debug "rC: \@args: " . join(' ', map {"'$_'"} @args) . "\n", 1;
-    my $rc = GetOptionsFromArray(\@args, \%confopt, @$GOarrayRef);
+    my %confopt = ();
+    $rc += getOptionsFromArray($argRef, \%confopt, $GOarrayRef);
 
-    debug "rC options: " . join(' ', map {$_ . '=' . $confopt{$_}} sort keys %confopt) . "\n", 1;
-    return 0, %confopt;
+    debug "rC returns: rc=$rc, " . join(' ', map {$_ . '=' . $confopt{$_}} sort keys %confopt) . "\n", 1;
+    dumpContexts() if $Opt{debug};
+    return $rc, %confopt;
 }
 
 #---------------------------------------------------------------------------------------------------
 
 sub mergeOpts (@) {
     # Merge option hashes together
+    # PROBLEM -- not so simple if there are contexts (in confopt only, so second param)
+    #SOLUTION -- general opts will be a separate hash
     my %Opt = %{(shift)};
     foreach my $nextoptref (@_) {
         foreach my $k (keys %$nextoptref) {
@@ -718,10 +943,10 @@ sub processOptions () {
     # Block to limit the scope of the SIGWARN override which traps 
     # warnings from GetOptions
     {
-        my $GOwarning = '';
-        local $SIG{__WARN__} = sub { $GOwarning = "@_"; };
+        my @GOwarnings;
+        local $SIG{__WARN__} = sub { push @GOwarnings, @_; };
         my $GOok = GetOptions (\%cmdopt, @GOarray);
-        printlog "ERROR: $GOwarning\n", 1 if !$GOok;
+        printlog "ERROR: @GOwarnings\n", 1 if !$GOok;  # FIXME need to print this if we're validating later?
         return 1 unless $GOok;  
     }
 
@@ -732,11 +957,11 @@ sub processOptions () {
     }
 
     debug "def  options: " . join(' ', 
-        map {$_ . '=' . $defopt{$_}}  sort keys %defopt)  . "\n", 9;
+        map {$_ . '=' . $defopt{$_}}  sort keys %defopt)  . "\n", 1;
     debug "conf options: " . join(' ', 
-        map {$_ . '=' . $confopt{$_}} sort keys %confopt) . "\n", 9;
+        map {$_ . '=' . $confopt{$_}} sort keys %confopt) . "\n", 1;
     debug "cmd  options: " . join(' ', 
-        map {$_ . '=' . $cmdopt{$_}}  sort keys %cmdopt)  . "\n", 9;
+        map {$_ . '=' . $cmdopt{$_}}  sort keys %cmdopt)  . "\n", 1;
     
     # Merge options, so that config file options override the defaults,
     # and command-line options override everything else;
@@ -1203,7 +1428,9 @@ Development options
 --test         n         run test case 'n' 
 Options marked with '*' can be specified more than once
 
-Please see the $Script documentation for full details.
+Please see the $Script documentation for full details, including the use of
+'contexts' in the configuration file to allow, for example, an exclude
+option to apply to one particular source.
 
 EOT
     showLicence();
@@ -4349,8 +4576,38 @@ if ($Opt{test}) {
     # Run rsync to each of the destinations
     my $di = 0;
     while (!$Interrupted and $di <= $#{$Opt{destination}}) {
+        debug "standard dest: ${$Opt{destination}}[$di]\n", 1;
         run(${$Opt{destination}}[$di], @specs);
         $di += 1;
+    }
+#    # context destinations
+#    $di = 0;
+#    while (!$Interrupted and $di <= $#{$Context{destinations}}) {
+#        # TODO ??run processSpecs() here to allow it per-destination
+#        # make a local copy of the options hash, and override
+#        # the options specific to this destination
+#        local %Opt;
+#        #which is non-trivial for nested sources
+#        # -- if the destcontext has no sources, no problem
+#        # -- if it has simple sources, replace the general ones
+#        # -- if it has context ones (+/- as well), add them to the mix
+#        #    (in fact that has to be done anyway, even at general level)
+#        #
+#        foreach my $opt (keys @{$Context{destinations}[$di]) {
+#        }
+#        run(${$Context{destinations}[$di]{destination}}, @specs);
+#        $di += 1;
+#    }
+    #    or, use for
+    foreach my $contextDest (@{$Context{destinations}}) {
+        last if $Interrupted;
+        debug "contextDest=$contextDest dest=${$contextDest}{destination}\n", 1;
+        local %Opt = %Opt;
+        foreach my $destOpt (keys %{${$contextDest}{options}}) {
+            debug "overriding $destOpt with '${${$contextDest}{options}}{$destOpt}'\n", 1;
+            $Opt{$destOpt} = ${${$contextDest}{options}}{$destOpt}
+        }
+        run(${$contextDest}{destination}, @specs)
     }
 }
 

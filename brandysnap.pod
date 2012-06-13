@@ -201,6 +201,55 @@ The B<~> will be expanded to the home directory of the user who _runs_ brandysna
 B<~> can also be used on remote directories, e.g. B<chris@example.com:~/documents>.  In this case, the B<~> will be expanded by rsync to mean the home directory of the user specified (or implied) before the B<@> symbol, in this case B</home/chris/>.
 B<~> can NOT be used in any of the B<include>/B<exclude> options.
 
+=head3 Contexts
+
+For more complex set-ups, options in the configuration can be nested within 'contexts'.  
+This allows options to made specific to a particular destination or source.
+
+For example, this snippet from a configuration file:
+
+    source /home/chris
+    destination /backups/one
+    <destination /backups/two/>
+	source /home/ann
+        exclude .cache
+    </destination>
+    source /home/fred
+    exclude tmp
+
+Contexts are begun with C<< <destination dest-name> >> or C<< <source source-name> >> and finished with 
+C<< </destination> >> or C<< </source> >>.
+Each C<< <...> >> must be on a line by itself.
+
+Source contexts can be nested within destination contexts.
+
+The example above has two destinations. C</home/chris> and C</home/fred> (excluding C<tmp> from both) will be copied to C</backups/one>. 
+C</home/ann> (excluding C<.cache>) will be copied to C</backups/two>.
+
+Only certain options are valid within each context.  A destination context can contain these options:
+
+    hbest dbest wbest mbest ybest
+    safe calendar strict
+    source
+    snapshot delete delete-cp
+    weekstart
+    rsync-cmd rsync-opts remote-rsync-cmd
+    expire-old
+    bwlimit-in bwlimit-out
+    compress restart
+    allow-restart ldcount
+    all-failed some-failed
+    min-interval
+
+A source context can contain these options:
+
+    rsync-cmd rsync-opts remote-rsync-cmd
+    include include-from exclude exclude-from
+    bwlimit-in bwlimit-out
+    compress restart
+    allow-restart 
+    min-interval
+
 =over
 
 =item * 
