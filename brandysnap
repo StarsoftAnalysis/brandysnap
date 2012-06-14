@@ -1,15 +1,9 @@
 #!/usr/bin/perl
 
-WIP -- this version won't run
-
 # to do for sections:
-# - MUCH NICER: all dests and sources have option-overriding structures, even if some are empty
-#    - then we don't need two loops for different sorts of destinations etc.
-# - required options is not so simple
-# - add bits to printableOptions
+# - not-found local source doesn't get picked up at validation time
 # - more (or less?) validation
 # - status(?)
-# - resultsSummary
 #########################################################################
 # brandysnap: rsync-based backup snapshot creation and management       #
 # Copyright (C) 2011,2012 Chris Dennis, chris@starsoftanalysis.co.uk    #
@@ -230,12 +224,12 @@ my @LevelOpt = qw(verbose loglevel debug);
 
 # Contexts
 
-# Set up global contexts structure, seeded with
-# empty arrays for destinations and sources
-my %Context = (
-    destinations => [],
-    sources      => [],
-);
+## Set up global contexts structure, seeded with
+## empty arrays for destinations and sources
+#my %Context = (
+#    destinations => [],
+#    sources      => [],
+#);
 # Valid contexts and nesting thereof:
 my %ValidContext = (general=>1, destination=>1, source=>1);
 my %AllowedContext = (
@@ -616,11 +610,11 @@ sub pair2range ($$) {
 sub fullName ($) {
     # Return the full version of an option name
     # (most of this is done by GetOptions, so here we only deal with
-    #  context names 'source' and 'destination'
+    #  options 'source' and 'destination' (i.e. contexts)
     my $name = shift;
-    my @fullnames = ('destination', 'source');
+    my @fullnames = keys %ValidContext;    #('destination', 'source');
     foreach my $fullname (@fullnames) {
-        return $fullname if 'destination' =~ /^$name/i;
+        return $fullname if $fullname =~ /^$name/i;
     }
     return "\L$name";   
 }
@@ -636,11 +630,11 @@ sub fullName ($) {
 
 #---------------------------------------------------------------------------------------------------
 
-sub dumpContexts () {
-    # Debugging: print the contents of %Context
-    printlog "Context:\n", 1;
-    printlog Dumper(\%Context), 1;
-}
+#sub dumpContexts () {
+#    # Debugging: print the contents of %Context
+#    printlog "Context:\n", 1;
+#    printlog Dumper(\%Context), 1;
+#}
 
 #---------------------------------------------------------------------------------------------------
 
@@ -665,53 +659,48 @@ sub getOptionsFromArray ($$$) {
 
 #---------------------------------------------------------------------------------------------------
 
-sub readConfig ($$) {
+sub readConfig ($$) { # recursive version
     # Read in options from the given configuration filename
-    # and shove them into an array for GetOptionsFromArray
+    # with a mixture of custom-validation and GetOptionsFromArray.
     # Returns non-zero if there were any errors,
-    # and the hash of top-level config file options.
-    # Sets global hash %Context.
+    # and the hash of config file options.
 
-    state $cfile   = shift;     # ('state' to allow use in nested sub)
-    my $GOarrayRef = shift;
+    # Parse the config file, extracting options and values
+    # The format is home-made and simple:
+    # Definition:
+    #   - ignore blank lines, and lines with first non-whitespace '#' (comments)
+    #   - strip leading and trailing whitespace of whole line
+    #   - option lines are of the form
+    #       option  whitespace|:|= value
+    #       option
+    #       <option whitespace|:|= value>
+    #           # options in new context go here
+    #       </option>
+    #   - option is non-whitespace i.e. a single word, with any leading - or -- stripped
+    #   - value has surrounding whitespace stripped, but otherwise is anything
+    #   - only 'destination' and 'source' can be used as contexts (see %ValidContext).
+
+    state $cfile      = shift;     # ('state' to allow use in nested sub)
+    state $GOarrayRef = shift;
+    state $lineno = 0;
     debug "rC: cfile=$cfile GOarrayRef=$GOarrayRef\n", 1;
     
-    my $rc = 0;
+    # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  
 
-    # array of arguments per context
-    my @argRefStack;
-    my $argRef = [];
-
-    my @contextRefStack;    # starts empty
-    my $contextRef = \%Context; # start with top-level context
-
-    my @contextNameStack;
-    my $contextName = 'general';
-
-    my $skipping = 0;
-    debug "rc: starting with argRef=$argRef contextRef=$contextRef contextName=$contextName\n";
-
-    sub confLine ($) {
-        my $lineno = shift;
+    sub confLine {
         return "in configuration file '$cfile' at line $lineno";
     }
 
-    if (open CONFIG, '<', $cfile) {
-        # Parse the config file, extracting options and values
-        # The format is home-made and simple:
-        # Definition:
-        #   - ignore blank lines, and lines with first non-whitespace '#' (comments)
-        #   - strip leading and trailing whitespace of whole line
-        #   - option lines are of the form
-        #       option  whitespace|:|= value
-        #       option
-        #       <option whitespace|:|= value>
-        #           # options in new context go here
-        #       </option>
-        #   - option is non-whitespace i.e. a single word, with any leading - or -- stripped
-        #   - value has surrounding whitespace stripped, but otherwise is anything
-        my $lineno = 0;
-        while (<CONFIG>) {
+    # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  
+
+    sub readContext {
+        # Read options at the current level/context
+        my $context = shift;
+        my @options;
+        # Hash to receive options from GOFA
+        my %confopt;
+        my $rc = 0;
+        while (<CONFIG>) {  # to end of context or end of file
             chomp;
             $lineno += 1;
             debug "rc: config line $lineno is '$_'\n", 1;
@@ -720,116 +709,114 @@ sub readConfig ($$) {
 
             if (/^\s*-*(?<option>[[:alpha:]-]+)\s*[:=]?\s*(?<value>.+)?\s*$/) {
                 # Plain option line
-                if ($skipping) {
-                    debug "rC: skipping ($skipping) option '$+{option}'\n", 1;
-                } else {
-                    my $option = fullName($+{option});
-                    if (!$AllOpt{$option}) {
-                        printlog "ERROR: unknown option '$option' " . confLine($lineno) . "\n", 1;
-                        $rc += 1;
-                    } elsif (!$Matrix{$contextName}{$option}) {
-                        printlog "ERROR: option '$option' not allowed within context '$contextName' " 
-                            . confLine($lineno) . "\n", 1;
+                my $option = fullName($+{option});
+                my $value = $+{value} // '';
+                if (!$AllOpt{$option}) {
+                    printlog "ERROR: unknown option '$option' " . confLine() 
+                        . "\n", 1;
+                    $rc += 1;
+                } elsif (!$Matrix{$context}{$option}) {
+                    printlog "ERROR: option '$option' not allowed within context '$context' " 
+                        . confLine() . "\n", 1;
+                    $rc += 1;
+                } elsif ($ValidContext{$option}) {  # $option eq 'destination' or $option eq 'source') {
+                    # These are treated separately so that, for example,
+                    #   destination d1
+                    # is treated like
+                    #   <destination d1> \n <destination>
+                    if (!$value) {
+                        printlog "ERROR: option '$option' must have a value " . 
+                            confLine() . "\n", 1;
                         $rc += 1;
                     } else {
-                        # whatever level, we just need to use @$argRef
-                        push @$argRef, "--$+{option}";
-                        push @$argRef, $+{value} if exists $+{value};
-                        debug "rC: $+{option} = $+{value}\n", 1 if exists $+{value};
-                        debug "rC: $+{option}\n", 1 if !exists $+{value};
+                        push @{$confopt{$option}}, 
+                            {location => $value, options => {}};
+                        debug "rC: adding simple source/dest '$value'\n", 1;
                     }
+                } else {
+                    # Simple option -- just add it to the list
+                    push @options, "--$option";
+                    push @options, $value if $value;
+                    debug "rC: $option = $value\n", 1 if $value;
+                    debug "rC: $option\n", 1 if !$value;
                 }
 
             } elsif (/^\s*<\s*(?<option>[[:alpha:]-]+)\s*[:=]?\s*(?<value>.+)?\s*>/) {
                 # Start of new context
-                my $newContextName = fullName($+{option});
-                my $newContextRef  = {$newContextName => $+{value}};  
-                debug "\nrC: >>>>>> new context=$newContextName  newContextRef=$newContextRef\n";
-
-                if ($skipping) {
-                    debug "rC: skipping ($skipping) nested context\n", 1;
-                    $skipping += 1;
-                } elsif (!$ValidContext{$newContextName}) {
-                    printlog "ERROR: unknown context '$contextName' " . confLine($lineno) 
-                        . " -- context skipped\n", 1;
-                    $skipping = 1;
+                my $option = fullName($+{option});
+                my $value = $+{value} // '';
+                debug "\nrC: >>>>>> new context=$option  \n";
+                if (!$ValidContext{$option}) {
+                    printlog "ERROR: unknown context '$option' " . confLine() 
+                    . " -- context skipped\n", 1;
                     $rc += 1;
-                } elsif (!$AllowedContext{$contextName}{$newContextName}) {
-                    printlog "ERROR: context '$newContextName' not allowed within context '$contextName' " 
-                        . confLine($lineno) . " -- context skipped\n", 1;
-                    $skipping = 1;
+                } elsif (!$AllowedContext{$context}{$option}) {
+                    printlog "ERROR: context '$option' not allowed within context '$context' " 
+                    . confLine() . " -- context skipped\n", 1;
                     $rc += 1;
                 } else {
-                    # OK, it's a valid context
-                    if ($newContextName eq 'destination') {
-                        debug "rc: pushing 'destination'\n";
-                        push @{$contextRef->{destinations}}, $newContextRef;
-                        # create an array to hold sources for this dest
-                        $newContextRef->{sources} = [];
-                    } elsif ($newContextName eq 'source') {
-                        debug "rc: pushing 'source'\n";
-                        push @{$contextRef->{sources}}, $newContextRef;
+                    if (!$value) {
+                        printlog "ERROR: option '$option' must have a value " . 
+                            confLine() . "\n", 1;
+                        $rc += 1;
+                    } else {
+                        # OK, it's a valid context (source or destination) - recurse
+                        my ($newrc, $newConfRef) = readContext($option);
+                        push @{$confopt{$option}}, 
+                            {location => $value, options => $newConfRef};
+                        debug "rC: adding complex destination '$value'\n", 1;
+                        $rc += $newrc;
                     }
-                    push @argRefStack, $argRef;
-                    $argRef = []; 
-                    push @contextRefStack, $contextRef;
-                    $contextRef = $newContextRef; 
-                    push @contextNameStack, $contextName;
-                    $contextName = $newContextName;
-                    debug "rc: pushed stacks: argRef=$argRef contextRef=$contextRef\n";
                 }
 
             } elsif (/^\s*<\/\s*(?<option>[[:alpha:]]*)[^>]*>/) {
                 # End of context: ignore the name -- just match on any </...>
-                if ($skipping) {
-                    debug "rC: skipping ($skipping) closing context\n", 1;
-                    $skipping -= 1;
+                if ($context eq 'general') {
+                    # end of context is an error -- complain and carry on
+                    # unexpected </...> - ignore it  FIXME flag an error here?
+                    printlog "ERROR: unmatched end-of-context " 
+                        . confLine() . ": '$+{option}'\n", 1;
+                    $rc += 1;
                 } else {
-                    if ($argRef) {
-                        my %confopt;
-                        $rc += getOptionsFromArray($argRef, \%confopt, $GOarrayRef);
-                        $contextRef->{options} = \%confopt; # if $contextRef;  
-                        # pop context
-                        $argRef      = pop @argRefStack;
-                        $contextRef  = pop @contextRefStack;
-                        $contextName = pop @contextNameStack;
-                        debug "rc: popped stacks: argRef=$argRef contextRef=$contextRef\n";
-                    } else {
-                        # unexpected </...> - ignore it  FIXME flag an error here?
-                        printlog "ERROR: unmatched end-of-context " 
-                            . confLine($lineno) . ": '$+{option}'\n", 1;
-                        $rc += 1;
-                    }
+                    # Finish this level of recursion
                     debug "rC: <<<<<< end of context (option=$+{option})\n\n";
+                    last;
                 }
 
             } else {
                 debug "rC: strange line: '$_'\n", 1;
-                printlog "ERROR: invalid line " . confLine($lineno) . ": '$_'\n", 1;
+                printlog "ERROR: invalid line " . confLine() . ": '$_'\n", 1;
                 $rc += 1;
             }
 
-        }
-    } else {
+        } # while
+
+        # Call GOFA to merge @options with %confopt
+        $rc += getOptionsFromArray(\@options, \%confopt, $GOarrayRef);
+
+        return ($rc, \%confopt);
+
+    } # end of readContext()
+
+    # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  
+
+    if (!open CONFIG, '<', $cfile) {
         # Shouldn't happen if we've already tested for readability
-        printlog "ERROR: failed to open config file '$cfile'\n", 1;
-        $rc += 1;
+        printlog "ERROR: failed to open configuration file '$cfile'\n", 1;
+        return (0, {});
     }
+    my ($rc, $confoptRef) = readContext('general');
+    close CONFIG;
 
-    my %confopt = ();
-    $rc += getOptionsFromArray($argRef, \%confopt, $GOarrayRef);
-
-    debug "rC returns: rc=$rc, " . join(' ', map {$_ . '=' . $confopt{$_}} sort keys %confopt) . "\n", 1;
-    dumpContexts() if $Opt{debug};
-    return $rc, %confopt;
+    printlog "rC: confopt:\n", 1;
+    printlog Dumper($confoptRef), 1;
+    return ($rc, %$confoptRef);
 }
 
 #---------------------------------------------------------------------------------------------------
 
 sub mergeOpts (@) {
     # Merge option hashes together
-    # PROBLEM -- not so simple if there are contexts (in confopt only, so second param)
-    #SOLUTION -- general opts will be a separate hash
     my %Opt = %{(shift)};
     foreach my $nextoptref (@_) {
         foreach my $k (keys %$nextoptref) {
@@ -1075,7 +1062,7 @@ sub processOptions () {
         }
     }
 
-    # Source(s) - at least one source must be readable
+    # Sources (with extra options for each)
     if (!$Opt{source}) {
         printlog "ERROR: Option 'source' is missing, and must be specified\n", 1,1;
         $errorcount += 1;
@@ -1084,17 +1071,17 @@ sub processOptions () {
         my @tempSources = @{$Opt{source}};
         @{$Opt{source}} = ();
         foreach my $src (@tempSources) {
-            $src = safeAbsPath($src);
-            if (remote($src)) {
-                printlog "NOTE: Source '$src' is on a remote computer: " . 
+            my $abssrc = safeAbsPath($src->{location});
+            if (remote($abssrc)) {
+                printlog "NOTE: Source '$abssrc' is on a remote computer: " . 
                 "it will not be checked until rsync runs\n", 1;
+                $readableSources += 1; # assume it's OK for now  FIXME - check it properly
+                push @{$Opt{source}}, {location=>$abssrc, options=>$src->{options}};
+            } elsif (-r $abssrc) {
                 $readableSources += 1; 
-                push @{$Opt{source}}, $src;
-            } elsif (-r $src) {
-                $readableSources += 1; 
-                push @{$Opt{source}}, $src;
+                push @{$Opt{source}}, {location=>$abssrc, options=>$src->{options}};
             } else {
-                printlog "WARNING: Source '$src' can not be read -- it will be ignored\n", 1;
+                printlog "WARNING: Source '$abssrc' can not be read -- it will be ignored\n", 1;
                 $warningcount += 1;
                 # (and don't copy it to the final array)
             }
@@ -1105,7 +1092,7 @@ sub processOptions () {
         }
     }
 
-    # Destination directories
+    # Destination directories (with extra options for each)
     if (!$Opt{destination}) {
         printlog "ERROR: Option 'destination' is missing, and must be specified\n", 1,1;
         $errorcount += 1;
@@ -1114,16 +1101,16 @@ sub processOptions () {
         my @tempDests = @{$Opt{destination}};
         @{$Opt{destination}} = ();
         foreach my $dest (@tempDests) {
-            my $absdest = safeAbsPath($dest);
-            debug "destination: absdest=$dest\n", 9;
-            if (remote($dest)) {
-                printlog "NOTE: Destination '$dest' is on a remote computer: " . 
+            my $absdest = safeAbsPath($dest->{location});
+            debug "destination: absdest=$absdest\n", 9;
+            if (remote($absdest)) {
+                printlog "NOTE: Destination '$absdest' is on a remote computer: " . 
                     "it will not be checked until rsync runs\n", 1;
-                $writableDests += 1;
-                push @{$Opt{destination}}, $dest;
+                $writableDests += 1; # assume it's OK for now    FIXME - check it properly
+                push @{$Opt{destination}}, {location=>$absdest, options=>$dest->{options}};
             } elsif (-d -w $absdest) {
                 $writableDests += 1;
-                push @{$Opt{destination}}, $absdest;
+                push @{$Opt{destination}}, {location=>$absdest, options=>$dest->{options}};
             } else {
                 printlog "WARNING: Destination '$absdest' is not available " .
                     "as a writable directory\n", 1;
@@ -1137,12 +1124,13 @@ sub processOptions () {
     }
     
     # Cross-check sources and destinations -- they can't all be remote
+    # FIXME don't do this if no good destinations or sources
     my $local = 0;
     foreach my $source (@{$Opt{source}}) {
-        $local = 1 if !remote($source);
+        $local = 1 if !remote($source->{location});
     }
     foreach my $dest (@{$Opt{destination}}) {
-        $local = 1 if !remote($dest);
+        $local = 1 if !remote($dest->{location});
     }
     if (!$local) {
         printlog "ERROR: At least one source or destination must be local\n", 1;
@@ -1151,11 +1139,20 @@ sub processOptions () {
     
     # Set up summary structure for results
     foreach my $dest (@{$Opt{destination}}) {
-        $Summary{$dest}{'result'} = 'not attempted';
-        foreach my $source (@{$Opt{source}}) {
-            $Summary{$dest}{$source} = 'not attempted';
+        $Summary{$dest->{location}}{'result'} = 'not attempted';
+        if ($dest->{options}->{source}) {
+            # destination has its own sources -- use them
+            foreach my $source (@{$dest->{options}->{source}}) {
+                $Summary{$dest->{location}}{$source->{location}} = 'not attempted';
+            }
+        } else {
+            # use general sources
+            foreach my $source (@{$Opt{source}}) {
+                $Summary{$dest->{location}}{$source->{location}} = 'not attempted';
+            }
         }
     }
+    #displaySummary();
 
     # Output levels
     sub checkOutput ($) {
@@ -1290,40 +1287,82 @@ sub processOptions () {
 
 #---------------------------------------------------------------------------------------------------
 
-sub printableOption ($) {
+sub printableOption ($$) {
     # Return a printable version of an option
-    my $opt = shift;
-    if (ref($Opt{$opt}) eq 'ARRAY') {
+    my $opt        = shift;
+    my $optionsRef = shift;
+    #if ($opt eq 'destination' or $opt eq 'source') {
+    #    # array of complex options
+    #    return join(', ', map {Dumper($_)} @{$optionsRef->{$opt}}); 
+    #}
+    if (ref($optionsRef->{$opt}) eq 'ARRAY') {
         # multiple option -- which happen to be all strings, so add quotes
-        return join(', ', map {"'$_'"} @{$Opt{$opt}}); 
+        return join(', ', map {"'$_'"} @{$optionsRef->{$opt}}); 
     }
     if (grep {$_ eq $opt} @BoolOpt) {
         # boolean options
-        return $Opt{$opt} ? 'yes' : 'no';
+        return $optionsRef->{$opt} ? 'yes' : 'no';
     }
     if (grep {$_ eq $opt} @StringOpt) {
         # string option, add quotes
-        return "'$Opt{$opt}'";
+        return "'$optionsRef->{$opt}'";
     }
     # else it's numeric, no quotes
-    return "$Opt{$opt}";
+    return "$optionsRef->{$opt}";
 }
 
 #---------------------------------------------------------------------------------------------------
 
+sub displayContext ($$$) {
+    # Display the sub-options for a single context
+    my $context = shift;    # the name of the context option
+    my $contRef = shift; # the context's sub-options
+    my $indent  = shift; # for pretty-printing
+    my $text = '';
+    #debug "dS: context = $context or " . Dumper($context) . "\n";
+    #debug "dS: contRef = $contRef or " . Dumper($contRef) . "\n";
+    foreach my $cref (@{$contRef->{$context}}) {
+        #debug "dS: cref = " . Dumper($cref) . "\n";
+        #$text .= $cref->{location} . "\n";
+        $text .= sprintf("%*s - '%s'\n", $indent+16, $context, $cref->{location});
+        if (keys $cref->{options}) {
+            $text .= " "x($indent+23);
+            my $text2 = '';    # put the sub-contexts last
+            foreach my $subopt (sort keys $cref->{options}) {
+                if ($AllowedContext{$context}{$subopt}) {   #$subopt eq 'source') {  # FIXME any allowed sub-context
+                    #$text2 .= sprintf("%*s - ", $indent+6, $subopt);
+                    $text2 .= displayContext($subopt, $cref->{options}, $indent+13);
+                } else {
+                    $text .= "$subopt - " . printableOption($subopt, $cref->{options}) . "; ";
+                }
+            }
+            $text .= "\n" . $text2;
+        }
+    }
+    return $text;
+}
+ 
+#---------------------------------------------------------------------------------------------------
+
 sub displayOptions () {
-    my $optSummary = "\nOptions summary:";
+    # Display the options nicely formatted
+    my $optSummary = "\nOptions summary:\n";
     my $max = 80;
     my $pos = 0;
     foreach my $opt (sort keys %Opt) {
         next if $opt eq 'validLogfile'; # for internal use only
-        my $key = "$opt";
-        my $text = sprintf("%16s - %s", $key, printableOption($opt)); 
+        my $text = '';
+        if ($ValidContext{$opt}) {  #$opt eq 'destination' or $opt eq 'source') {    # FIXME any allowed context
+            #$text = sprintf("%16s - %s",   $opt, displayContext($opt, \%Opt, 18));
+            $text = displayContext($opt, \%Opt, 0);
+        } else {
+            $text = sprintf("%16s - %s\n", $opt, printableOption($opt, \%Opt)); 
+        }   
         # one per line for now
-        if (1) {    #$pos and ($pos + length($text) > $max)) {
-            $optSummary .= "\n";
-            $pos = 0;
-        }
+        #if (1) {    #$pos and ($pos + length($text) > $max)) {
+        #    $optSummary .= "\n";
+        #    $pos = 0;
+        #}
         $optSummary .= $text;
         $pos += length($text);
     }
@@ -1814,9 +1853,10 @@ sub displaySummary () {
     # Print out the results summary
     printlog "\nResults Summary\n", 1;
     printlog   "---------------\n", 1;
-    foreach my $dest (sort @{$Opt{destination}}) {
-        printlog "Destination $dest:\n", 1;
-        foreach my $source (sort @{$Opt{source}}) {
+    foreach my $dest (sort keys %Summary) {
+        printlog "Destination $dest:\n";
+        foreach my $source (sort keys $Summary{$dest}) {
+            next if $source eq 'result';    # FIXME what if source is really called 'result'?
             printlog "\tSource $source:\n", 1;
             printlog "\t\t$Summary{$dest}{$source}\n", 1;
         }
@@ -3607,7 +3647,7 @@ sub runRsync ($\@$) {
     # Run rsync to create the snapshot.
     # If it fails for lack of disk space, delete expirable snapshots and try again.
     # Returns 1 for successful creation of a new snapshot.
-    my $dest               = shift;
+    my $dest               = shift; 
     my @expirableSnapshots = @{(shift)};
     my $snapshot           = shift;
     my @S = rsort keys %S;
@@ -3638,12 +3678,20 @@ sub runRsync ($\@$) {
     SOURCE:
     foreach my $source (@{$Opt{source}}) {
 
-        printlog "\nCopying from source '$source'\n", 1;
-        my $remoteSource = remote($source);
+        my $location = $source->{location};
+        printlog "\nCopying from source '$location'\n", 1;
+        my $remoteSource = remote($location);
+
+        # Override options for this source
+        local %Opt = %Opt;
+        foreach my $srcOpt (keys %{$source->{options}}) {
+            debug "rR: overriding $srcOpt with '$source->{options}->{$srcOpt}'\n", 1;
+            $Opt{$srcOpt} = $source->{options}->{$srcOpt};
+        }
 
         # Source and destination can not both be remote (rsync limitation)
         if ($remoteDest and $remoteSource) {
-            printlog "WARNING: source '$source' and destination '$dest' are both remote\n";
+            printlog "WARNING: source '$location' and destination '$dest' are both remote\n";
             printlog "         rsync can not do that -- combination has been skipped\n";
             next SOURCE;
         }
@@ -3655,7 +3703,7 @@ sub runRsync ($\@$) {
         my $upDir   = '';
 
         if ($remoteSource) {
-            $subDir = sourceDir($source);
+            $subDir = sourceDir($location);
         } else {
             $subDir = hostname;
         }
@@ -3699,11 +3747,11 @@ sub runRsync ($\@$) {
         $rsyncPath = "--rsync-path '$Opt{'remote-rsync-cmd'}'"
             if ($Opt{'remote-rsync-cmd'} and ($remoteSource or $remoteDest));
 
-        printlog "Running rsync from source '$source' to destination '$destDir'\n", 2;
+        printlog "Running rsync from source '$location' to destination '$destDir'\n", 2;
         # Note that rsync-opts is put first -- 
         # our own required options will override the user's
         my $args = "$Opt{'rsync-opts'} $verbose $linkdest $incExcOpts $compression " . 
-            "$bwlimit --relative $rsyncPath '$source' '$destDir'";
+            "$bwlimit --relative $rsyncPath '$location' '$destDir'";
 
         { 
             # Wrap the call to rsync and associated houskeeping into a block
@@ -3731,18 +3779,18 @@ sub runRsync ($\@$) {
                 given ($rc) {
                     #* success
                     when (0) {
-                    #when ($_ == 0 and (!($source =~ /cache/) or rand()>0.5 ))  # for debugging!
+                    #when ($_ == 0 and (!($location =~ /cache/) or rand()>0.5 ))  # for debugging!
                         debug "rR: success\n", 1;
                         $keepTrying = 0;    # no need to try this source again
                         $sourcesSucceeded += 1;
-                        $Summary{$dest}{$source} = 'succeeded';
+                        $Summary{$dest}{$location} = 'succeeded';
                     }
                     #* source not found
                     when (($_ == 23) and ($rc2 eq 'nofileordir')) {
-                        printlog "NOTE: source '$source' could not be read -- will continue with any other sources\n", 1;
+                        printlog "NOTE: source '$location' could not be read -- will continue with any other sources\n", 1;
                         $keepTrying = 0;    # don't try this source again
                         $succeeded = 0;
-                        $Summary{$dest}{$source} = 'source not found';
+                        $Summary{$dest}{$location} = 'source not found';
                     }
                     #* errors that can (usually) be ignored, treat as successful 
                     when ([22, 23, 24]) {   
@@ -3751,7 +3799,7 @@ sub runRsync ($\@$) {
                         printlog "NOTE: some errors from rsync have been ignored\n", 2;
                         $keepTrying = 0;
                         $sourcesSucceeded += 1;
-                        $Summary{$dest}{$source} = 'succeeded (minor errors ignored)';
+                        $Summary{$dest}{$location} = 'succeeded (minor errors ignored)';
                     }
                     #* interrupted
                     when ($rsyncInterrupted ne '' or $rc2 eq 'interrupted') {
@@ -3760,7 +3808,7 @@ sub runRsync ($\@$) {
                         $keepTrying = 0;
                         $succeeded = 0;
                         $restartable = 1;
-                        $Summary{$dest}{$source} = 'interrupted';
+                        $Summary{$dest}{$location} = 'interrupted';
                         last SOURCE;
                     }
                     #* errors that can be recovered from -- i.e. lack of space (sometimes)
@@ -3775,14 +3823,14 @@ sub runRsync ($\@$) {
                             $deletions += $deleted;
                             $deletionsAllSources += $deleted;
                             $keepTrying -= $deleted;
-                            $Summary{$dest}{$source} = 'failed (will try again)';
+                            $Summary{$dest}{$location} = 'failed (will try again)';
                         } else {
                             # No snapshots deleted, so stop trying
                             printlog "ERROR: unable to delete old snapshot to make space\n", 1;
                             $keepTrying = 0;
                             $succeeded = 0;
                             $ExitCode = EXITRSYNC;
-                            $Summary{$dest}{$source} = 'failed (not enough space)';
+                            $Summary{$dest}{$location} = 'failed (not enough space)';
                             last SOURCE;
                         }
                     }
@@ -3798,7 +3846,7 @@ sub runRsync ($\@$) {
                         $keepTrying = 0;
                         $succeeded = 0;
                         $ExitCode = $rc >= 1000 ? EXITINT : EXITRSYNC;
-                        $Summary{$dest}{$source} = "failed (error $rc / '$rc2')";
+                        $Summary{$dest}{$location} = "failed (error $rc / '$rc2')";
                         last SOURCE;
                     }
                 } # given
@@ -3807,7 +3855,7 @@ sub runRsync ($\@$) {
             } # while keep trying for this source
 
             if ($deletions) {
-                printlog "NOTE: $deletions expirable snapshots were deleted while processing source '$source'\n", 2;
+                printlog "NOTE: $deletions expirable snapshots were deleted while processing source '$location'\n", 2;
                 printlog "(dry run: no snapshots actually deleted)\n", 2 if $Opt{'dry-run'};
             }
 
@@ -3841,7 +3889,7 @@ sub runRsync ($\@$) {
 
 #---------------------------------------------------------------------------------------------------
 
-sub run ($\@) {
+sub processDestination ($\@) {
     # Do the processing for a single destination
     my $dest  = shift;      
     my @specs = @{(shift)};
@@ -3965,19 +4013,6 @@ sub systemCall ($$$$;$$) {
     debug "systemCall: cmd=|$cmd| args=|$args|\n", 5;
     printlog "Running command: $cmd $args\n", $stdoutLevel;
     {
-        # TODO tidy this up -- it's global now
-        ## Get the return code instead of stopping if $cmd is interrupted
-        #sub killgroup {
-        #    # Make sure all child processes are killed too.
-        #    my $sig = shift;
-        #    $SIG{$sig} = 'IGNORE'; # don't kill ourselves again
-        #    $Interrupted = $sig; 
-        #    kill($sig, -$$);
-        #};
-        #local $SIG{INT}  = \&killgroup;
-        #local $SIG{QUIT} = \&killgroup;
-        #local $SIG{ABRT} = \&killgroup;
-        #local $SIG{TERM} = \&killgroup;
         local *CATCHERR = IO::File->new_tmpfile;
         my $pid = open3(gensym, \*CATCHOUT, ">&CATCHERR", "$cmd $args");
         # Deal with stdout from $cmd
@@ -4402,7 +4437,7 @@ sub testSuite {
             my @cSpecs = compileSpecs($now, @specs);
             displayCSpecs(@cSpecs);
             my @D = getDeleteList(@cSpecs);
-            #run($dest, @specs);
+            #processDestination($dest, @specs);
         }
 
         when (13) {
@@ -4574,12 +4609,12 @@ if ($Opt{test}) {
 } else {
     my @specs = processSpecs();
     # Run rsync to each of the destinations
-    my $di = 0;
-    while (!$Interrupted and $di <= $#{$Opt{destination}}) {
-        debug "standard dest: ${$Opt{destination}}[$di]\n", 1;
-        run(${$Opt{destination}}[$di], @specs);
-        $di += 1;
-    }
+#    my $di = 0;
+#    while (!$Interrupted and $di <= $#{$Opt{destination}}) {
+#        debug "standard dest: ${$Opt{destination}}[$di]\n", 1;
+#        run(${$Opt{destination}}[$di], @specs);
+#        $di += 1;
+#    }
 #    # context destinations
 #    $di = 0;
 #    while (!$Interrupted and $di <= $#{$Context{destinations}}) {
@@ -4599,15 +4634,15 @@ if ($Opt{test}) {
 #        $di += 1;
 #    }
     #    or, use for
-    foreach my $contextDest (@{$Context{destinations}}) {
+    foreach my $dest (@{$Opt{destination}}) {
         last if $Interrupted;
-        debug "contextDest=$contextDest dest=${$contextDest}{destination}\n", 1;
+        debug "running destination $dest->{location}\n", 1;
         local %Opt = %Opt;
-        foreach my $destOpt (keys %{${$contextDest}{options}}) {
-            debug "overriding $destOpt with '${${$contextDest}{options}}{$destOpt}'\n", 1;
-            $Opt{$destOpt} = ${${$contextDest}{options}}{$destOpt}
+        foreach my $destOpt (keys %{$dest->{options}}) {
+            debug "overriding $destOpt with '$dest->{options}->{$destOpt}'\n", 1;
+            $Opt{$destOpt} = $dest->{options}->{$destOpt};
         }
-        run(${$contextDest}{destination}, @specs)
+        processDestination($dest->{location}, @specs)
     }
 }
 
