@@ -39,6 +39,11 @@ for rsync, not for the whole of brandysnap.
 * It ignores anything other than files and directories, but preserves hard
 and soft links. 
 
+* It handles multiple sources and directories in one run.  The configuration file
+can have 'sections' to ensure that, for example, exclusions are applied to the correct
+source, and options for tweaking remote rsync access can be tailored to 
+each site.
+
 Requirements
 ------------
 

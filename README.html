@@ -7,7 +7,7 @@ backups of files and directories.</p>
 with situations where snapshots are not created as regularly as they
 should be.  This can be for a variety of reasons -- hardware failure,
 operator failure, weekends, holidays, someone forgot to plug in the 
-external USB drive...</p>
+external USB drive, etc.</p>
 
 <p>Rather than assigning 'importance' to snapshots according to when they
 were made (for example, keeping Friday afternoon backups for longer
@@ -16,20 +16,35 @@ decides if any can be deleted.  If the Friday afternoon backup is
 missing, it will keep the nearest one it can find.</p>
 
 <p>The basic rule is 'backup first, ask questions later'.  Brandysnap 
-assumes that snapshots are cheap -- in both time and space.  In other 
+assumes that snapshots (other than the first one) are cheap -- in both 
+time and space.  In other 
 words, making a snapshot is quick, and uses relatively little disk 
 space because of the use of hard links.</p>
 
 <p>Brandysnap should be run regularly, via cron or something similar.  It 
-creates a new snapshot each time it is run (usually).</p>
-
-<p>Then it looks at all existing snapshots to see if any old
+creates a new snapshot each time it is run (usually).
+Then it looks at all existing snapshots to see if any old
 snapshots can be deleted because they are no longer required, as
 defined by the configured 'specification'.  </p>
 
+<h2>Features</h2>
+
+<ul>
+<li><p>It does everything via rsync, which means that either the source or 
+the destination can be 'remote' (i.e. accessed via SSH or similar).  That also 
+means that, if root access is required, it only has to be granted specifically
+for rsync, not for the whole of brandysnap.</p></li>
+<li><p>It ignores anything other than files and directories, but preserves hard
+and soft links. </p></li>
+<li><p>It handles multiple sources and directories in one run.  The configuration file
+can have 'sections' to ensure that, for example, exclusions are applied to the correct
+source, and options for tweaking remote rsync access can be tailored to 
+each site.</p></li>
+</ul>
+
 <h2>Requirements</h2>
 
-<p>Brandysnap runs on Linux (it is currently being developed on Ubuntu 10.10).
+<p>Brandysnap runs on Linux.
 I have heard that it also runs on Mac OS X, as long as the following
 requirements are met.</p>
 
@@ -37,12 +52,12 @@ requirements are met.</p>
 
 <ul>
 <li>Date::Manip</li>
-<li>Math::Combinatorics</li>
+<li>Math::Combinatorics   </li>
 <li>JSON</li>
 </ul>
 
 <p>It also requires rsync, which should available in your version of Linux.
-Brandysnap has been developed with rsync version 3.0.7.  It should work with 
+Brandysnap has been developed with rsync version 3.0.7 and 3.0.9.  It should work with 
 any version of rsync that has the '--link-dest' option.</p>
 
 <h2>Installation</h2>
@@ -53,8 +68,8 @@ any version of rsync that has the '--link-dest' option.</p>
 <li><p>Download the script and all the related files by clicking on the
 'Downloads' button on https://github.com/StarsoftAnalysis/brandysnap
 and unpack the files into a suitable directory on your computer.</p></li>
-<li><p>Make sure you've got rsync and the necessary Perl modules (see above).</p></li>
-<li><p>Use a text editor to create a configuration file -- refer to the user guide for details.</p></li>
+<li><p>Make sure you've got rsync and the necessary Perl modules as described above.</p></li>
+<li><p>Use a text editor to create a configuration file: refer to the user guide for details.</p></li>
 <li><p>Run the script, with a command something like this:</p>
 
 <pre><code>./brandysnap --conf brandysnap-test1.conf --dry-run
@@ -64,7 +79,8 @@ and unpack the files into a suitable directory on your computer.</p></li>
 <h2>Alternatives</h2>
 
 <p>Brandysnap is one of a number of rsync-based scripts for managing snapshots.
-LBackup is another, and the <a href="http://www.lbackup.org/">LBackup website</a> has a list of <a href="http://www.lbackup.org/alternatives">other alternatives</a>.</p>
+LBackup is another, and the <a href="http://www.lbackup.org/">LBackup website</a> has a list 
+of <a href="http://www.lbackup.org/alternatives">other alternatives</a>.</p>
 
 <hr />
 

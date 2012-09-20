@@ -71,16 +71,26 @@ Brandysnap assumes that any messing about with passwords has been taken care of.
 
 In other words, it will call rsync on remote directories without supplying a password.
 
-There are various ways of setting up rsync so that it doesn't prompt for a password -- they are not described here.  [ a reference or two would be helpful here] So it's important to get the password-less access sorted out first.  In fact rsync may be run many times during one run of brandysnap, so suppand rsync would prompt for a password each time.
+There are various ways of setting up rsync so that it doesn't prompt for a password -- they are not described here.  [ a reference or two would be helpful here] So it's important to get the password-less access sorted out first.  In fact rsync may be run many times during one run of brandysnap, and rsync would prompt for a password each time.
 
-Multiple destinations can be configured, in which case snapshots will be created on all destinations that are available.  This can be used to put snapshots on several external USB drives in rotation, for example.  Or you could specify one local and one remote destination for security.  But note that multiple destinations won't be in sync with each other that's not the intention.  They will end up with different lists of snapshots if they are available at different times
+If the remote side of the transfer is running SSH on a non-standard port, you'll find that there is no way to include the port in the location: B<fred@example.com:/thingy>.  The work-around is to create an alias in B<~/.ssh/config> like this:
+    
+    Host eg2022
+	HostName example.com
+	Port 2022
+
+and then specify the location as B<fred@eg2022:/thingy>.
+
+This does not apply when using an rsync daemon, in which case the port can be specified as part of the location, e.g. rsync://fred\@example.com:1234/thingy.
+
+Multiple destinations can be configured, in which case snapshots will be created on all destinations that are available.  This can be used to put snapshots on several external USB drives in rotation, for example.  Or you could specify one local and one remote destination for security.  But note that multiple destinations won't be in sync with each other: that's not the intention.  They will end up with different lists of snapshots if they are available at different times.
 
 
 =head2 Preserving Ownership
 
 In order to preserver ownership of files, brandysnap needs to be run as root or via 'sudo'.
 
-[More detail needed here re use of sudo and `remote-rsync-cmd = 'sudo rsync'`]
+[More detail needed here re use of sudo and B<remote-rsync-cmd = 'sudo rsync'>]
 
 
 =head2 <a name="keepingSnapshots">Keeping Snapshots</a>
@@ -230,7 +240,7 @@ Only certain options are valid within each context.  A destination context can c
 
     hbest dbest wbest mbest ybest
     safe calendar strict
-    source
+    source template spec
     snapshot delete delete-cp
     weekstart
     rsync-cmd rsync-opts remote-rsync-cmd
@@ -240,6 +250,7 @@ Only certain options are valid within each context.  A destination context can c
     allow-restart ldcount
     all-failed some-failed
     min-interval
+    verbose loglevel debug stacktrace
 
 A source context can contain these options:
 
@@ -249,6 +260,7 @@ A source context can contain these options:
     compress restart
     allow-restart 
     min-interval
+    verbose loglevel debug stacktrace
 
 =over
 

@@ -1,5 +1,11 @@
 Changelog for Brandysnap
 
+0.2.0	20/9/12
+* added sections (aka contexts) to configuration
+  allowing more targeted use of 'exclude' etc.
+  - many related changes to option validation
+* checked date handling for daylight saving and leap years.
+
 0.1.20	01/6/12
 * add 'min-interval' option
 
