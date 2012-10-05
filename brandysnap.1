@@ -124,7 +124,7 @@
 .\" ========================================================================
 .\"
 .IX Title "BRANDYSNAP 1"
-.TH BRANDYSNAP 1 "2012-09-20" "perl v5.16.1" "User Contributed Perl Documentation"
+.TH BRANDYSNAP 1 "2012-10-05" "perl v5.16.1" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -146,12 +146,17 @@ brandysnap \-\-conf brandysnap.conf [\s-1OTHER\s0 \s-1OPTIONS\s0...]
 \& See the file fdl\-1.3.txt for copying conditions.
 .Ve
 .PP
-Brandysnap is (yet another) script that uses rsync to create snapshot backups of files and directories.
+Brandysnap is (yet another) script that uses rsync to create snapshot backups of files and 
+directories.
 .PP
-It is still being developed, and should be considered very experimental software.  Use it at your own risk!
+It is still being developed, and should be considered 'alpha' software.  
+Use it at your own risk!
 On the other hand, it's getting better: the author already uses it 'in production'.
 .PP
-It is designed to be flexible and robust.  In particular, it copes well with situations where snapshots are not created as regularly as they should be.  This can be for a variety of reasons \*(-- hardware failure, operator failure, weekends, holidays, someone forgot to plug in the external \s-1USB\s0 drive...
+It is designed to be flexible and robust.  In particular, it copes well with situations where 
+snapshots are not created as regularly as they should be.  
+This can be for a variety of reasons \*(-- hardware failure, operator failure, 
+weekends, holidays, someone forgot to plug in the external \s-1USB\s0 drive...
 .PP
 Rather than assigning 'importance' to snapshots according to when they were made (for example, keeping Friday afternoon backups for longer than Tuesday morning ones), it looks at what snapshots exist and decides if any can be deleted.  If the Friday afternoon backup is missing, it will keep the nearest one it can find.
 .PP
@@ -284,14 +289,17 @@ More spec examples:
 .IP "\(bu" 4
 \&\fB0\-6d5,2\-5w3,4m12\fR \- keep up to 6 snapshots a day for five days, but consider days with no snapshots at all to be valid; them keep between 2 and 5 a week for three weeks, then keep snapshots for 12 months with 4 snapshots in each.
 .IP "\(bu" 4
-\&...
+
 .PP
 Snapshots also get deleted as time passes.  If a day with four snapshots gets to be old enough to fall within a \fB3w\fR spec, then the extra snapshots will be deleted.
 .SS "Definition of 'snapshot' vs full/incremental backups"
 .IX Subsection "Definition of 'snapshot' vs full/incremental backups"
-Lots of snapshots don't make a file more secure: if the file hasn't changed, and is the same in all snapshots, 
-then it is only stored once on the disk.  If it gets corrupted for any reason, then it will be corrupted
-in all snapshots.  (If the file is \s-1DELETED\s0 from one snapshot, it will still exist in the others, because
+Lots of snapshots don't make a file more secure: if the file hasn't changed, 
+and is the same in all snapshots, 
+then it is only stored once on the disk.  
+If it gets corrupted for any reason, then it will be corrupted
+in all snapshots.  
+(If the file is \s-1DELETED\s0 from one snapshot, it will still exist in the others, because
 of the way hard links work.)
 .PP
 Think of the whole set of snapshots as one backup, with multiple versions of files that have changed.
@@ -339,7 +347,8 @@ For example, this snippet from a configuration file:
 \&    exclude tmp
 .Ve
 .PP
-Contexts are begun with \f(CW\*(C`<destination dest\-name>\*(C'\fR or \f(CW\*(C`<source source\-name>\*(C'\fR and finished with 
+Contexts are begun with \f(CW\*(C`<destination dest\-name>\*(C'\fR or \f(CW\*(C`<source source\-name>\*(C'\fR 
+and finished with 
 \&\f(CW\*(C`</destination>\*(C'\fR or \f(CW\*(C`</source>\*(C'\fR.
 Each \f(CW\*(C`<...>\*(C'\fR must be on a line by itself.
 .PP
@@ -389,7 +398,9 @@ Options marked with '*' in the following list can be specified more than once.
 .IX Subsection "Main options"
 .IP "\fBconfig \f(BIfile\fB\fR !" 4
 .IX Item "config file !"
-The name of a file to look in for further options.  Configuration file options will be overridden by command-line ones, irrespective of where the \fBconfig\fR option appears on the command line.
+The name of a file to look in for further options.  
+Configuration file options will be overridden by command-line ones, 
+irrespective of where the \fBconfig\fR option appears on the command line.
 .IP "\fBsource \f(BIfile/dir\fB\fR *!" 4
 .IX Item "source file/dir *!"
 A local or remote file or directory to add to the snapshot.  Examples:
@@ -400,13 +411,30 @@ A local or remote file or directory to add to the snapshot.  Examples:
 \&        source chris@example.com:~/Documents
 .Ve
 .Sp
-More than one source can be specified, in which case each source will be rsync'd, one at a time, to each destination in turn.
-Rsync can not copy from a remote source to a remote destination, so any source/destination pairs which are both remote will be skipped.
-Each source must be readable by the user who runs brandysnap.  If any files or directories within the source are not readable, brandysnap will carry on regardless.
+More than one source can be specified, in which case each source will be rsync'd, 
+one at a time, to each destination in turn.
+.Sp
+Sources can be given specific options with the following syntax:
+.Sp
+.Vb 3
+\&    <source ~/>
+\&        exclude .cache
+\&    </source>
+.Ve
+.Sp
+Rsync can not copy from a remote source to a remote destination, 
+so any source/destination pairs which are both remote will be skipped.
+.Sp
+Each source must be readable by the user who runs brandysnap.
+.Sp
+If any files or directories within the source are not readable, brandysnap will carry on regardless.
 .Sp
 See the section on remote authorisation.
 .Sp
-By default, brandysnap uses the rsync options \fB\-\-archive \-\-hard\-links \-\-one\-filesystem\fR, so the whole of each source will be copied recursively without following symbolic links.  See the \fBrsync-options\fR option for ways to change this.
+By default, brandysnap uses the rsync options 
+\&\fB\-\-hard\-links \-\-numeric\-ids \-\-archive \-\-one\-file\-system \-\-timeout=300\fR, 
+so the whole of each source will be copied recursively without following symbolic links.  
+See the \fBrsync-opts\fR option for ways to change this.
 .IP "\fBdestination \f(BIdir\fB\fR *!" 4
 .IX Item "destination dir *!"
 A local or remote directory for use as the snapshot destination.  Examples:
@@ -417,6 +445,15 @@ A local or remote directory for use as the snapshot destination.  Examples:
 .Ve
 .Sp
 More than one destination can be specified (see \fBsource\fR).
+.Sp
+Destinations can be given specific options (including sources) with the following syntax:
+.Sp
+.Vb 4
+\&    <destination chris@example.com:/backups>
+\&        bwlimit\-out = 2000
+\&        remote\-rsync\-cmd = sudo rsync
+\&    </destination>
+.Ve
 .Sp
 Each destination must be writable by the user who runs brandysnap.
 .Sp
@@ -482,8 +519,8 @@ Determines the favoured day within a month.  For example, to prefer monthly snap
 .IP "\fBybest \f(BI1..366\fB\fR" 4
 .IX Item "ybest 1..366"
 Determines the favoured day within a year.  In leap years, the value \fB366\fR is automatically changed to \fB365\fR, so \fB366\fR always means 'the last day of the year'. For example, to prefer yearly snapshots in the middle of the year, use \fBybest 180\fR. (default: \fB366\fR)
-.IP "\fBmin-interval \f(BI1..\fB\fR" 4
-.IX Item "min-interval 1.."
+.IP "\fBmin-interval \f(BI0..\fB\fR" 4
+.IX Item "min-interval 0.."
 Sets the minimum interval between snapshots, in minutes.  This is useful on a client, such as a laptop, that is
 not running or not connected to the network all the time: cron can be used to schedule brandysnap frequently, and this option
 used to make sure that snapshots are only created every hour, say.
@@ -521,6 +558,8 @@ The location of the rsync programme on your system.  The default is just \fBrsyn
 .IP "\fBcompress \f(BIyes/no\fB\fR" 4
 .IX Item "compress yes/no"
 Enable rsync compression for remote transfers. Note that this only applies compression for transfer across the network: files are expanded again on the destination.  (default: \fByes\fR)
+.Sp
+Note that compression is used for any 'remote' transfer, i.e. when the source and destination are not on the same computer.  On a fast local network, you may want to use \fB\-\-nocompress\fR.
 .IP "\fBinclude\fR/\fBinclude-from\fR/\fBexclude\fR/\fBexclude-from \f(BIpattern-or-file\fB\fR *" 4
 .IX Item "include/include-from/exclude/exclude-from pattern-or-file *"
 These four options are passed through to rsync unchecked and unchanged.  '~' is \s-1NOT\s0 expanded to a home directory.  See the rsync documentation for details.  (default: none)
@@ -565,7 +604,7 @@ with [options yet to be implemented] to tune the behaviour of brandysnap. (defau
 .IP "\fBrestart \f(BIyes/no\fB\fR" 4
 .IX Item "restart yes/no"
 If a previous run of brandysnap was interrupted for any reason, use this option to re-do the same snapshot (simply by relying on rsync's ability to not copy files that have not changed).  Any files in the source that have changed since the previous run _will_ be updated.  If more than one destination is being used, rsync will be run for _all_ destinations, even if some of them completed successfully before.
-Implies \fB\-\-restart\fR.
+\&\fB\-\-restart\fR implies \fB\-\-snapshot\fR and \fB\-\-min\-interval=0\fR.
 .IP "\fBsnapshot \f(BIyes/no\fB\fR" 4
 .IX Item "snapshot yes/no"
 Create a new snapshot.  If this option is turned off, no new snapshot will be created during this run of brandysnap but old snapshots may be deleted. (default: \fByes\fR)
@@ -581,12 +620,12 @@ Use strict mode \*(-- see the [Strict Mode section](#strictMode). (default: \fBn
 .SS "Development options"
 .IX Subsection "Development options"
 These options are for use by developers only.
-.IP "\fBdebug \f(BI0..3\fB\fR" 4
-.IX Item "debug 0..3"
-Print and log debugging information. (default: \fB0\fR)
+.IP "\fBdebug \f(BIsection,section\fB\fR" 4
+.IX Item "debug section,section"
+Print and log debugging information. (default: \fB(none)\fR)
 .IP "\fBstacktrace \f(BIyes/no\fB\fR" 4
 .IX Item "stacktrace yes/no"
-Print a stack trace on error. (default: \fByes\fR)
+Print a stack trace on error. (default: \fBno\fR)
 .IP "\fBtest \f(BIn\fB\fR" 4
 .IX Item "test n"
 Run test case 'n'.
@@ -595,7 +634,12 @@ Run test case 'n'.
 .ie n .SS "<a name=""calendarMode"">Calendar mode</a>"
 .el .SS "<a name=``calendarMode''>Calendar mode</a>"
 .IX Subsection "<a name=calendarMode>Calendar mode</a>"
-In 'calendar mode', which is the default, brandysnap works in terms of real weeks and months.  Days always start at midnight, weeks at midnight on Sunday etc. (but see \fB\-\-weekstart\fR option).  In non-calendar mode, the specs are interpreted more simply, working backwards from the moment when brandysnap is run.  There will be no gap between periods: days and weeks can start at any time, depending on when the previous spec ran out.
+In 'calendar mode', which is the default, brandysnap works in terms of real weeks and months.  
+Days always start at midnight, weeks at midnight on Sunday etc. (but see the \fB\-\-weekstart\fR option).
+In non-calendar mode, the specs are interpreted more simply, 
+working backwards from the moment when brandysnap is run.  
+There will be no gap between periods: days and weeks can start at any time, 
+depending on when the previous spec ran out.
 .ie n .SS "<a name=""safeMode"">Safe mode</a>"
 .el .SS "<a name=``safeMode''>Safe mode</a>"
 .IX Subsection "<a name=safeMode>Safe mode</a>"

@@ -47,9 +47,8 @@ each site.
 Requirements
 ------------
 
-Brandysnap runs on Linux.
-I have heard that it also runs on Mac OS X, as long as the following
-requirements are met.
+Brandysnap has been developed on and runs on Linux.
+I have heard that it also runs on Mac OS X.
 
 It requires Perl 5 version 5.10.1 or later, and the following non-core modules:
 
@@ -65,7 +64,8 @@ any version of rsync that has the '--link-dest' option.
 Installation
 ------------
 
-There is not (yet) an installation script or package.  All you need to do is
+There is not (yet) an installation script or package: brandysnap is a single Perl script
+which just has to be run.  All you need to do is
 
 1.  Download the script and all the related files by clicking on the
     'Downloads' button on https://github.com/StarsoftAnalysis/brandysnap

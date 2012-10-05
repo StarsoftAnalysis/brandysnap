@@ -18,12 +18,17 @@ brandysnap --conf brandysnap.conf [OTHER OPTIONS...]
  Copyright &copy; 2011,2012  Chris Dennis  chris@starsoftanalysis.co.uk
  See the file fdl-1.3.txt for copying conditions.
 
-Brandysnap is (yet another) script that uses rsync to create snapshot backups of files and directories.
+Brandysnap is (yet another) script that uses rsync to create snapshot backups of files and 
+directories.
 
-It is still being developed, and should be considered very experimental software.  Use it at your own risk!
+It is still being developed, and should be considered 'alpha' software.  
+Use it at your own risk!
 On the other hand, it's getting better: the author already uses it 'in production'.
 
-It is designed to be flexible and robust.  In particular, it copes well with situations where snapshots are not created as regularly as they should be.  This can be for a variety of reasons -- hardware failure, operator failure, weekends, holidays, someone forgot to plug in the external USB drive...
+It is designed to be flexible and robust.  In particular, it copes well with situations where 
+snapshots are not created as regularly as they should be.  
+This can be for a variety of reasons -- hardware failure, operator failure, 
+weekends, holidays, someone forgot to plug in the external USB drive...
 
 Rather than assigning 'importance' to snapshots according to when they were made (for example, keeping Friday afternoon backups for longer than Tuesday morning ones), it looks at what snapshots exist and decides if any can be deleted.  If the Friday afternoon backup is missing, it will keep the nearest one it can find.
 
@@ -173,8 +178,6 @@ B<0-6d5,2-5w3,4m12> - keep up to 6 snapshots a day for five days, but consider d
 
 =item * 
 
-...
-
 =back
 
 Snapshots also get deleted as time passes.  If a day with four snapshots gets to be old enough to fall within a B<3w> spec, then the extra snapshots will be deleted.
@@ -182,9 +185,12 @@ Snapshots also get deleted as time passes.  If a day with four snapshots gets to
 
 =head2 Definition of 'snapshot' vs full/incremental backups
 
-Lots of snapshots don't make a file more secure: if the file hasn't changed, and is the same in all snapshots, 
-then it is only stored once on the disk.  If it gets corrupted for any reason, then it will be corrupted
-in all snapshots.  (If the file is DELETED from one snapshot, it will still exist in the others, because
+Lots of snapshots don't make a file more secure: if the file hasn't changed, 
+and is the same in all snapshots, 
+then it is only stored once on the disk.  
+If it gets corrupted for any reason, then it will be corrupted
+in all snapshots.  
+(If the file is DELETED from one snapshot, it will still exist in the others, because
 of the way hard links work.)
 
 Think of the whole set of snapshots as one backup, with multiple versions of files that have changed.
@@ -227,7 +233,8 @@ For example, this snippet from a configuration file:
     source /home/fred
     exclude tmp
 
-Contexts are begun with C<< <destination dest-name> >> or C<< <source source-name> >> and finished with 
+Contexts are begun with C<< <destination dest-name> >> or C<< <source source-name> >> 
+and finished with 
 C<< </destination> >> or C<< </source> >>.
 Each C<< <...> >> must be on a line by itself.
 
@@ -287,7 +294,9 @@ B<yes/no> options can be specified as any of B<yes>/B<true>/B<on>/B<1> or B<no>/
 
 =item B<config I<file>> !
 
-The name of a file to look in for further options.  Configuration file options will be overridden by command-line ones, irrespective of where the B<config> option appears on the command line.
+The name of a file to look in for further options.  
+Configuration file options will be overridden by command-line ones, 
+irrespective of where the B<config> option appears on the command line.
 
 =item B<source I<file/dir>> *!
 
@@ -297,13 +306,28 @@ A local or remote file or directory to add to the snapshot.  Examples:
 	source /home
 	source chris@example.com:~/Documents
 
-More than one source can be specified, in which case each source will be rsync'd, one at a time, to each destination in turn.
-Rsync can not copy from a remote source to a remote destination, so any source/destination pairs which are both remote will be skipped.
-Each source must be readable by the user who runs brandysnap.  If any files or directories within the source are not readable, brandysnap will carry on regardless.
+More than one source can be specified, in which case each source will be rsync'd, 
+one at a time, to each destination in turn.
+
+Sources can be given specific options with the following syntax: 
+
+    <source ~/>
+        exclude .cache
+    </source>
+
+Rsync can not copy from a remote source to a remote destination, 
+so any source/destination pairs which are both remote will be skipped.
+
+Each source must be readable by the user who runs brandysnap.  
+
+If any files or directories within the source are not readable, brandysnap will carry on regardless.
 
 See the section on remote authorisation.
 
-By default, brandysnap uses the rsync options B<--archive --hard-links --one-filesystem>, so the whole of each source will be copied recursively without following symbolic links.  See the B<rsync-options> option for ways to change this.
+By default, brandysnap uses the rsync options 
+B<--hard-links --numeric-ids --archive --one-file-system --timeout=300>, 
+so the whole of each source will be copied recursively without following symbolic links.  
+See the B<rsync-opts> option for ways to change this.
 
 =item B<destination I<dir>> *!
 
@@ -313,6 +337,13 @@ A local or remote directory for use as the snapshot destination.  Examples:
 	dest chris@example.com:/backups
 
 More than one destination can be specified (see B<source>).  
+
+Destinations can be given specific options (including sources) with the following syntax:
+
+    <destination chris@example.com:/backups>
+	bwlimit-out = 2000
+	remote-rsync-cmd = sudo rsync
+    </destination>
 
 Each destination must be writable by the user who runs brandysnap.
 
@@ -386,7 +417,7 @@ Determines the favoured day within a month.  For example, to prefer monthly snap
 
 Determines the favoured day within a year.  In leap years, the value B<366> is automatically changed to B<365>, so B<366> always means 'the last day of the year'. For example, to prefer yearly snapshots in the middle of the year, use B<ybest 180>. (default: B<366>)
 
-=item B<min-interval I<1..>>
+=item B<min-interval I<0..>>
 
 Sets the minimum interval between snapshots, in minutes.  This is useful on a client, such as a laptop, that is
 not running or not connected to the network all the time: cron can be used to schedule brandysnap frequently, and this option
@@ -439,6 +470,8 @@ The location of the rsync programme on your system.  The default is just B<rsync
 =item B<compress I<yes/no>>
 
 Enable rsync compression for remote transfers. Note that this only applies compression for transfer across the network: files are expanded again on the destination.  (default: B<yes>)
+
+Note that compression is used for any 'remote' transfer, i.e. when the source and destination are not on the same computer.  On a fast local network, you may want to use B<--nocompress>. 
 
 =item B<include>/B<include-from>/B<exclude>/B<exclude-from I<pattern-or-file>> *
 
@@ -497,7 +530,7 @@ with [options yet to be implemented] to tune the behaviour of brandysnap. (defau
 =item B<restart I<yes/no>>
 
 If a previous run of brandysnap was interrupted for any reason, use this option to re-do the same snapshot (simply by relying on rsync's ability to not copy files that have not changed).  Any files in the source that have changed since the previous run _will_ be updated.  If more than one destination is being used, rsync will be run for _all_ destinations, even if some of them completed successfully before.
-Implies B<--restart>.
+B<--restart> implies B<--snapshot> and B<--min-interval=0>.
 
 =item B<snapshot I<yes/no>>
 
@@ -523,13 +556,13 @@ These options are for use by developers only.
 
 =over
 
-=item B<debug I<0..3>>
+=item B<debug I<section,section>>
 
-Print and log debugging information. (default: B<0>)
+Print and log debugging information. (default: B<(none)>)
 
 =item B<stacktrace I<yes/no>>
 
-Print a stack trace on error. (default: B<yes>)
+Print a stack trace on error. (default: B<no>)
 
 =item B<test I<n>>
 
@@ -541,7 +574,12 @@ Run test case 'n'.
 
 =head2 <a name="calendarMode">Calendar mode</a>
 
-In 'calendar mode', which is the default, brandysnap works in terms of real weeks and months.  Days always start at midnight, weeks at midnight on Sunday etc. (but see B<--weekstart> option).  In non-calendar mode, the specs are interpreted more simply, working backwards from the moment when brandysnap is run.  There will be no gap between periods: days and weeks can start at any time, depending on when the previous spec ran out.
+In 'calendar mode', which is the default, brandysnap works in terms of real weeks and months.  
+Days always start at midnight, weeks at midnight on Sunday etc. (but see the B<--weekstart> option).
+In non-calendar mode, the specs are interpreted more simply, 
+working backwards from the moment when brandysnap is run.  
+There will be no gap between periods: days and weeks can start at any time, 
+depending on when the previous spec ran out.
 
 =head2 <a name="safeMode">Safe mode</a>
 

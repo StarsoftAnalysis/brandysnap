@@ -1,4 +1,26 @@
-Changelog for Brandysnap
+Changelog for brandysnap
+========================
+
+0.2.1	5/10/12
+* Bug fixes:
+  - use exclude/include options /after/ context override.
+  - don't try to check for writable destination with --dry-run.
+  - allow for blank period in 'old' cSpec.
+  - set rsync's timeout=60 option to avoid hanging when connection is lost
+    and trap time-outs appropriately.
+  - don't give message about 'no-delete' if interrupted.
+  - when --no-snapshot specified, don't show current one in status or
+    metadata.
+  - fix logic in processDestinations re --no-snapshot and tidy output.
+  - skip partial backups when considering min-interval.
+* Allow abbreviated options in configuration file.
+* Print configuration file name at top of output.
+* Better control of debugging output.
+* Prettier line spacing in output.
+* Prettier formatting of snapshot sizes.
+* --restart now implies --min-interval=0
+* Changed deletion logic so that incomplete snapshots are kept unless
+  there are enough complete ones for the period.
 
 0.2.0	20/9/12
 * added sections (aka contexts) to configuration

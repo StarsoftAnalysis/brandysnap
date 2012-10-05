@@ -74,7 +74,7 @@
 
 <p>Brandysnap is (yet another) script that uses rsync to create snapshot backups of files and directories.</p>
 
-<p>It is still being developed, and should be considered very experimental software. Use it at your own risk! On the other hand, it&#39;s getting better: the author already uses it &#39;in production&#39;.</p>
+<p>It is still being developed, and should be considered &#39;alpha&#39; software. Use it at your own risk! On the other hand, it&#39;s getting better: the author already uses it &#39;in production&#39;.</p>
 
 <p>It is designed to be flexible and robust. In particular, it copes well with situations where snapshots are not created as regularly as they should be. This can be for a variety of reasons -- hardware failure, operator failure, weekends, holidays, someone forgot to plug in the external USB drive...</p>
 
@@ -208,7 +208,7 @@
 <li><p><b>0-6d5,2-5w3,4m12</b> - keep up to 6 snapshots a day for five days, but consider days with no snapshots at all to be valid; them keep between 2 and 5 a week for three weeks, then keep snapshots for 12 months with 4 snapshots in each.</p>
 
 </li>
-<li><p>...</p>
+<li><p></p>
 
 </li>
 </ul>
@@ -320,11 +320,23 @@
         source /home
         source chris@example.com:~/Documents</code></pre>
 
-<p>More than one source can be specified, in which case each source will be rsync&#39;d, one at a time, to each destination in turn. Rsync can not copy from a remote source to a remote destination, so any source/destination pairs which are both remote will be skipped. Each source must be readable by the user who runs brandysnap. If any files or directories within the source are not readable, brandysnap will carry on regardless.</p>
+<p>More than one source can be specified, in which case each source will be rsync&#39;d, one at a time, to each destination in turn.</p>
+
+<p>Sources can be given specific options with the following syntax:</p>
+
+<pre><code>    &lt;source ~/&gt;
+        exclude .cache
+    &lt;/source&gt;</code></pre>
+
+<p>Rsync can not copy from a remote source to a remote destination, so any source/destination pairs which are both remote will be skipped.</p>
+
+<p>Each source must be readable by the user who runs brandysnap.</p>
+
+<p>If any files or directories within the source are not readable, brandysnap will carry on regardless.</p>
 
 <p>See the section on remote authorisation.</p>
 
-<p>By default, brandysnap uses the rsync options <b>--archive --hard-links --one-filesystem</b>, so the whole of each source will be copied recursively without following symbolic links. See the <b>rsync-options</b> option for ways to change this.</p>
+<p>By default, brandysnap uses the rsync options <b>--hard-links --numeric-ids --archive --one-file-system --timeout=300</b>, so the whole of each source will be copied recursively without following symbolic links. See the <b>rsync-opts</b> option for ways to change this.</p>
 
 </dd>
 <dt id="destination-dir-"><b>destination <i>dir</i></b> *!</dt>
@@ -336,6 +348,13 @@
         dest chris@example.com:/backups</code></pre>
 
 <p>More than one destination can be specified (see <b>source</b>).</p>
+
+<p>Destinations can be given specific options (including sources) with the following syntax:</p>
+
+<pre><code>    &lt;destination chris@example.com:/backups&gt;
+        bwlimit-out = 2000
+        remote-rsync-cmd = sudo rsync
+    &lt;/destination&gt;</code></pre>
 
 <p>Each destination must be writable by the user who runs brandysnap.</p>
 
@@ -429,7 +448,7 @@
 <p>Determines the favoured day within a year. In leap years, the value <b>366</b> is automatically changed to <b>365</b>, so <b>366</b> always means &#39;the last day of the year&#39;. For example, to prefer yearly snapshots in the middle of the year, use <b>ybest 180</b>. (default: <b>366</b>)</p>
 
 </dd>
-<dt id="min-interval-1.."><b>min-interval <i>1..</i></b></dt>
+<dt id="min-interval-0.."><b>min-interval <i>0..</i></b></dt>
 <dd>
 
 <p>Sets the minimum interval between snapshots, in minutes. This is useful on a client, such as a laptop, that is not running or not connected to the network all the time: cron can be used to schedule brandysnap frequently, and this option used to make sure that snapshots are only created every hour, say.</p>
@@ -498,6 +517,8 @@
 
 <p>Enable rsync compression for remote transfers. Note that this only applies compression for transfer across the network: files are expanded again on the destination. (default: <b>yes</b>)</p>
 
+<p>Note that compression is used for any &#39;remote&#39; transfer, i.e. when the source and destination are not on the same computer. On a fast local network, you may want to use <b>--nocompress</b>.</p>
+
 </dd>
 <dt id="include-include-from-exclude-exclude-from-pattern-or-file-"><b>include</b>/<b>include-from</b>/<b>exclude</b>/<b>exclude-from <i>pattern-or-file</i></b> *</dt>
 <dd>
@@ -562,7 +583,7 @@
 <dt id="restart-yes-no"><b>restart <i>yes/no</i></b></dt>
 <dd>
 
-<p>If a previous run of brandysnap was interrupted for any reason, use this option to re-do the same snapshot (simply by relying on rsync&#39;s ability to not copy files that have not changed). Any files in the source that have changed since the previous run _will_ be updated. If more than one destination is being used, rsync will be run for _all_ destinations, even if some of them completed successfully before. Implies <b>--restart</b>.</p>
+<p>If a previous run of brandysnap was interrupted for any reason, use this option to re-do the same snapshot (simply by relying on rsync&#39;s ability to not copy files that have not changed). Any files in the source that have changed since the previous run _will_ be updated. If more than one destination is being used, rsync will be run for _all_ destinations, even if some of them completed successfully before. <b>--restart</b> implies <b>--snapshot</b> and <b>--min-interval=0</b>.</p>
 
 </dd>
 <dt id="snapshot-yes-no"><b>snapshot <i>yes/no</i></b></dt>
@@ -597,16 +618,16 @@
 
 <dl>
 
-<dt id="debug-0..3"><b>debug <i>0..3</i></b></dt>
+<dt id="debug-section-section"><b>debug <i>section,section</i></b></dt>
 <dd>
 
-<p>Print and log debugging information. (default: <b>0</b>)</p>
+<p>Print and log debugging information. (default: <b>(none)</b>)</p>
 
 </dd>
 <dt id="stacktrace-yes-no"><b>stacktrace <i>yes/no</i></b></dt>
 <dd>
 
-<p>Print a stack trace on error. (default: <b>yes</b>)</p>
+<p>Print a stack trace on error. (default: <b>no</b>)</p>
 
 </dd>
 <dt id="test-n"><b>test <i>n</i></b></dt>
@@ -621,7 +642,7 @@
 
 <h2 id="a-name-calendarModeCalendar-mode-a">&lt;a name=&quot;calendarMode&quot;&gt;Calendar mode&lt;/a&gt;</h2>
 
-<p>In &#39;calendar mode&#39;, which is the default, brandysnap works in terms of real weeks and months. Days always start at midnight, weeks at midnight on Sunday etc. (but see <b>--weekstart</b> option). In non-calendar mode, the specs are interpreted more simply, working backwards from the moment when brandysnap is run. There will be no gap between periods: days and weeks can start at any time, depending on when the previous spec ran out.</p>
+<p>In &#39;calendar mode&#39;, which is the default, brandysnap works in terms of real weeks and months. Days always start at midnight, weeks at midnight on Sunday etc. (but see the <b>--weekstart</b> option). In non-calendar mode, the specs are interpreted more simply, working backwards from the moment when brandysnap is run. There will be no gap between periods: days and weeks can start at any time, depending on when the previous spec ran out.</p>
 
 <h2 id="a-name-safeModeSafe-mode-a">&lt;a name=&quot;safeMode&quot;&gt;Safe mode&lt;/a&gt;</h2>
 
