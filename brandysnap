@@ -82,7 +82,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-my $Version = '0.2.1';
+my $Version = '0.2.2';
 use constant VERSION => $Version;
 
 # A copy of @ARG before it gets shifted
@@ -191,7 +191,7 @@ my $DestResult = '<bs-dest-result>';
 # Arrays and hashes defining types of options
 # All options
 my @AllOpt = qw(
-    debug verbose loglevel test
+    debug verbose verbosity loglevel test
     hbest dbest wbest mbest ybest
     safe calendar strict
     config destination spec template source
@@ -397,12 +397,12 @@ sub debug ($;$) {
 
 # --------------------------------------------------------------------------------------------------
     
-sub warning ($) {  # FIXME is this used?
-    # Output a warning to STDERR and log
-    my $text = shift;
-    logit "WARNING: $text", 1;
-    warn $text;
-}
+#sub warning ($) {  # FIXME is this used?
+#    # Output a warning to STDERR and log
+#    my $text = shift;
+#    logit "WARNING: $text", 1;
+#    warn $text;
+#}
 
 #===================================================================================================
 
@@ -946,171 +946,6 @@ sub calcPadding ($$$) {
         debug "auto-padded spec is not aligned!\n", 'cP';
     }
     return floor($result);
-}
-
-#---------------------------------------------------------------------------------------------------
-
-sub parseSpecs2 ($) {   # TODO finish this
-    # TODO create test cases to fettle all the problem cases
-    # New version -- doesn't do padding, -- that's now delayed and done in compileSpecs
-    # Parse the user's requested snapshot regime, 
-    # e.g. '0-4d7,1d7,2-7w,1m6'
-    #
-    # The letter specifies a period, and can be
-    #   h - hour 
-    #   d - day
-    #   w - week
-    #   m - month
-    #   y - year
-    # The first number ('freq') specifies how many snapshots should occur
-    # within the period, the second how many periods.
-    # The frequency can also be specified as a minimum-maximum range.
-    # If the second number ('count') is omitted, it fills up the time
-    # until the next spec; on the last spec, omitting the count
-    # requests an 'unlimited' number of backups -- i.e. until the
-    # backup disk is full.
-
-    my $rawspec = lc(shift);
-    my $now     = shift;
-    debug "rawspec = $rawspec\n", 'pS';
-
-    my @rawspecs = split /,/, $rawspec;
-    my @specs = ();
-    my $warningcount = 0;
-    my $errorcount   = 0;
-
-    foreach my $spec (@rawspecs) {
-        if ($spec =~ /^\s*(?<freqmin>\d+)\s*(-\s*(?<freqmax>\d+))?\s*(?<period>[hdwmy])\s*(?<count>\d*)\s*$/) {
-            my $freqmin = int($+{freqmin});
-            my $freqmax = $freqmin;
-            if ($+{freqmax}) {
-                # min-max frequency specified
-                $freqmax = int($+{freqmax});
-            }
-            if ($freqmax == 0) {
-                printlog "ERROR: Frequency 0 in spec '$spec' does not make sense\n", 1;
-                $errorcount += 1;
-                next;
-            }
-            if ($freqmax < $freqmin) {
-                printlog "ERROR: Maximum frequency must be greater than minimum: \n", 1;
-                printlog "       '$freqmin-$freqmax' in spec '$spec' does not make sense\n", 1;
-                $errorcount += 1;
-                next;
-            }
-            my $period = $+{period};
-            my $count; 
-            if ($+{count} ne '') { 
-                $count = int($+{count});
-                if ($count == 0) {
-                    printlog "ERROR: Count 0 in spec '$spec' will make no snapshots\n", 1;
-                    $errorcount += 1;
-                    next;
-                }
-            } else {
-                # no count specified -- will use padding; set to 0 for now
-                $count = 0;
-            }   
-            push @specs, {
-                rawspec => $spec, 
-                freqmin => $freqmin, 
-                freqmax => $freqmax, 
-                period  => $period, 
-                periodn => $Level{$period}, # store $Level{$2} as well as $2 to avoid repeated look-ups
-                count   => $count,
-            };  
-        } else {
-            printlog "ERROR: Invalid spec '$spec'\n", 1;
-            $errorcount += 1;
-        }
-    }
-
-    return ($warningcount, $errorcount, @specs) if $errorcount;
-
-    debug "Parsed spec:  " . join(',', 
-        map {fmtFreq($_->{freqmin}, $_->{freqmax}) . $_->{period} . $_->{count}} @specs)."\n",'pS';
-
-    # Check that the specs make sense
-    debug "Checking specs...\n", 'pS';
-    my $timesofar = 0; # in hours (because they're the smallest interval that we use)
-    my $i = 0; # index into @specs
-    foreach my $spec (@specs) {
-        debug "Spec0: $spec->{freqmin}-$spec->{freqmax} $spec->{period} $spec->{count}     \n",'pS';
-        if ($spec->{count} == 0) {
-            # Pad spec to fill next period
-            # e.g. 1d,1w4 -- the daily period gets padded to a week, i.e. 1d7,1w4
-            # This is done even if --calendar is false.
-            if ($i == $#specs) {
-                # last spec -- can't pad, so set count to lots
-                printlog "NOTE: last spec padded forever\n", 3;
-                $spec->{count} = UNLIMITED; 
-            } elsif ($specs[$i+1]->{periodn} <= $spec->{periodn}) {
-                printlog "WARNING: Can not pad spec $spec->{rawspec} because next spec is " .
-                    "not at a higher level; count set to 1\n", 1;
-                $warningcount += 1;
-                $spec->{count} = 1;
-            } else {
-                my $padding = calcPadding($spec->{periodn}, $specs[$i+1]->{periodn}, $timesofar);
-                debug "padding $spec->{rawspec} to $LevelName[$specs[$i+1]->{periodn}]\n", 'pS';
-                if ($padding == 0) {
-                    # already at a multiple, so just do either 0 or a whole
-                    # set of the next spec 
-                    # leave at 0 for now
-                    debug "No padding -- stay at 0\n", 'pS';
-                } else {
-                    # timesofar is not a whole multiple of speclevel+1, add some padding
-                    debug "padding by setting count to $padding\n", 'pS';
-                    $spec->{count} = $padding;
-                }
-            }
-        }
-        debug "Spec1: $spec->{freqmin}-$spec->{freqmax} $spec->{period} $spec->{count}\n", 'pS';
-        # Check alignment
-        if (!aligned($timesofar, $spec->{periodn})) {
-            printlog "WARNING: Spec at $LevelName[$spec->{periodn}] level is not aligned - " 
-                . " it starts at " . fmtHours($timesofar) . "\n", 1;
-            $warningcount += 1;
-        }
-        $i += 1;
-    }
-
-    # Check that interval increases 
-    my $lastint  = 0;
-    $i = 0;
-    foreach my $spec (@specs) {
-        my $int = $Hours[$spec->{periodn}] / $spec->{freqmax};  # yes, use max
-        if ($int < $lastint) {
-            printlog "WARNING: Interval is smaller for spec " . ($i+2) . 
-                " ($spec->{rawspec}) than for " .  "previous one ($specs[$i-1]->{rawspec})\n", 3;
-            $warningcount += 1;
-        }
-        $lastint = $int;
-        $i += 1;
-    }
-
-    if (!$errorcount) {
-        printlog "Validated specs: " . join(',', 
-            map {fmtFreq($_->{freqmin}, $_->{freqmax}).$_->{period}.$_->{count}} @specs)."\n", 3;
-        my $TotalSnapshotsMin = 0; 
-        my $TotalSnapshotsMax = 0; 
-        foreach my $spec (@specs) {
-            $TotalSnapshotsMin += $spec->{freqmin} * $spec->{count};
-            $TotalSnapshotsMax += $spec->{freqmax} * $spec->{count};
-        }
-        if ($specs[-1]->{count} == UNLIMITED) {
-            printlog "which will create an unlimited number of snapshots\n", 3;
-        } else {
-            if ($TotalSnapshotsMin == $TotalSnapshotsMax) {
-                printlog "which will create a total of $TotalSnapshotsMax snapshots\n", 3;
-            } else {
-                printlog "which will create a total of between $TotalSnapshotsMin " . 
-                    "and $TotalSnapshotsMax snapshots\n", 3;
-            }
-        }
-    }
-    debug "Frequencies: " . join(', ', map {$_->{freqmax} / $Hours[$_->{periodn}]} @specs) . "\n", 'pS';
-
-    return $warningcount, $errorcount, @specs;  
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -1707,7 +1542,7 @@ sub processOptions () {
     $defopt{verbose}        = 1;
     $defopt{loglevel}       = 1;
     #
-    $defopt{debug}          = {};
+    $defopt{debug}          = '';
     $defopt{test}           = 0;          # a non-zero value indicates which test to run
     # options to prefer one part of a period, e.g. 5pm, Fridays
     # defaults are at the end of the period 
@@ -1790,7 +1625,7 @@ sub processOptions () {
             'strict!',
             'template=s',
             'test=i',
-            'verbose=s',
+            'verbose|verbosity=s',
             'version',
             'wbest=i',
             'weekstart=i',
@@ -3256,37 +3091,53 @@ sub getDeleteList (\@;$) {
 
         my $beg = $c->{beg};
         my $end = $c->{end};
+        my $fullend = $c->{fullend};
         debug "\nprocessing cSpec $c->{label} freq=" 
             . fmtFreq($c->{freqmin},$c->{freqmax}) . " range " 
-            . pair2range($beg, $end) . "\n", 'gDL';
+            . pair2range($beg, $end) . " fullend " . time2stamp($c->{fullend}) . "\n", 'gDL';
 
         # Find candidate snapshots in that period
+        # NOTE: $fullend is that same as $end for a full period,
+        #       but later than $end for a partial period.
+        #       Snapshots in full period are considered when looking for matches
+        #       but only those within $beg-$end will actually be deleted
         my @Cgood = snapshotsInPeriod(@Sgood, $beg, $end, 1);
         my @Cbad  = snapshotsInPeriod(@Sbad , $beg, $end, 1);
+        my @CgoodFull = snapshotsInPeriod(@Sgood, $beg, $fullend, 1);
+        my @CbadFull  = snapshotsInPeriod(@Sbad , $beg, $fullend, 1);
         debug "good candidates: " . dumpSnapshots(@Cgood) . " total: " . @Cgood . "\n", 'gDL';
         debug "bad  candidates: " . dumpSnapshots(@Cbad) . " total: " . @Cbad . "\n", 'gDL';
+        if ($fullend != $end) {
+            debug "good candidates (full): ".dumpSnapshots(@CgoodFull)." total: ".@CgoodFull."\n", 
+               'gDL';
+            debug "bad  candidates (full): ".dumpSnapshots(@CbadFull) ." total: ".@CbadFull ."\n", 
+               'gDL';
+        }   
         if (@Cgood or @Cbad) {
             # there are snapsnots in this period, so adjust the overall range
             $firstbeg = $beg if $beg < $firstbeg;
             $lastend  = $end if $end > $lastend;
         }
-        if (!@Cgood and !@Cbad) {
+        if (!@CgoodFull and !@CbadFull) {
             # no candidates found
             debug "no candidates found to match $c->{label} for period " . 
-                time2stamp($beg) . '...' . time2stamp($end) . "\n", 'gDL';
-        } elsif (@Cgood + @Cbad <= $c->{freqmax}) {
+                time2stamp($beg) . '...' . time2stamp($fullend) . "\n", 'gDL';
+        } elsif (@CgoodFull + @CbadFull <= $c->{freqmax}) {
             debug "no more candidates found than required for $c->{label}\n", 'gDL';
+            debug "-- allMatches gets " . dumpSnapshots(rsort(@Cgood, @Cbad)) . "\n", 'gDL';
             push @allMatches, rsort (@Cgood, @Cbad);
         } else {
-            if (@Cgood >= $c->{freqmax}) {
+            if (@CgoodFull >= $c->{freqmax}) {
                 # enough good candidates: start by deleting all the bad ones
-                debug "enough good -- deleting all bad\n", 'gDL';
+                debug "enough good -- deleting all bad (" . @Cbad. "\)", 'gDL';
                 push @D, @Cbad;
                 @Cbad = ();
             }
             # FIXME 26/9/12  Maybe we should only delete things if there
             # are enough GOOD ones i.e. just check @Cgood
             # (so bad ones are never deleted unless there enough good ones)
+            # NB if this is reinstated, need to consider that CbadFull may not 
+            # have been emptied above
 #            if (@Cgood + @Cbad > $c->{freqmax}) {
 #                # Still more than enough candidates (including bad ones)
 #                # - choose the ones to delete (bad ones will get chosen first)
@@ -3299,15 +3150,20 @@ sub getDeleteList (\@;$) {
 #                    dumpSnapshots(@Call) . "\n\@I:   " . 
 #                    dumpSnapshots(@I) . "\ndiff: " .dumpSnapshots(arrayDiff(@Call, @I))."\n",'gDL';
 #                debug "\@D is now: " . dumpSnapshots2(@D) . "\n", 'gDL';
-            if (@Cgood > $c->{freqmax}) {
+            if (@CgoodFull > $c->{freqmax}) {
                 # Still more than enough good candidates: choose the ones to delete
                 #my $extras = $c->{freqmax} - @Cgood;
-                my @I = getMatchingSnapshots($beg, $end, $c->{best}, $c->{freqmax}, @Cgood); 
-                push @allMatches, @I;
-                push @D, arrayDiff(@Cgood, @I);
-                debug "storing keepers and deleters:\n\@Cgood:   " . 
-                    dumpSnapshots(@Cgood) . "\n\@I:   " . 
-                    dumpSnapshots(@I) . "\ndiff: " .dumpSnapshots(arrayDiff(@Cgood, @I))."\n",'gDL';
+                my @I = getMatchingSnapshots($beg, $fullend, $c->{best}, $c->{freqmax},@CgoodFull); 
+                my @Ipartial = snapshotsInPeriod(@I, $beg, $end, 1);
+                # only keep those within $beg-$end, otherwise there will be duplicates
+                push @allMatches, @Ipartial;
+                # only delete those within $beg-$end
+                push @D, arrayDiff(@Cgood, @Ipartial);
+                debug "storing keepers and deleters:" . 
+                    "\n\@Cgood:    " . dumpSnapshots(@Cgood) . 
+                    "\n\@I:        " . dumpSnapshots(@I) . 
+                    "\n\@Ipartial: " . dumpSnapshots(@Ipartial) . 
+                     "\ndiff:      " . dumpSnapshots(arrayDiff(@Cgood, @I))."\n", 'gDL';
                 debug "\@D is now: " . dumpSnapshots2(@D) . "\n", 'gDL';
             } else {
                 debug " no more than required after deleting bad ones\n", 'gDL';
@@ -3571,6 +3427,7 @@ sub compileSpecs ($$;$) {
                 debug "firstSpec and enough S's -- will count as good\n", 'cS';
             } else {
                 # Period is incomplete ...?
+                my (undef, $fullend) = getPeriod($beg, $spec->{periodn});
                 push @cSpecs, {
                     beg     => $beg, 
                     end     => $end, 
@@ -3585,6 +3442,8 @@ sub compileSpecs ($$;$) {
                     label   => $spec->{rawspec} . ($firstSpec ? '-current' : '-partial'),
                     sgood   => $sip,
                     sbad    => snapshotsInPeriod(@Sbad, $beg, $end),
+                    partial => 1,
+                    fullend => $fullend,    # end of period if it weren't partial
                 };  
                 # If $end>$oldestS, we should append 'empty' to the label 
                 $cSpecs[-1]->{label} .= ' empty (1)' if $end <= $oldestS;  # is this a nasty hack?  
@@ -3631,6 +3490,8 @@ sub compileSpecs ($$;$) {
                     label   => 'skipped - incomplete ' . $LevelName[$spec->{periodn}] . '(s)',   
                     sgood   => $sip,
                     sbad    => snapshotsInPeriod(@Sbad, $beg, $end), 
+                    partial => 0,
+                    fullend => $end,
                 };
                 # FIXME if there are no more snapshots, then printing 'incomplete period'
                 # (which may be for a fractional period) and then doing a list of 'empty' cSpecs
@@ -3655,6 +3516,8 @@ sub compileSpecs ($$;$) {
                     label   => $spec->{rawspec} . "-$p",
                     sgood   => $sip, 
                     sbad    => snapshotsInPeriod(@Sbad, $beg, $end), 
+                    partial => 0,
+                    fullend => $end,
                 };  
                 debug "created cSpec [4] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) .
                     " freq=$cSpecs[-1]->{freqmin}-$cSpecs[-1]->{freqmax} " . 
@@ -3693,6 +3556,8 @@ sub compileSpecs ($$;$) {
                     # should always be 0 -- we'll check
                 sbad    => snapshotsInPeriod(@Sbad, $beg, $end), 
                     # should always be 0 -- we'll check
+                partial => 0,
+                fullend => $end,
             };  
             debug "'empty' cSpec is not empty!!!!!!!!!!!!!!!!!!!!\n", 'fGPNC'
                 if snapshotsInPeriod(@Sgood, $beg, $end) > 0 ;
@@ -3730,6 +3595,8 @@ sub compileSpecs ($$;$) {
             label   => 'old',
             sgood   => snapshotsInPeriod(@Sgood, $oldestS, $end), 
             sbad    => snapshotsInPeriod(@Sbad, $oldestS, $end), 
+            partial => 0,
+            fullend => $end,
         };  
         debug "created cSpec [6] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) . 
             " freq=$cSpecs[-1]->{freqmin}-$cSpecs[-1]->{freqmax} " . 
@@ -4892,6 +4759,26 @@ sub testSuite {
                 }
                 $mult *= 1024;
             }
+        }
+
+        when (20) {
+            print "Testing gMS with partial periods\n";
+            $Opt{debug} = {'gdl'=>1, 'cs'=>1};
+            $Opt{verbose} = 3;
+            my (undef, undef, @specs) = parseSpecs('1d,3w1');
+            %S = (
+                mks('20121001-120000'), mks('20121002-120000'), 
+                mks('20121004-120000'), 
+                mks('20121005-120000'), mks('20121006-120000'), mks('20121007-120000'),  
+
+                mks('20121008-120000'), mks('20121009-120000'), mks('20121010-120000'),  
+            )
+            ;
+            my $now = stamp2time('20121010-181500');
+            my @cSpecs = compileSpecs($now, \@specs);
+            displayCSpecs(@cSpecs);
+            my @D = getDeleteList(@cSpecs);
+
         }
 
     }

@@ -1,6 +1,10 @@
 Changelog for brandysnap
 ========================
 
+0.2.2	8/10/12
+* Improved logic for choosing which snapshots to delete when dealing
+  'partial' periods, e.g. between days and weeks in calendar mode
+
 0.2.1	5/10/12
 * Bug fixes:
   - use exclude/include options /after/ context override.
