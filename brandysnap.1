@@ -124,7 +124,7 @@
 .\" ========================================================================
 .\"
 .IX Title "BRANDYSNAP 1"
-.TH BRANDYSNAP 1 "2012-10-05" "perl v5.16.1" "User Contributed Perl Documentation"
+.TH BRANDYSNAP 1 "2012-10-11" "perl v5.16.1" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -310,7 +310,7 @@ All options can be given either on the command line or in the configuration file
 On the command line, options must be preceded by one or two hyphens, and can be abbreviated as long as they do not become ambiguous.  An 'equals' sign (\fB=\fR) is optional.  For example:
 .PP
 .Vb 1
-\&    brandysnap \-\-source xyz \-verbose=1 \-\-conf=bs1.conf \-cal false
+\&    brandysnap \-\-source xyz \-verbose=1 \-\-conf=bs1.conf \-nocal
 .Ve
 .PP
 In the configuration file the hyphens are optional, but options can still be abbreviated.  Lines beginning with '#' are considered to be comments and are ignored.
@@ -390,8 +390,6 @@ A source context can contain these options:
 Options marked with '!' in the following list are required.
 .IP "\(bu" 4
 Options marked with '*' in the following list can be specified more than once.
-.IP "\(bu" 4
-\&\fByes/no\fR options can be specified as any of \fByes\fR/\fBtrue\fR/\fBon\fR/\fB1\fR or \fBno\fR/\fBfalse\fR/\fBoff\fR/\fB0\fR.
 .SH "OPTIONS"
 .IX Header "OPTIONS"
 .SS "Main options"
@@ -687,27 +685,13 @@ Brandysnap ignores 'minor' errors from rsync, which includes errors regarding pe
 that there are no 'Permission denied' messages.  If there are, you may need to run brandysnap as root \*(-- see xxx.
 .SH "KNOWN ISSUES"
 .IX Header "KNOWN ISSUES"
-As of 6 February 2012 and version 0.1.18, the following issues and bugs are known.
+As of 11 October 2012 and version 0.2.3, the following issues and bugs are known.
 .IP "\(bu" 4
-Option \fB\-\-remote\-rsync\-cmd\fR can only be specified once, and applies to all remote sources and directories.
-Likewise the include/exclude options apply to all source/directory pairs.  This will be addressed in the future.
-.IP "\(bu" 4
-Under certain circumstances, rsync can fail if the source contains files that are hard-linked together
+Under certain circumstances, rsync can fail if the source 
+contains files that are hard-linked together
 and for which you do not have read permission.  This is fixed in rsync 3.0.9 and later.  You can get
 round it by specifying \fB\-\-rsync\-opts\fR with the usual options but omitting \fB\-\-hard\-links\fR
 at the cost of using more disk space.
-.IP "\(bu" 4
-If the timings of snapshots are slightly out, a snapshot may appear to be in 
-the wrong period, which will affect deletions.  
-For example, when doing one snapshot a day with calendar mode turned off, if 
-yesterday's snapshot was at 11:40:03, and today's is at 11:40:01, 
-then yesterday's will be considered as part of today, 
-because it is less than 24 hours ago, so it will be deleted.  A fix is planned to address this issue.
-.IP "\(bu" 4
-When daylight savings ends (or the clock goes backwards for any other reason), it is possible
-that brandysnap will try to create a new snapshot at exactly the same time as an existing one.
-The results of that are 'undefined' \*(-- i.e. I haven't tried it.
-There are other obscure issues with daylight savings and leap years to be addressed too.
 .SH "AUTHOR"
 .IX Header "AUTHOR"
 Chris Dennis, chris@starsoftanalysis.co.uk

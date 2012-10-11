@@ -82,7 +82,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-my $Version = '0.2.2';
+my $Version = '0.2.3';
 use constant VERSION => $Version;
 
 # A copy of @ARG before it gets shifted
@@ -101,7 +101,7 @@ my $ExitCode = EXITOK;
 
 # Options -- need some options to start with
 our %Opt = ();   
-$Opt{debug}    = {}; #{'pO'=>1}; # Set this when debugging processOptions()
+$Opt{debug}    = {}; #{'rc'=>1, 'cos'=>1}; # Set this when debugging processOptions(), or just {}
 $Opt{verbose}  = 1;
 $Opt{loglevel} = 1;
 
@@ -218,7 +218,7 @@ my %ReqOpt = (map {$_ => 1} @ReqOpt);
 my %MultiOpt = (map {$_ => 1} qw(source include include-from
     exclude exclude-from destination debug));
 # Boolean options
-my @BoolOpt  = qw(safe calendar snapshot delete delete-cp dry-run help 
+my @BoolOpt  = qw(safe calendar snapshot delete delete-cp dry-run help strict 
     stacktrace version expire-old status compress restart allow-restart);
 my %BoolOpt = (map {$_ => 1} @BoolOpt);
 # String options (NOT the multi-value ones, which are dealt with separately)
@@ -394,15 +394,6 @@ sub debug ($;$) {
         printlog "${leadingnl}dbg: $prefix$text", 0,0;
     }
 }
-
-# --------------------------------------------------------------------------------------------------
-    
-#sub warning ($) {  # FIXME is this used?
-#    # Output a warning to STDERR and log
-#    my $text = shift;
-#    logit "WARNING: $text", 1;
-#    warn $text;
-#}
 
 #===================================================================================================
 
@@ -928,18 +919,17 @@ sub rsyncWritable ($) {
 # Handlings specs
 
 sub calcPadding ($$$) {
-    # Given a period level and a higher level and a timesofar,
+    # Given a period level and a higher level and a time so far,
     # return the number of low-levels needed to get to the next high-level
     # e.g. ('d', 'm', 23days) returns 5 (days)
     # except that the levels are given numerically
-    # FIXME need to do proper month lengths in --calendar mode
+    # Note that 'months' are always 28 days here.
     my $level1    = shift;
     my $level2    = shift;
     my $timesofar = shift;  # Time, counting backwards from 'now' in hours,
                             # that is already accounted for by previous specs
     my $length1 = $Hours[$level1];
-    my $length2 = $Hours[$level2];  # FIXME: calculate months and years properly -- if we know which month we're talking about
-    # FIXME !!!!!!!!!!! this is where we're stuck -- so timesofar needs to be a Unix time
+    my $length2 = $Hours[$level2];
     my $result = ($length2 - ($timesofar % $length2)) / $length1;
     debug "l1=$level1 l2=$level2 tsf=$timesofar; returning $result\n", 'cP';
     if ($result != floor($result)) {
@@ -1170,17 +1160,7 @@ sub checkOptionSingle ($$) {
             $value = 0 if $value < 0;
         }
     } elsif ($BoolOpt{$option}) {
-        # Boolean options -- mimicking what GetOption::Long does
-        my %bool = (true  => 1, yes => 1, on  => 1, 1 => 1, '1' => 1,
-                    false => 0, no  => 0, off => 0, 0 => 0, '0' => 0);
-        $value = lc($value);
-        if (exists $bool{$value}) {
-            $value = $bool{$value};
-        } else {
-            $msg .=  "ERROR: Invalid option: '$option' must be true/yes/on/1 or " . 
-                "false/no/off/0, not '$value'\n";
-            $e += 1;
-        }
+        # Already converted to 0 or 1
     } elsif ($NumericOpt{$option}) {
         if (looks_like_number($value)) {
             $value = $value + 0;    # make it really numeric
@@ -1345,7 +1325,7 @@ sub getOptionsFromArray ($$$) {
     if (!GetOptionsFromArray($argRef, $optRef, @$GOarrayRef)) {
         # Print the error messages
         foreach my $error (@GOFAerrors) {
-            printlog "ERROR (GOFA ".__LINE__."): $error", 1; # FIXME
+            printlog "ERROR: unexpected option error: $error", 1;
         }
         $rc = @GOFAerrors;  # error count
     }
@@ -1392,10 +1372,10 @@ sub readConfig ($$) {
         # Read options at the current level/context
         my $context = shift;
         my @options;
-        # Hash to receive options from GOFA
+        # Hash to receive options from GOFA:
         my %confopt;
         my $rc = 0;
-        while (<CONFIG>) {  # to end of context or end of file
+        LINE: while (<CONFIG>) {  # to end of context or end of file
             chomp;
             $lineno += 1;
             debug "config line $lineno is '$_'\n", 'rC';
@@ -1406,8 +1386,16 @@ sub readConfig ($$) {
                 # Plain option line with possible 'no' prefix
                 my $option = fullName($+{option});
                 my $value = $+{value} // '';
-                if ($BoolOpt{$option}) {  # FIXME ? pass bools to GOFA as just =s
-                    $value = $+{no} ? 0 : 1; 
+                if ($BoolOpt{$option}) {
+                    if ($value) {
+                        printlog "ERROR: Option '$option' should not have a value; " .
+                            "use '--no$option' turn it off" . confLine(), 1;
+                        $rc += 1;
+                        next LINE;
+                    }
+                    $value = $+{no} ? 0 : 1;
+                } else {  # not boolean, so restore the 'no' prefix
+                    $option = 'no' . $option if $+{no};
                 }
                 (my $e, my $w, $value, my $msg) = checkOptionSingle($option, $value);
                 #debug "cOS returns $e, $w, '$value', '$msg'\n", 'rC';
@@ -1438,11 +1426,15 @@ sub readConfig ($$) {
                     # Simple option -- just add it to the list
                     # First, print any warnings
                     printlog $msg . confLine(), 1,1 if $w;
-                    push @options, "--$option";
-                    push @options, $value; # if $value;   # FIXME all values are 1 now -- 
-                    # GOFA will complain -- apparently it doesn't  -- 
-                    # change this?? to re-do the --no prefix?
-                    debug "$option = $value\n", 'rC';
+                    if ($BoolOpt{$option}) {
+                        debug "restoring no?: option=$option value=$value\n", 'rC';
+                        push @options, '--' . ($value ? '' : 'no') . $option;
+                    } else {
+                        debug "storing option=$option value=$value\n", 'rC';
+                        push @options, "--$option";
+                        push @options, $value;
+                    }
+                    debug "$option = $value, now options=@options\n", 'rC';
                 }
 
             } elsif (/^\s*<\s*(?<option>[[:alpha:]-]+)\s*[:=]?\s*(?<value>.+)?\s*>/) {
@@ -1450,6 +1442,7 @@ sub readConfig ($$) {
                 my $option = fullName($+{option});
                 my $value = $+{value} // '';
                 debug "\n>>>>>> new context=$option  \n", 'rC';
+                (my $e, my $w, $value, my $msg) = checkOptionSingle($option, $value);
                 if (!$ValidContext{$option}) {
                     printlog "ERROR: Unknown context '$option' -- context skipped" .
                         confLine(), 1;
@@ -1458,19 +1451,23 @@ sub readConfig ($$) {
                     printlog "ERROR: Context '$option' not allowed within context '$context'" . 
                         " -- context skipped" . confLine(), 1;
                     $rc += 1;
+                } elsif ($e) {
+                    printlog $msg . confLine(), 1,1;
+                    $rc += $e; 
                 } else {
-                    if (!$value) {
-                        printlog "ERROR: Option '$option' must have a value" . 
-                            confLine() . "\n", 1;
-                        $rc += 1;
-                    } else {
-                        # OK, it's a valid context (source or destination) - recurse
-                        my ($newrc, $newConfRef) = readContext($option);
-                        push @{$confopt{$option}}, 
-                            {location => $value, options => $newConfRef};
-                        debug "adding complex destination '$value'\n", 'rC';
-                        $rc += $newrc;
-                    }
+                    #if (!$value) {
+                    #    printlog "ERROR: Option '$option' must have a value" . 
+                    #        confLine() . "\n", 1;
+                    #    $rc += 1;
+                    #} else {
+                    # First, print any warnings
+                    printlog $msg . confLine(), 1,1 if $w;
+                    # OK, it's a valid context (source or destination) - recurse
+                    my ($newrc, $newConfRef) = readContext($option);
+                    push @{$confopt{$option}}, {location => $value, options => $newConfRef};
+                    debug "adding complex destination '$value'\n", 'rC';
+                    $rc += $newrc;
+                    #}
                 }
 
             } elsif (/^\s*<\/\s*(?<option>[[:alpha:]]*)[^>]*>/) {
@@ -1493,7 +1490,8 @@ sub readConfig ($$) {
 
         } # while
 
-        # Call GOFA to merge @options with %confopt  NOO -- it's done already
+        # Call GOFA to merge @options with %confopt
+        debug "gofa gets: @options\n", 'rC';
         my $gofarc = getOptionsFromArray(\@options, \%confopt, $GOarrayRef);
         debug "gofarc = $gofarc\n", 'rC';
         $rc += $gofarc;
@@ -1632,23 +1630,28 @@ sub processOptions () {
             'ybest=i',
     );
 
-    # Block to limit the scope of the SIGWARN override which traps 
-    # warnings from GetOptions
-    {
-        # Get command line options -- give up if any errors.
-        my @GOwarnings;
-        local $SIG{__WARN__} = sub { push @GOwarnings, @_; };
-        my $GOok = GetOptions(\%cmdopt, @GOarray);
-        printlog "ERROR(S) on command line: \n @GOwarnings\n", 1 if !$GOok;  
-        #print Dumper(\%cmdopt);
-        #print Dumper(\@ARGV);
-        # FIXME eek! GO doesn't put things into cmdopt if it thinks they're invalid
-        #  -- need to set all to =s??
-        return 1 unless $GOok;  
-    }
-
     my $errorcount = 0;
     my $warningcount = 0;
+
+    # Block to limit the scope of the SIGWARN override which traps warnings from GetOptions
+    {
+        # Get command line options -- give up if any errors.
+        my @GOerrors;
+        local $SIG{__WARN__} = sub { push @GOerrors, @_; };
+        my $GOok = GetOptions(\%cmdopt, @GOarray);
+        if (!$GOok) {
+            foreach my $error (@GOerrors) {
+                printlog "ERROR: $error", 1;
+            }
+            $errorcount += @GOerrors;
+        }
+        if (@ARGV) {
+            printlog "ERROR: Unexpected word(s) on the command line: " .
+                join(', ', map {"'$_'"} @ARGV) . "\n", 1;
+            $errorcount += @ARGV;
+        }
+        return $errorcount if $errorcount;
+    }
 
     # Validate command-line options 
     foreach my $option (sort keys %cmdopt) {
@@ -1661,8 +1664,7 @@ sub processOptions () {
     }
     return $errorcount if $errorcount;
 
-    # Tweak context options from command line
-    # to make them into config-file structures
+    # Tweak context options from command line to make them into config-file structures
     foreach my $context (keys %ValidContext) {
         if ($cmdopt{$context}) {
             my @temp;
@@ -1742,7 +1744,7 @@ sub processOptions () {
 
     # Add basic info to logfile (which couldn't be done before we had a valid logfile)
     my $intro = "$Script version $Version starting at " . (strftime "%H:%M:%S", localtime);
-    logit under2("\n\n$intro\n"), 1;
+    logit under2("\n\n$intro\n\n"), 1;
     logit "Command line: $0 @ARGVcopy\n", 3;
 
     # Lock file (must be local)
@@ -1943,32 +1945,39 @@ sub processOptions () {
 
 #---------------------------------------------------------------------------------------------------
 
-sub printableOption ($$) {
-    # Return a printable version of an option
-    my $opt = shift;
-    my $val = shift;
-    if (ref($val) eq 'ARRAY') {
-        # array option -- which happen to be all strings, so add quotes
-        return join(', ', map {"'$_'"} @$val); 
-    }
+sub printableOption ($$;$) {
+    # Return a printable version of an option and its value,
+    # with the option aligned right in the given width
+    my $opt   = shift;
+    my $val   = shift;
+    my $width = shift // 0;
+    debug "opt=$opt  val=$val  width=$width\n", 'prO';
+    my $val2 = '';
+    # (arrays are dealt with by the caller)
     if (ref($val) eq 'HASH') {
         # hash option -- just 'debug' so far
         if (keys %$val) {
-            return join(',', map {"$_"} sort keys %$val); 
+            $val2 = join(',', map {"$_"} sort keys %$val); 
         } else {
-            return '(none)';
+            $val2 = '(none)';
         }
-    }
-    if ($BoolOpt{$opt}) {
+    } elsif ($BoolOpt{$opt}) {
         # boolean options
-        return $val ? 'yes' : 'no';
-    }
-    if ($StringOpt{$opt}) {
+        $val2 = $val ? 'yes' : 'no';
+        $opt = ($val ? '' : 'no') . $opt;
+        undef $val2;
+    } elsif ($StringOpt{$opt} or $MultiOpt{$opt}) {
         # string option, add quotes
-        return "'$val'";
+        $val2 = "'$val'";
+    } else {
+        # else it's numeric, no quotes
+        $val2 = $val;
     }
-    # else it's numeric, no quotes
-    return $val;
+    if (defined $val2) {
+        return sprintf("%*s: %s", $width, $opt, $val2);
+    } else {
+        return sprintf("%*s", $width, $opt);
+    }
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -1981,7 +1990,7 @@ sub displayContext ($$$) {
     my $indent  = shift;    # for pretty-printing
     my $text = '';
     foreach my $cref (@{$contRef->{$context}}) {
-        $text .= sprintf("%*s - '%s'\n", $indent+16, $context, $cref->{location});
+        $text .= sprintf("%*s: '%s>'\n", $indent+16, "<$context", $cref->{location});
         if (keys %{$cref->{options}}) {
             my $text2 = '';    # put the sub-contexts last
             foreach my $subopt (sort keys %{$cref->{options}}) {
@@ -1989,12 +1998,19 @@ sub displayContext ($$$) {
                 if ($AllowedContext{$context}{$subopt}) {
                     $text2 .= displayContext($subopt, $cref->{options}, $indent+13);
                 } else {
-                    $text .= sprintf("%*s - %s\n", $indent+16+13, $subopt, 
-                        printableOption($subopt, $cref->{options}->{$subopt}));
+                    if (ref($Opt{$subopt}) eq 'ARRAY') {
+                        foreach my $val (@{$Opt{$subopt}}) {
+                            $text .= printableOption($subopt, $val, $indent+16+13) . "\n";
+                        }
+                    } else {
+                        $text .= printableOption($subopt, $cref->{options}->{$subopt}, 
+                                    $indent+16+13) . "\n";
+                    }
                 }
             }
             $text .= $text2;    
         }
+        $text .= sprintf("%*s\n", $indent+16+2, "</$context>");
     }
     return $text;
 }
@@ -2011,7 +2027,13 @@ sub displayOptions () {
         if ($ValidContext{$opt}) {
             $text = displayContext($opt, \%Opt, 0);
         } else {
-            $text = sprintf("%16s - %s\n", $opt, printableOption($opt, $Opt{$opt})); 
+            if (ref($Opt{$opt}) eq 'ARRAY') {
+                foreach my $val (@{$Opt{$opt}}) {
+                    $text .= printableOption($opt, $val, 16) . "\n";
+                }
+            } else {
+                $text = printableOption($opt, $Opt{$opt}, 16) . "\n";
+            }
         }   
         $optSummary .= $text;
     }
@@ -2061,8 +2083,8 @@ Main options
 --lockfile     file     !    lock-file 
 --logfile      file          file used for logging 
 Tuning options
---calendar     yes/no     d  use calendar mode (default: yes)
---safe         yes/no     d  use safe mode (default: yes)
+--[no]calendar            d  use calendar mode (default: calendar)
+--[no]safe                d  use safe mode (default: safe)
 --hbest        0..59      ds favoured time within hour (default: 59) 
 --dbest        0..23.9    ds favoured time within day in hours (default: 23.9) 
 --mbest        1..31      ds favoured day within month (default: 31) 
@@ -2071,15 +2093,15 @@ Tuning options
 --min-interval 0..        d  minimum number of minutes between snapshots (default: 0) 
 --weekstart    1..7       d  first day of week, 1=Sunday (default: 1) 
 Helpful options
---help         yes/no        display this help message (default: no)
---version      yes/no        display version number only (default: no)
+--help                       display this help message and stop
+--version                    display version number only stop
 --verbose      0..3       ds amount of output displayed (default: 1) 
 --loglevel     0..3       ds amount of logging information (default: 1) 
---dry-run      yes/no        make no actual changes (default: no) 
+--[no]dry-run                make no actual changes (default: nodry-run) 
 Rsync options
 --rsync-cmd    file       ds location of the rsync programme (default: rsync) 
---compress     yes/no     ds enable rsync compression for remote transfers 
-                              (default: yes) 
+--[no]compress yes/no     ds enable rsync compression for remote transfers 
+                              (default: compress) 
 --include      pattern   *ds rsync inclusion (see rsync documentation)
 --include-from file      *ds rsync inclusions 
 --exclude      pattern   *ds rsync exclusion
@@ -2098,21 +2120,21 @@ Advanced options
                              what to do with the snapshot if all or some of the 
                               sources are not copied successfully
                               (values can be abbreviated)
---allow-restart yes/no    ds keep the unfinished snapshot if brandysnap was
+--[no]allow-restart       ds keep the unfinished snapshot if brandysnap was
                               interrupted (e.g. by ctrl-C or system shutdown)
-                              (default: yes) 
---delete       yes/no     d  delete no-longer-required snapshots (default: yes) 
---delete-cp    yes/no     d  delete even in current period (default: yes) 
---expire-old   yes/no     d  delete oldest snapshots when disk is full (default: no)
+                              (default: allow-restart)
+--[no]delete              d  delete no-longer-required snapshots (default: delete) 
+--[no]delete-cp           d  delete even in current period (default: delete-cp)
+--[no]expire-old          d  delete oldest snapshots when disk is full (default: no-expire-old)
 --ldcount      n          d  number of --link-dest options to create (default: 1) 
---restart      yes/no     ds continue previous snapshot (default: no)
+--[no]restart             ds continue previous snapshot (default: norestart)
                               (implies --snapshot) 
---snapshot     yes/no     d  create new snapshots (default: yes)
---status       yes/no        print a status report only (default: no)
---strict       yes/no     d  use strict mode (default: no)
+--[no]snapshot            d  create new snapshots (default: snapshot)
+--status                     print a status report only
+--[no]strict              d  use strict mode (default: nostrict)
 Development options
 --debug        0..3       ds amount of debugging information (default: 0) 
---stacktrace   yes/no     ds print a stack trace on error (default: no)
+--[no]stacktrace          ds print a stack trace on error (default: nostacktrace)
 --test         n             run test case 'n' 
 Options marked with '!' are required -- others have sensible default values.
 Options marked with '*' can be specified more than once.
@@ -2192,9 +2214,13 @@ sub deleteSnapshots (\@\@$) {
             debug "not deleting newest snapshot because it was not created\n", 'dS';
         } else {
             my $partial = $S{$d}{partial} ? 'partial ' : '';
-           printlog "Deleting ${partial}snapshot $S{$d}{name}" . 
+            if ($cSpecs[$ci]->{label} eq 'old') {
+                printlog "Deleting old ${partial}snapshot '$S{$d}{name}'\n", 1;
+            } else {
+                printlog "Deleting ${partial}snapshot '$S{$d}{name}'" . 
                 " because there are too many for spec '" . $cSpecs[$ci]->{label} . "'\n", 1;
-           $errors += deleteSnapshot($d);
+            }
+            $errors += deleteSnapshot($d);
         }
     }
     #printlog "Total of $errors errors while deleting snapshots!\n", 1; 
@@ -2310,8 +2336,8 @@ sub status ($;\@) {
                     while (@cSpecs and $cSpecs[$ci]->{beg} > $s) { 
                         $ci += 1; 
                     }; 
-                    #$label = $cSpecs[$ci]->{label};
-                    $label = $cSpecs[$ci]->{rawspec};
+                    $label = $cSpecs[$ci]->{label};
+                    #$label = $cSpecs[$ci]->{rawspec};
                     #$label .= (' ' . $LevelName{$cSpecs[$ci]->{period}});
                 }
             }
@@ -2935,7 +2961,7 @@ sub getMatchingSnapshots ($$$$\@) {
 
     # Then take into account the h/d/w/m/ybest options
     @I = ();
-    # put the best one in first  # FIXME is that right?
+    # put the best one in first (they get sorted later)
     $I[0] = $bestTime;
     debug "gMS: best=$I[0] " . hms($best) . "\n", 'gMS';
     if ($freqmax > 1) {  # more than one ideal to place, not just the best one
@@ -2975,12 +3001,10 @@ sub getMatchingSnapshots ($$$$\@) {
     # Generate all combinations of the ideal number of snapshots
     # out of the existing snapshots, then calculate a score for each combination
     # and choose the one with the best score
-    # FIXME -- maybe we should leave first and last fixed if they're already aligned
+    # (maybe we should leave first and last fixed if they're already aligned?)
     my @combs = combinations(scalar @I, 0..$#S); 
     my $minct = MAXTIME;    # smallest combination total so far
     my $mincti = 0;         # index of smallest combination so far 
-    #my $ci = 0; 
-    #foreach my $comb (@combs) {
     for my $ci (0..$#combs) {
         my @comb = @{$combs[$ci]};
         my $combtotal = 0;
@@ -3000,7 +3024,6 @@ sub getMatchingSnapshots ($$$$\@) {
             $minct = $combtotal;
             $mincti = $ci;
         }
-        #$ci += 1;
     }
     debug "" . @combs . " combinations tested\n", 'gMS';
     debug "best combination, with total $minct, is " . 
@@ -3206,11 +3229,6 @@ sub findGoodPeriods ($$$\@) {
 
     my $gpCount = 0;
     my @good;
-    #if (!@S) {    - no longer works, because freqmin can be 0!!    FIXME reinstate?
-    #    # No snapshots, so no good periods
-    #    debug "\@S is empty!\n", 'fGP';
-    #    return ($gpCount, @good);
-    #}
     my $oldestSnapshot = $S[-1] // MAXTIME;
     debug "range=" . pair2range($beg, $end) . 
         " freqmin=$spec->{freqmin} periodn=$spec->{periodn} " . 
@@ -3267,11 +3285,6 @@ sub findGoodPeriodsNoCal ($$$\@) {
 
     my $gpCount = 0;
     my @good;
-    #if (!@S) { # no longer valid, can have freqmin==0 !      FIXME reinstate?
-    #    # No snapshots, so no good periods
-    #    debug "\@S is empty!\n", 'fGPnC';
-    #    return ($gpCount, @good);
-    #}
     my $oldestS = $S[-1] // MAXTIME;
     debug "\nrange=" . pair2range($beg, $end) . 
         " freqmin=$spec->{freqmin} periodn=$spec->{periodn} " . 
@@ -3635,10 +3648,10 @@ sub displayCSpecs (\@;\%) {
     printlog "\nCompiled specs:\n", 3;  
     printlog   "---------------\n", 3;
 
-    # e.g.  From              To                F  P      C  Comment               Ss    Xs    Ds
+    # e.g.  From              To                F  P      C  Comment               Ss    Ps    Ds
     #       20080101-111122 - 20090101-221111   0  d  99999  6d7.............30  9999  9999  9999
     printlog sprintf("%-15s - %-15s  %5s  %1s  %5s  %-30s  %4s  %4s  %4s\n",
-        'From', 'To', 'Freq', 'P', 'C', 'Comment', 'Ss', 'Xs', 'Ds'), 3;
+        'From', 'To', 'Freq', 'P', 'C', 'Comment', 'Ss', 'Ps', 'Ds'), 3;
     printlog sprintf("%-15s - %-15s  %5s  %1s  %5s  %-30s  %4s  %4s  %4s\n",
         '-'x15, '-'x15, '-----', '-', '-----', '-'x30, '----', '----', '----'), 3;
     my $totalS = 0;
@@ -3751,15 +3764,62 @@ sub getExpirableSnapshots ($\@$) {
 
 #===================================================================================================
 
-sub newSnapshot ($) {
+sub newSnapshot ($$) {
     # Create a new snapshot stamped with the current time,
     # add the entry to the %S hash, and return its time stamp
-    # (making sure that a directory with the corresponding
-    # name doesn't already exist).
-    my $dest = shift;
+    my $dest         = shift;
+    my $lastSnapshot = shift;
     my $snapshot = time();
+    
+    # Avoid having snapshots in the same period that should be in adjacent periods
+    # i.e. small differences in the launch time of brandysnap via cron (for example)
+    # could result in one run at, say, 5 seconds after the start of an interval,
+    # and the next run at 5 seconds before the end of the same interval.
+    # So we introduce a small delay to make sure that doesn't happen
+    my $fudgetime = 30; # seconds;
+    my $delay = 0;
+    my $periodn = ${$Opt{pspecs}}[0]->{periodn}; # period of first spec
+    if ($Opt{calendar}) {
+        # Calendar mode - get beginning and end of current period
+        my ($beg, $end) = getPeriod($snapshot, $periodn);
+        if ( $lastSnapshot         > $beg       and
+            ($lastSnapshot - $beg) < $fudgetime and
+            ($end - $snapshot)     < $fudgetime     )  {
+            # last snapshot is soon after beginning of period
+            # so delay the new one until the beginning of the next period
+            $delay = ($end - $snapshot) + 1;
+        }
+        debug "calendar: snapshot=" . time2stamp($snapshot) . 
+                 " last=" . time2stamp($lastSnapshot) . 
+                 " periodn=$periodn beg/end=" . pair2range($beg, $end) . 
+                 " delay=$delay\n", 'nS';
+    } else {
+        # Non-calendar mode - if the last snapshot was slightly less than a period ago,
+        # delay the new one until slightly more than a period since the last one.
+        debug "non-calendar\n", 'nS';
+        my $sinceLast = $snapshot - $lastSnapshot;
+        my $periodSecs = $Hours[$periodn] * 3600;
+        if ($sinceLast < $periodSecs                  and
+            $sinceLast > ($periodSecs - 2*$fudgetime)     ) {
+            $delay = ($lastSnapshot + $periodSecs + 1) - $snapshot;
+        }
+        debug "non-calendar: snapshot=" . time2stamp($snapshot) . 
+                 " last=" . time2stamp($lastSnapshot) . 
+                 " periodn=$periodn periodSecs=$periodSecs" . 
+                 " sinceLast=$sinceLast delay=$delay\n", 'nS';
+    }
+    if ($delay) {
+        printlog "\nWaiting $delay seconds so that the new snapshot will be at the beginning of " .
+            "the next $LevelName[$periodn]\n", 3;
+        sleep $delay;
+        $snapshot = time();
+        debug "delayed $delay seconds, snapshot time is now " . time2stamp($snapshot) . "\n", 'nS';
+    }
+
     my $name = "$Opt{template}-" . time2stamp($snapshot);
     my $fullname = "$dest/$name";
+
+    # Make sure that a snapshot with that name doesn't already exist
     while ($S{$snapshot} or -e $fullname) {
         debug "Sleeping for a second...\n", 3;
         # Yes, we could just add 1 to $snapshot,
@@ -3778,6 +3838,7 @@ sub newSnapshot ($) {
         remote   => remote($dest),
         daemon   => remoteDaemon($dest),
     };
+
     return $snapshot;
 }
 
@@ -4069,10 +4130,12 @@ sub processDestination ($) {
             $now = $S[0];
             debug "restarting with now=$now: " . dumpSnapshot($now) . "\n", 'pD';
             printlog "NOTE: Restarting snapshot $S{$now}{name}\n", 1;
+            # remove the partial flag -- hopefully, we'll complete it
+            $S{$now}{partial} = 0;
         } else {
             # Normal run, creating a new snapshot.
             # Create the new entry in %S, and get the new time stamp
-            $now = newSnapshot($dest);
+            $now = newSnapshot($dest, $S[0]);
             # and include it in the list 
             unshift @S, $now;
         }
@@ -4144,7 +4207,7 @@ sub processDestination ($) {
         writeMetadata($dest) 
     }
     # Display the current situation after recompiling the specs to allow for changes
-    #@cSpecs = compileSpecs($snapshot, @specs, 1);  
+    @cSpecs = compileSpecs($now, $Opt{pspecs}, 1);  
     #   # FIXME this is just to make status more helpful -- is it really needed?
     status($dest, @cSpecs);
 
@@ -4262,7 +4325,7 @@ sub testSuite {
     ${$Opt{destination}}[0] = '~/tmp/bstestdest';
     $Opt{lockfile} = '~/tmp/bstest.lock';
     $Opt{verbose}  = 3;
-    $Opt{debug}    = 0;
+    $Opt{stacktrace} = 1;
     state $template = $Opt{template};   # 'state' to avoid sharing warning
     state $dest = ${$Opt{destination}}[0];
     state $now = stamp2time('20110529-230000');
@@ -4772,14 +4835,28 @@ sub testSuite {
                 mks('20121005-120000'), mks('20121006-120000'), mks('20121007-120000'),  
 
                 mks('20121008-120000'), mks('20121009-120000'), mks('20121010-120000'),  
-            )
-            ;
+            );
             my $now = stamp2time('20121010-181500');
             my @cSpecs = compileSpecs($now, \@specs);
             displayCSpecs(@cSpecs);
             my @D = getDeleteList(@cSpecs);
-
         }
+
+        when (21) {
+            print "Testing nS fudgetime\n";
+            $Opt{debug} = {'ns'=>1};
+            $Opt{verbose} = 3;
+            $Opt{calendar} = 0;
+            my ($w, $e, $msg, @pspecs) = processSpecs('1h,1d,3w1');
+            $Opt{pspecs} = \@pspecs if !$e;
+#            %S = (
+#                mks('20121010-180005'), 
+#            );
+            # ! have to hack nS() to override use of time()
+            # so this test is pretty useless
+            my $newS = newSnapshot('nowhere', stamp2time('20121010-180005'));
+        }
+
 
     }
 }

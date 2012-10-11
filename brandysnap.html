@@ -227,7 +227,7 @@
 
 <p>On the command line, options must be preceded by one or two hyphens, and can be abbreviated as long as they do not become ambiguous. An &#39;equals&#39; sign (<b>=</b>) is optional. For example:</p>
 
-<pre><code>    brandysnap --source xyz -verbose=1 --conf=bs1.conf -cal false</code></pre>
+<pre><code>    brandysnap --source xyz -verbose=1 --conf=bs1.conf -nocal</code></pre>
 
 <p>In the configuration file the hyphens are optional, but options can still be abbreviated. Lines beginning with &#39;#&#39; are considered to be comments and are ignored.</p>
 
@@ -292,9 +292,6 @@
 
 </li>
 <li><p>Options marked with &#39;*&#39; in the following list can be specified more than once.</p>
-
-</li>
-<li><p><b>yes/no</b> options can be specified as any of <b>yes</b>/<b>true</b>/<b>on</b>/<b>1</b> or <b>no</b>/<b>false</b>/<b>off</b>/<b>0</b>.</p>
 
 </li>
 </ul>
@@ -691,20 +688,11 @@
 
 <h1 id="KNOWN-ISSUES">KNOWN ISSUES</h1>
 
-<p>As of 6 February 2012 and version 0.1.18, the following issues and bugs are known.</p>
+<p>As of 11 October 2012 and version 0.2.3, the following issues and bugs are known.</p>
 
 <ul>
 
-<li><p>Option <b>--remote-rsync-cmd</b> can only be specified once, and applies to all remote sources and directories. Likewise the include/exclude options apply to all source/directory pairs. This will be addressed in the future.</p>
-
-</li>
 <li><p>Under certain circumstances, rsync can fail if the source contains files that are hard-linked together and for which you do not have read permission. This is fixed in rsync 3.0.9 and later. You can get round it by specifying <b>--rsync-opts</b> with the usual options but omitting <b>--hard-links</b> at the cost of using more disk space.</p>
-
-</li>
-<li><p>If the timings of snapshots are slightly out, a snapshot may appear to be in the wrong period, which will affect deletions. For example, when doing one snapshot a day with calendar mode turned off, if yesterday&#39;s snapshot was at 11:40:03, and today&#39;s is at 11:40:01, then yesterday&#39;s will be considered as part of today, because it is less than 24 hours ago, so it will be deleted. A fix is planned to address this issue.</p>
-
-</li>
-<li><p>When daylight savings ends (or the clock goes backwards for any other reason), it is possible that brandysnap will try to create a new snapshot at exactly the same time as an existing one. The results of that are &#39;undefined&#39; -- i.e. I haven&#39;t tried it. There are other obscure issues with daylight savings and leap years to be addressed too.</p>
 
 </li>
 </ul>

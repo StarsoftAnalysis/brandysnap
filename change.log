@@ -1,6 +1,26 @@
 Changelog for brandysnap
 ========================
 
+0.2.3	11/10/12
+* Bug fixes:
+  - Reset partial flag when restarting
+  - If the timings of snapshots are slightly out, a snapshot may appear to be in 
+    the wrong period, which will affect deletions.  
+    For example, when doing one snapshot a day with calendar mode turned off, if 
+    yesterday's snapshot was at 11:40:03, and today's is at 11:40:01, 
+    then yesterday's will be considered as part of today, 
+    because it is less than 24 hours ago, so it will be deleted.  
+    brandysnap now checks for this before it happens, and delays the new
+    snapshot by a few seconds to avoid the problem.
+  - Better message when deleting snapshots from 'old' cspec.
+  - Fixed processing of --no prefix on options in configuration file.
+  - Corrected validation of context options.
+  - Better formatting of displayed options (in the same style as the
+    configuration file).
+  - Better command line validation.
+  - Changed validation of boolean options -- now only accept '--no' prefix,
+    not yes/true/on/1 or no/false/off/0 values.
+
 0.2.2	8/10/12
 * Improved logic for choosing which snapshots to delete when dealing
   'partial' periods, e.g. between days and weeks in calendar mode
