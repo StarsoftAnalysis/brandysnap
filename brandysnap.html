@@ -401,16 +401,16 @@
 
 <dl>
 
-<dt id="calendar-yes-no"><b>calendar <i>yes/no</i></b></dt>
+<dt id="no-calendar"><b>[no]calendar</b></dt>
 <dd>
 
-<p>In calendar mode, hours start on the hours, days start at midnight, weeks start on Sunday (but see the <b>weekstart</b> option), months start on the 1st of the month, years start on the 1st of January. Padding is added where necessary to align periods with the calendar. When calendar mode is turned off, periods are not aligned and are contiguous, ending &#39;now&#39;. See the [Calendar Mode section](#calendarMode) below for further details. (default: <b>yes</b>)</p>
+<p>In calendar mode, hours start on the hours, days start at midnight, weeks start on Sunday (but see the <b>weekstart</b> option), months start on the 1st of the month, years start on the 1st of January. Padding is added where necessary to align periods with the calendar. When calendar mode is turned off, periods are not aligned and are contiguous, ending &#39;now&#39;. See the [Calendar Mode section](#calendarMode) below for further details. (default: <b>calendar</b>)</p>
 
 </dd>
-<dt id="safe-yes-no"><b>safe <i>yes/no</i></b></dt>
+<dt id="no-safe"><b>[no]safe</b></dt>
 <dd>
 
-<p>In safe mode, snapshots are only considered for deletion if the specified periods are &#39;complete&#39; -- i.e. they have the required number of snapshots. If safe mode is turned off, all periods are considered complete, and extra snapshots in any of them will be deleted. See the [Safe Mode section](#safeMode) below for further details. (default: <b>yes</b>)</p>
+<p>In safe mode, snapshots are only considered for deletion if the specified periods are &#39;complete&#39; -- i.e. they have the required number of snapshots. If safe mode is turned off, all periods are considered complete, and extra snapshots in any of them will be deleted. See the [Safe Mode section](#safeMode) below for further details. (default: <b>safe</b>)</p>
 
 <p>The <b>xbest</b> options can be used to tune the snapshot-matching algorithm which decides which snapshots should be deleted. The defaults assume that the latest snapshots within a period are the most valuable, and should be kept. Note that if calendar mode is turned off, the <b>xbest</b> options are relative to the start of the period: for example <b>wbest = 3</b> means the middle of the week, even if the week happens to start at 5:30am on a Tuesday.</p>
 
@@ -463,16 +463,16 @@
 
 <dl>
 
-<dt id="help-yes-no"><b>help <i>yes/no</i></b></dt>
+<dt id="help"><b>help</b></dt>
 <dd>
 
-<p>Prints out a brief summary of options, and then stops. (default: <b>no</b>)</p>
+<p>Prints out a brief summary of options, and then stops.</p>
 
 </dd>
-<dt id="version-yes-no"><b>version <i>yes/no</i></b></dt>
+<dt id="version"><b>version</b></dt>
 <dd>
 
-<p>Prints out the brandysnap version number only and then stops. (default: <b>no</b>)</p>
+<p>Prints out the brandysnap version number only and then stops.</p>
 
 </dd>
 <dt id="verbose-0..3"><b>verbose <i>0..3</i></b></dt>
@@ -487,10 +487,10 @@
 <p>Sets the verbosity level of output in the log file, on a scale from <b>0</b> to <b>3</b>. If no <b>logfile</b> is defined, this option is effectively set to <b>0</b>. (default: <b>1</b>)</p>
 
 </dd>
-<dt id="dry-run-yes-no"><b>dry-run <i>yes/no</i></b></dt>
+<dt id="no-dry-run"><b>[no]dry-run</b></dt>
 <dd>
 
-<p>In <b>dry-run</b> mode, brandysnap goes through the motions, but doesn&#39;t actually create or delete any snapshots. The <b>dry-run</b> option is also passed through to rsync. (default: <b>no</b>)</p>
+<p>In <b>dry-run</b> mode, brandysnap goes through the motions, but doesn&#39;t actually create or delete any snapshots. The <b>dry-run</b> option is also passed through to rsync. (default: <b>nodry-run</b>)</p>
 
 </dd>
 </dl>
@@ -509,10 +509,10 @@
 <p>(default: <b>rsync</b>)</p>
 
 </dd>
-<dt id="compress-yes-no"><b>compress <i>yes/no</i></b></dt>
+<dt id="no-compress"><b>[no]compress</b></dt>
 <dd>
 
-<p>Enable rsync compression for remote transfers. Note that this only applies compression for transfer across the network: files are expanded again on the destination. (default: <b>yes</b>)</p>
+<p>Enable rsync compression for remote transfers. Note that this only applies compression for transfer across the network: files are expanded again on the destination. (default: <b>compress</b>)</p>
 
 <p>Note that compression is used for any &#39;remote&#39; transfer, i.e. when the source and destination are not on the same computer. On a fast local network, you may want to use <b>--nocompress</b>.</p>
 
@@ -553,22 +553,22 @@
 <p>What to do with the snapshot if none of the sources are copied successfully. <b><i>keep</i></b> will keep the incomplete snapshot and mark it as &#39;partial&#39; in the metadata file. This means that it will not be considered as a proper snapshot when making future decisions about which snapshots to get rid of. If you specify <b><i>delete</i></b>, the incomplete snapshot will be deleted immediately, in the expectation that future snapshots will be more successful. See also <b>--some-failed</b>. (default: <b>delete</b>)</p>
 
 </dd>
-<dt id="delete-yes-no"><b>delete <i>yes/no</i></b></dt>
+<dt id="no-delete"><b>[no]delete</b></dt>
 <dd>
 
-<p>Delete no-longer-required snapshots. If this option is turned off, brandysnap will create new snapshots but not delete any old ones. (default: <b>yes</b>)</p>
+<p>Delete no-longer-required snapshots. If this option is turned off, brandysnap will create new snapshots but not delete any old ones. (default: <b>delete</b>)</p>
 
 </dd>
-<dt id="delete-cp-yes-no"><b>delete-cp <i>yes/no</i></b></dt>
+<dt id="no-delete-cp"><b>[no]delete-cp</b></dt>
 <dd>
 
-<p>Include the &#39;current period&#39; when considering which snapshots to delete. See the description of [current period](#currentPeriod) below. (default: <b>yes</b>)</p>
+<p>Include the &#39;current period&#39; when considering which snapshots to delete. See the description of [current period](#currentPeriod) below. (default: <b>delete-cp</b>)</p>
 
 </dd>
-<dt id="expire-old-yes-no"><b>expire-old <i>yes/no</i></b></dt>
+<dt id="no-expire-old"><b>[no]expire-old</b></dt>
 <dd>
 
-<p>Consider _all_ snapshots (oldest first) as expirable to make room when the destination is full. (default: <b>no</b>)</p>
+<p>Consider _all_ snapshots (oldest first) as expirable to make room when the destination is full. (default: <b>noexpire-old</b>)</p>
 
 </dd>
 <dt id="ldcount-n"><b>ldcount <i>n</i></b></dt>
@@ -577,16 +577,16 @@
 <p>Specify the number of previous snapshots that rsync will search looking for identical files to hard-link to. Normally the default value of <b>1</b> is ideal. Set this value to <b>0</b> to turn off rsync&#39;s <b>--link-dest</b> option completely, but be aware that this will greatly increase the size of the new snapshot, and the time taken to create it (especially over the network). Values greater than <b>1</b> can be used in conjunction with [options yet to be implemented] to tune the behaviour of brandysnap. (default: <b>1</b>)</p>
 
 </dd>
-<dt id="restart-yes-no"><b>restart <i>yes/no</i></b></dt>
+<dt id="no-restart"><b>[no]restart</b></dt>
 <dd>
 
-<p>If a previous run of brandysnap was interrupted for any reason, use this option to re-do the same snapshot (simply by relying on rsync&#39;s ability to not copy files that have not changed). Any files in the source that have changed since the previous run _will_ be updated. If more than one destination is being used, rsync will be run for _all_ destinations, even if some of them completed successfully before. <b>--restart</b> implies <b>--snapshot</b> and <b>--min-interval=0</b>.</p>
+<p>If a previous run of brandysnap was interrupted for any reason, use this option to re-do the same snapshot (simply by relying on rsync&#39;s ability to not copy files that have not changed). Any files in the source that have changed since the previous run _will_ be updated. If more than one destination is being used, rsync will be run for _all_ destinations, even if some of them completed successfully before. <b>--restart</b> implies <b>--snapshot</b> and <b>--min-interval=0</b>. (default: <b>norestart</b>)</p>
 
 </dd>
-<dt id="snapshot-yes-no"><b>snapshot <i>yes/no</i></b></dt>
+<dt id="no-snapshot"><b>[no]snapshot</b></dt>
 <dd>
 
-<p>Create a new snapshot. If this option is turned off, no new snapshot will be created during this run of brandysnap but old snapshots may be deleted. (default: <b>yes</b>)</p>
+<p>Create a new snapshot. If this option is turned off, no new snapshot will be created during this run of brandysnap but old snapshots may be deleted. (default: <b>snapshot</b>)</p>
 
 </dd>
 <dt id="some-failed-keep-delete"><b>some-failed <i>keep/delete</i></b></dt>
@@ -595,16 +595,16 @@
 <p>What to do with the snapshot if some of the sources are not copied successfully. See <b>--all-failed</b> for details. (default: <b>keep</b>)</p>
 
 </dd>
-<dt id="status-yes-no"><b>status <i>yes/no</i></b></dt>
+<dt id="status"><b>status</b></dt>
 <dd>
 
-<p>Print a status report only, with no snapshots being created or deleted. (default: <b>no</b>)</p>
+<p>Print a status report only, with no snapshots being created or deleted.</p>
 
 </dd>
-<dt id="strict-yes-no"><b>strict <i>yes/no</i></b></dt>
+<dt id="no-strict"><b>[no]strict</b></dt>
 <dd>
 
-<p>Use strict mode -- see the [Strict Mode section](#strictMode). (default: <b>no</b>)</p>
+<p>Use strict mode -- see the [Strict Mode section](#strictMode). (default: <b>nostrict</b>)</p>
 
 </dd>
 </dl>
@@ -621,10 +621,10 @@
 <p>Print and log debugging information. (default: <b>(none)</b>)</p>
 
 </dd>
-<dt id="stacktrace-yes-no"><b>stacktrace <i>yes/no</i></b></dt>
+<dt id="no-stacktrace"><b>[no]stacktrace</b></dt>
 <dd>
 
-<p>Print a stack trace on error. (default: <b>no</b>)</p>
+<p>Print a stack trace on error. (default: <b>nostacktrace</b>)</p>
 
 </dd>
 <dt id="test-n"><b>test <i>n</i></b></dt>

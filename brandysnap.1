@@ -494,12 +494,12 @@ The name of a file which will be used to log the output from brandysnap.  Exampl
 The user running brandysnap must have permission to create and write to the log file.
 .SS "Tuning options"
 .IX Subsection "Tuning options"
-.IP "\fBcalendar \f(BIyes/no\fB\fR" 4
-.IX Item "calendar yes/no"
-In calendar mode, hours start on the hours, days start at midnight, weeks start on Sunday (but see the \fBweekstart\fR option), months start on the 1st of the month, years start on the 1st of January.  Padding is added where necessary to align periods with the calendar.  When calendar mode is turned off, periods are not aligned and are contiguous, ending 'now'.  See the [Calendar Mode section](#calendarMode) below for further details.  (default: \fByes\fR)
-.IP "\fBsafe \f(BIyes/no\fB\fR" 4
-.IX Item "safe yes/no"
-In safe mode, snapshots are only considered for deletion if the specified periods are 'complete' \*(-- i.e. they have the required number of snapshots.  If safe mode is turned off, all periods are considered complete, and extra snapshots in any of them will be deleted. See the [Safe Mode section](#safeMode) below for further details.  (default: \fByes\fR)
+.IP "\fB[no]calendar\fR" 4
+.IX Item "[no]calendar"
+In calendar mode, hours start on the hours, days start at midnight, weeks start on Sunday (but see the \fBweekstart\fR option), months start on the 1st of the month, years start on the 1st of January.  Padding is added where necessary to align periods with the calendar.  When calendar mode is turned off, periods are not aligned and are contiguous, ending 'now'.  See the [Calendar Mode section](#calendarMode) below for further details.  (default: \fBcalendar\fR)
+.IP "\fB[no]safe\fR" 4
+.IX Item "[no]safe"
+In safe mode, snapshots are only considered for deletion if the specified periods are 'complete' \*(-- i.e. they have the required number of snapshots.  If safe mode is turned off, all periods are considered complete, and extra snapshots in any of them will be deleted. See the [Safe Mode section](#safeMode) below for further details.  (default: \fBsafe\fR)
 .Sp
 The \fBxbest\fR options can be used to tune the snapshot-matching algorithm which decides which snapshots should be deleted.  The defaults assume that the latest snapshots within a period are the most valuable, and should be kept.  Note that if calendar mode is turned off, the \fBxbest\fR options are relative to the start of the period: for example \fBwbest = 3\fR means the middle of the week, even if the week happens to start at 5:30am on a Tuesday.
 .IP "\fBhbest \f(BI0..59\fB\fR" 4
@@ -527,21 +527,21 @@ used to make sure that snapshots are only created every hour, say.
 Sets the first day of week.  If you consider that weeks start on Monday, use \fBweekstart 2\fR.  \fB1\fR=Sunday, \fB7\fR=Saturday.  (default: \fB1\fR)
 .SS "Helpful options"
 .IX Subsection "Helpful options"
-.IP "\fBhelp \f(BIyes/no\fB\fR" 4
-.IX Item "help yes/no"
-Prints out a brief summary of options, and then stops. (default: \fBno\fR)
-.IP "\fBversion \f(BIyes/no\fB\fR" 4
-.IX Item "version yes/no"
-Prints out the brandysnap version number only and then stops. (default: \fBno\fR)
+.IP "\fBhelp\fR" 4
+.IX Item "help"
+Prints out a brief summary of options, and then stops.
+.IP "\fBversion\fR" 4
+.IX Item "version"
+Prints out the brandysnap version number only and then stops.
 .IP "\fBverbose \f(BI0..3\fB\fR" 4
 .IX Item "verbose 0..3"
 This options sets the verbosity of the printed output, on a scale from \fB0\fR to \fB3\fR.  Use higher values to see more about what brandysnap and rsync are doing.  (default: \fB1\fR)
 .IP "\fBloglevel \f(BI0..3\fB\fR" 4
 .IX Item "loglevel 0..3"
 Sets the verbosity level of output in the log file, on a scale from \fB0\fR to \fB3\fR.  If no \fBlogfile\fR is defined, this option is effectively set to \fB0\fR.  (default: \fB1\fR)
-.IP "\fBdry-run \f(BIyes/no\fB\fR" 4
-.IX Item "dry-run yes/no"
-In \fBdry-run\fR mode, brandysnap goes through the motions, but doesn't actually create or delete any snapshots.  The \fBdry-run\fR option is also passed through to rsync. (default: \fBno\fR)
+.IP "\fB[no]dry\-run\fR" 4
+.IX Item "[no]dry-run"
+In \fBdry-run\fR mode, brandysnap goes through the motions, but doesn't actually create or delete any snapshots.  The \fBdry-run\fR option is also passed through to rsync. (default: \fBnodry-run\fR)
 .SS "Rsync options"
 .IX Subsection "Rsync options"
 .IP "\fBrsync-cmd \f(BIpath\fB\fR" 4
@@ -553,9 +553,9 @@ The location of the rsync programme on your system.  The default is just \fBrsyn
 .Ve
 .Sp
 (default: \fBrsync\fR)
-.IP "\fBcompress \f(BIyes/no\fB\fR" 4
-.IX Item "compress yes/no"
-Enable rsync compression for remote transfers. Note that this only applies compression for transfer across the network: files are expanded again on the destination.  (default: \fByes\fR)
+.IP "\fB[no]compress\fR" 4
+.IX Item "[no]compress"
+Enable rsync compression for remote transfers. Note that this only applies compression for transfer across the network: files are expanded again on the destination.  (default: \fBcompress\fR)
 .Sp
 Note that compression is used for any 'remote' transfer, i.e. when the source and destination are not on the same computer.  On a fast local network, you may want to use \fB\-\-nocompress\fR.
 .IP "\fBinclude\fR/\fBinclude-from\fR/\fBexclude\fR/\fBexclude-from \f(BIpattern-or-file\fB\fR *" 4
@@ -583,15 +583,15 @@ If you specify \fB\f(BIdelete\fB\fR, the incomplete snapshot will be deleted imm
 that future snapshots will be more successful.
 See also \fB\-\-some\-failed\fR.
 (default: \fBdelete\fR)
-.IP "\fBdelete \f(BIyes/no\fB\fR" 4
-.IX Item "delete yes/no"
-Delete no-longer-required snapshots.  If this option is turned off, brandysnap will create new snapshots but not delete any old ones. (default: \fByes\fR)
-.IP "\fBdelete-cp \f(BIyes/no\fB\fR" 4
-.IX Item "delete-cp yes/no"
-Include the 'current period' when considering which snapshots to delete.  See the description of [current period](#currentPeriod) below. (default: \fByes\fR)
-.IP "\fBexpire-old \f(BIyes/no\fB\fR" 4
-.IX Item "expire-old yes/no"
-Consider _all_ snapshots (oldest first) as expirable to make room when the destination is full. (default: \fBno\fR)
+.IP "\fB[no]delete\fR" 4
+.IX Item "[no]delete"
+Delete no-longer-required snapshots.  If this option is turned off, brandysnap will create new snapshots but not delete any old ones. (default: \fBdelete\fR)
+.IP "\fB[no]delete\-cp\fR" 4
+.IX Item "[no]delete-cp"
+Include the 'current period' when considering which snapshots to delete.  See the description of [current period](#currentPeriod) below. (default: \fBdelete-cp\fR)
+.IP "\fB[no]expire\-old\fR" 4
+.IX Item "[no]expire-old"
+Consider _all_ snapshots (oldest first) as expirable to make room when the destination is full. (default: \fBnoexpire-old\fR)
 .IP "\fBldcount \f(BIn\fB\fR" 4
 .IX Item "ldcount n"
 Specify the number of previous snapshots that rsync will search looking for identical files to hard-link to.  
@@ -599,31 +599,31 @@ Normally the default value of \fB1\fR is ideal.  Set this value to \fB0\fR to tu
 completely, but be aware that this will greatly increase the size of the new snapshot, and the time
 taken to create it (especially over the network).  Values greater than \fB1\fR can be used in conjunction
 with [options yet to be implemented] to tune the behaviour of brandysnap. (default: \fB1\fR)
-.IP "\fBrestart \f(BIyes/no\fB\fR" 4
-.IX Item "restart yes/no"
+.IP "\fB[no]restart\fR" 4
+.IX Item "[no]restart"
 If a previous run of brandysnap was interrupted for any reason, use this option to re-do the same snapshot (simply by relying on rsync's ability to not copy files that have not changed).  Any files in the source that have changed since the previous run _will_ be updated.  If more than one destination is being used, rsync will be run for _all_ destinations, even if some of them completed successfully before.
-\&\fB\-\-restart\fR implies \fB\-\-snapshot\fR and \fB\-\-min\-interval=0\fR.
-.IP "\fBsnapshot \f(BIyes/no\fB\fR" 4
-.IX Item "snapshot yes/no"
-Create a new snapshot.  If this option is turned off, no new snapshot will be created during this run of brandysnap but old snapshots may be deleted. (default: \fByes\fR)
+\&\fB\-\-restart\fR implies \fB\-\-snapshot\fR and \fB\-\-min\-interval=0\fR.  (default: \fBnorestart\fR)
+.IP "\fB[no]snapshot\fR" 4
+.IX Item "[no]snapshot"
+Create a new snapshot.  If this option is turned off, no new snapshot will be created during this run of brandysnap but old snapshots may be deleted. (default: \fBsnapshot\fR)
 .IP "\fBsome-failed \f(BIkeep/delete\fB\fR" 4
 .IX Item "some-failed keep/delete"
 What to do with the snapshot if some of the sources are not copied successfully.  See \fB\-\-all\-failed\fR for details. (default: \fBkeep\fR)
-.IP "\fBstatus \f(BIyes/no\fB\fR" 4
-.IX Item "status yes/no"
-Print a status report only, with no snapshots being created or deleted. (default: \fBno\fR)
-.IP "\fBstrict \f(BIyes/no\fB\fR" 4
-.IX Item "strict yes/no"
-Use strict mode \*(-- see the [Strict Mode section](#strictMode). (default: \fBno\fR)
+.IP "\fBstatus\fR" 4
+.IX Item "status"
+Print a status report only, with no snapshots being created or deleted.
+.IP "\fB[no]strict\fR" 4
+.IX Item "[no]strict"
+Use strict mode \*(-- see the [Strict Mode section](#strictMode). (default: \fBnostrict\fR)
 .SS "Development options"
 .IX Subsection "Development options"
 These options are for use by developers only.
 .IP "\fBdebug \f(BIsection,section\fB\fR" 4
 .IX Item "debug section,section"
 Print and log debugging information. (default: \fB(none)\fR)
-.IP "\fBstacktrace \f(BIyes/no\fB\fR" 4
-.IX Item "stacktrace yes/no"
-Print a stack trace on error. (default: \fBno\fR)
+.IP "\fB[no]stacktrace\fR" 4
+.IX Item "[no]stacktrace"
+Print a stack trace on error. (default: \fBnostacktrace\fR)
 .IP "\fBtest \f(BIn\fB\fR" 4
 .IX Item "test n"
 Run test case 'n'.

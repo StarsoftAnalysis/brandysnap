@@ -383,13 +383,13 @@ The user running brandysnap must have permission to create and write to the log 
 
 =over
 
-=item B<calendar I<yes/no>>
+=item B<[no]calendar>
 
-In calendar mode, hours start on the hours, days start at midnight, weeks start on Sunday (but see the B<weekstart> option), months start on the 1st of the month, years start on the 1st of January.  Padding is added where necessary to align periods with the calendar.  When calendar mode is turned off, periods are not aligned and are contiguous, ending 'now'.  See the [Calendar Mode section](#calendarMode) below for further details.  (default: B<yes>)
+In calendar mode, hours start on the hours, days start at midnight, weeks start on Sunday (but see the B<weekstart> option), months start on the 1st of the month, years start on the 1st of January.  Padding is added where necessary to align periods with the calendar.  When calendar mode is turned off, periods are not aligned and are contiguous, ending 'now'.  See the [Calendar Mode section](#calendarMode) below for further details.  (default: B<calendar>)
 
-=item B<safe I<yes/no>>
+=item B<[no]safe>
 
-In safe mode, snapshots are only considered for deletion if the specified periods are 'complete' -- i.e. they have the required number of snapshots.  If safe mode is turned off, all periods are considered complete, and extra snapshots in any of them will be deleted. See the [Safe Mode section](#safeMode) below for further details.  (default: B<yes>)
+In safe mode, snapshots are only considered for deletion if the specified periods are 'complete' -- i.e. they have the required number of snapshots.  If safe mode is turned off, all periods are considered complete, and extra snapshots in any of them will be deleted. See the [Safe Mode section](#safeMode) below for further details.  (default: B<safe>)
 
 The B<xbest> options can be used to tune the snapshot-matching algorithm which decides which snapshots should be deleted.  The defaults assume that the latest snapshots within a period are the most valuable, and should be kept.  Note that if calendar mode is turned off, the B<xbest> options are relative to the start of the period: for example B<wbest = 3> means the middle of the week, even if the week happens to start at 5:30am on a Tuesday.
 
@@ -429,13 +429,13 @@ Sets the first day of week.  If you consider that weeks start on Monday, use B<w
 
 =over
 
-=item B<help I<yes/no>>
+=item B<help>
 
-Prints out a brief summary of options, and then stops. (default: B<no>)
+Prints out a brief summary of options, and then stops.
 
-=item B<version I<yes/no>>
+=item B<version>
 
-Prints out the brandysnap version number only and then stops. (default: B<no>)
+Prints out the brandysnap version number only and then stops.
 
 =item B<verbose I<0..3>>
 
@@ -445,9 +445,9 @@ This options sets the verbosity of the printed output, on a scale from B<0> to B
 
 Sets the verbosity level of output in the log file, on a scale from B<0> to B<3>.  If no B<logfile> is defined, this option is effectively set to B<0>.  (default: B<1>)
 
-=item B<dry-run I<yes/no>>
+=item B<[no]dry-run>
 
-In B<dry-run> mode, brandysnap goes through the motions, but doesn't actually create or delete any snapshots.  The B<dry-run> option is also passed through to rsync. (default: B<no>)
+In B<dry-run> mode, brandysnap goes through the motions, but doesn't actually create or delete any snapshots.  The B<dry-run> option is also passed through to rsync. (default: B<nodry-run>)
 
 =back
 
@@ -463,9 +463,9 @@ The location of the rsync programme on your system.  The default is just B<rsync
 
 (default: B<rsync>)
 
-=item B<compress I<yes/no>>
+=item B<[no]compress>
 
-Enable rsync compression for remote transfers. Note that this only applies compression for transfer across the network: files are expanded again on the destination.  (default: B<yes>)
+Enable rsync compression for remote transfers. Note that this only applies compression for transfer across the network: files are expanded again on the destination.  (default: B<compress>)
 
 Note that compression is used for any 'remote' transfer, i.e. when the source and destination are not on the same computer.  On a fast local network, you may want to use B<--nocompress>. 
 
@@ -503,17 +503,17 @@ that future snapshots will be more successful.
 See also B<--some-failed>.
 (default: B<delete>)
 
-=item B<delete I<yes/no>>
+=item B<[no]delete>
 
-Delete no-longer-required snapshots.  If this option is turned off, brandysnap will create new snapshots but not delete any old ones. (default: B<yes>)
+Delete no-longer-required snapshots.  If this option is turned off, brandysnap will create new snapshots but not delete any old ones. (default: B<delete>)
 
-=item B<delete-cp I<yes/no>>
+=item B<[no]delete-cp>
 
-Include the 'current period' when considering which snapshots to delete.  See the description of [current period](#currentPeriod) below. (default: B<yes>)
+Include the 'current period' when considering which snapshots to delete.  See the description of [current period](#currentPeriod) below. (default: B<delete-cp>)
 
-=item B<expire-old I<yes/no>>
+=item B<[no]expire-old>
 
-Consider _all_ snapshots (oldest first) as expirable to make room when the destination is full. (default: B<no>)
+Consider _all_ snapshots (oldest first) as expirable to make room when the destination is full. (default: B<noexpire-old>)
 
 =item B<ldcount I<n>>
 
@@ -523,26 +523,26 @@ completely, but be aware that this will greatly increase the size of the new sna
 taken to create it (especially over the network).  Values greater than B<1> can be used in conjunction
 with [options yet to be implemented] to tune the behaviour of brandysnap. (default: B<1>)
 
-=item B<restart I<yes/no>>
+=item B<[no]restart>
 
 If a previous run of brandysnap was interrupted for any reason, use this option to re-do the same snapshot (simply by relying on rsync's ability to not copy files that have not changed).  Any files in the source that have changed since the previous run _will_ be updated.  If more than one destination is being used, rsync will be run for _all_ destinations, even if some of them completed successfully before.
-B<--restart> implies B<--snapshot> and B<--min-interval=0>.
+B<--restart> implies B<--snapshot> and B<--min-interval=0>.  (default: B<norestart>)
 
-=item B<snapshot I<yes/no>>
+=item B<[no]snapshot>
 
-Create a new snapshot.  If this option is turned off, no new snapshot will be created during this run of brandysnap but old snapshots may be deleted. (default: B<yes>)
+Create a new snapshot.  If this option is turned off, no new snapshot will be created during this run of brandysnap but old snapshots may be deleted. (default: B<snapshot>)
 
 =item B<some-failed I<keep/delete>>
 
 What to do with the snapshot if some of the sources are not copied successfully.  See B<--all-failed> for details. (default: B<keep>)
 
-=item B<status I<yes/no>>
+=item B<status>
 
-Print a status report only, with no snapshots being created or deleted. (default: B<no>)
+Print a status report only, with no snapshots being created or deleted.
 
-=item B<strict I<yes/no>>
+=item B<[no]strict>
 
-Use strict mode -- see the [Strict Mode section](#strictMode). (default: B<no>)
+Use strict mode -- see the [Strict Mode section](#strictMode). (default: B<nostrict>)
 
 =back
 
@@ -556,9 +556,9 @@ These options are for use by developers only.
 
 Print and log debugging information. (default: B<(none)>)
 
-=item B<stacktrace I<yes/no>>
+=item B<[no]stacktrace>
 
-Print a stack trace on error. (default: B<no>)
+Print a stack trace on error. (default: B<nostacktrace>)
 
 =item B<test I<n>>
 

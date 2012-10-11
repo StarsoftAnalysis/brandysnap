@@ -1325,7 +1325,7 @@ sub getOptionsFromArray ($$$) {
     if (!GetOptionsFromArray($argRef, $optRef, @$GOarrayRef)) {
         # Print the error messages
         foreach my $error (@GOFAerrors) {
-            printlog "ERROR: unexpected option error: $error", 1;
+            printlog "ERROR: Unexpected option error: $error", 1;
         }
         $rc = @GOFAerrors;  # error count
     }
@@ -1992,19 +1992,19 @@ sub displayContext ($$$) {
     foreach my $cref (@{$contRef->{$context}}) {
         $text .= sprintf("%*s: '%s>'\n", $indent+16, "<$context", $cref->{location});
         if (keys %{$cref->{options}}) {
+            my $copts = $cref->{options};
             my $text2 = '';    # put the sub-contexts last
-            foreach my $subopt (sort keys %{$cref->{options}}) {
+            foreach my $subopt (sort keys %$copts) {
                 next if $subopt eq 'pspecs';       # for internal use only
                 if ($AllowedContext{$context}{$subopt}) {
-                    $text2 .= displayContext($subopt, $cref->{options}, $indent+13);
+                    $text2 .= displayContext($subopt, $copts, $indent+13);
                 } else {
-                    if (ref($Opt{$subopt}) eq 'ARRAY') {
-                        foreach my $val (@{$Opt{$subopt}}) {
+                    if (ref($copts->{$subopt}) eq 'ARRAY') {
+                        foreach my $val (@{$copts->{$subopt}}) {
                             $text .= printableOption($subopt, $val, $indent+16+13) . "\n";
                         }
                     } else {
-                        $text .= printableOption($subopt, $cref->{options}->{$subopt}, 
-                                    $indent+16+13) . "\n";
+                        $text .= printableOption($subopt, $copts->{$subopt}, $indent+16+13) . "\n";
                     }
                 }
             }
