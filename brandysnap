@@ -1990,7 +1990,7 @@ sub displayContext ($$$) {
     my $indent  = shift;    # for pretty-printing
     my $text = '';
     foreach my $cref (@{$contRef->{$context}}) {
-        $text .= sprintf("%*s: '%s>'\n", $indent+16, "<$context", $cref->{location});
+        $text .= sprintf("%*s: '%s'>\n", $indent+16, "<$context", $cref->{location});
         if (keys %{$cref->{options}}) {
             my $copts = $cref->{options};
             my $text2 = '';    # put the sub-contexts last
@@ -2076,7 +2076,7 @@ Usage: $Script [option]...
 Options can be specified on the command line or in the configuration file.
 Main options
 --config       file          configuration file name 
---source       file/dir !*d  local or remote file or directory to add to snapshot d
+--source       file/dir !*d  local or remote file or directory to add to snapshot
 --destination  dir      !*   local or remote snapshot destination
 --template     name     ! d  prefix for snapshot directories 
 --spec         ...      !    snapshot-keeping specification 

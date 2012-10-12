@@ -124,7 +124,7 @@
 .\" ========================================================================
 .\"
 .IX Title "BRANDYSNAP 1"
-.TH BRANDYSNAP 1 "2012-10-11" "perl v5.16.1" "User Contributed Perl Documentation"
+.TH BRANDYSNAP 1 "2012-10-12" "perl v5.16.1" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -182,17 +182,17 @@ See the \s-1README\s0 file for brief installation instructions.
 If you want to try it out without reading further, create a configuration file called brandysnap\-test1.conf containing something like this:
 .PP
 .Vb 5
-\&    source      = /path/to/something/to/backup
-\&    destination = /path/to/writable/directory
-\&    template    = brandysnap\-test1
-\&    spec        = 4h1,1h1,1d7
-\&    lockfile    = ~/brandysnap\-test1.lock
+\& source      = /path/to/something/to/backup
+\& destination = /path/to/writable/directory
+\& template    = brandysnap\-test1
+\& spec        = 4h1,1h1,1d7
+\& lockfile    = ~/brandysnap\-test1.lock
 .Ve
 .PP
 and then run
 .PP
 .Vb 1
-\&    brandysnap \-\-dry\-run \-\-conf brandysnap\-test1.conf
+\& brandysnap \-\-dry\-run \-\-conf brandysnap\-test1.conf
 .Ve
 .PP
 The \fBdry-run\fR option will mean that nothing will actually be done.  Once you're happy than the script won't break anything, try it without the \fBdry-run\fR.
@@ -209,9 +209,9 @@ There are various ways of setting up rsync so that it doesn't prompt for a passw
 If the remote side of the transfer is running \s-1SSH\s0 on a non-standard port, you'll find that there is no way to include the port in the location: \fBfred@example.com:/thingy\fR.  The work-around is to create an alias in \fB~/.ssh/config\fR like this:
 .PP
 .Vb 3
-\&    Host eg2022
-\&        HostName example.com
-\&        Port 2022
+\& Host eg2022
+\&     HostName example.com
+\&     Port 2022
 .Ve
 .PP
 and then specify the location as \fBfred@eg2022:/thingy\fR.
@@ -231,7 +231,7 @@ The number of snapshots that are made depends on how often brandysnap is run.  I
 determined by a series of specifications, or 'specs', such as
 .PP
 .Vb 1
-\&        4d5,3w3,1d11
+\& 4d5,3w3,1d11
 .Ve
 .PP
 which is a concise way of saying 'keep four snapshots a day from the last five days, then three a week for three weeks, then one a month for eleven months.  If brandysnap has run successfully for the last year, then there will be at least 4x5 + 3x3 + 1x11 = 40 snapshots.
@@ -241,13 +241,13 @@ Most of the tricky stuff in brandysnap is in deciding which snapshots to keep.
 Each spec is of the form
 .PP
 .Vb 1
-\&        <frequency><period><count>
+\& <frequency><period><count>
 .Ve
 .PP
 or
 .PP
 .Vb 1
-\&        <minimum frequency> \- <maximum frequency><period><count>
+\& <minimum frequency> \- <maximum frequency><period><count>
 .Ve
 .PP
 The 'frequency' is the number of snapshots to be kept in each period.  
@@ -274,7 +274,7 @@ The 'count' indicates the number of periods, as a number from 1 to as many as yo
 If the count is left out, the period is 'padded' to make up to the next period, working backwards in time from 'now'.  For example,
 .PP
 .Vb 1
-\&        4d,2w4
+\& 4d,2w4
 .Ve
 .PP
 will be interpreted as \fB4d7,2w4\fR.  The 'day' specification is expanded to a week's worth of days to align with the next spec which is in weeks.
@@ -287,7 +287,7 @@ More spec examples:
 .IP "\(bu" 4
 \&\fB1h24,4d6,3w3,4m11\fR \- one an hour for the first day, then 4 a day for the rest of the week then 3 a week for the rest of the month, then 4 a month to give a whole year of snapshots.
 .IP "\(bu" 4
-\&\fB0\-6d5,2\-5w3,4m12\fR \- keep up to 6 snapshots a day for five days, but consider days with no snapshots at all to be valid; them keep between 2 and 5 a week for three weeks, then keep snapshots for 12 months with 4 snapshots in each.
+\&\fB0\-6d5,2\-5w3,4m12\fR \- keep up to 6 snapshots a day for five days, but consider days with no snapshots at all to be valid; then keep between 2 and 5 a week for three weeks, then keep snapshots for 12 months with 4 snapshots in each.
 .IP "\(bu" 4
 
 .PP
@@ -310,7 +310,7 @@ All options can be given either on the command line or in the configuration file
 On the command line, options must be preceded by one or two hyphens, and can be abbreviated as long as they do not become ambiguous.  An 'equals' sign (\fB=\fR) is optional.  For example:
 .PP
 .Vb 1
-\&    brandysnap \-\-source xyz \-verbose=1 \-\-conf=bs1.conf \-nocal
+\& brandysnap \-\-source xyz \-verbose=1 \-\-conf=bs1.conf \-nocal
 .Ve
 .PP
 In the configuration file the hyphens are optional, but options can still be abbreviated.  Lines beginning with '#' are considered to be comments and are ignored.
@@ -321,7 +321,7 @@ are added to configuration file one.  For example, if the configuration files in
 \&\fB~\fR can be used to specify local files and directories e.g.
 .PP
 .Vb 1
-\&    \-\-logfile = ~/brandysnap.log
+\& \-\-logfile = ~/brandysnap.log
 .Ve
 .PP
 The \fB~\fR will be expanded to the home directory of the user who _runs_ brandysnap.  
@@ -337,14 +337,14 @@ This allows options to made specific to a particular destination or source.
 For example, this snippet from a configuration file:
 .PP
 .Vb 8
-\&    source /home/chris
-\&    destination /backups/one
-\&    <destination /backups/two/>
-\&        source /home/ann
-\&        exclude .cache
-\&    </destination>
-\&    source /home/fred
-\&    exclude tmp
+\& source /home/chris
+\& destination /backups/one
+\& <destination /backups/two/>
+\&     source /home/ann
+\&     exclude .cache
+\& </destination>
+\& source /home/fred
+\& exclude tmp
 .Ve
 .PP
 Contexts are begun with \f(CW\*(C`<destination dest\-name>\*(C'\fR or \f(CW\*(C`<source source\-name>\*(C'\fR 
@@ -360,31 +360,31 @@ The example above has two destinations. \f(CW\*(C`/home/chris\*(C'\fR and \f(CW\
 Only certain options are valid within each context.  A destination context can contain these options:
 .PP
 .Vb 10
-\&    hbest dbest wbest mbest ybest
-\&    safe calendar strict
-\&    source template spec
-\&    snapshot delete delete\-cp
-\&    weekstart
-\&    rsync\-cmd rsync\-opts remote\-rsync\-cmd
-\&    expire\-old
-\&    bwlimit\-in bwlimit\-out
-\&    compress restart
-\&    allow\-restart ldcount
-\&    all\-failed some\-failed
-\&    min\-interval
-\&    verbose loglevel debug stacktrace
+\& hbest dbest wbest mbest ybest
+\& safe calendar strict
+\& source template spec
+\& snapshot delete delete\-cp
+\& weekstart
+\& rsync\-cmd rsync\-opts remote\-rsync\-cmd
+\& expire\-old
+\& bwlimit\-in bwlimit\-out
+\& compress restart
+\& allow\-restart ldcount
+\& all\-failed some\-failed
+\& min\-interval
+\& verbose loglevel debug stacktrace
 .Ve
 .PP
 A source context can contain these options:
 .PP
 .Vb 7
-\&    rsync\-cmd rsync\-opts remote\-rsync\-cmd
-\&    include include\-from exclude exclude\-from
-\&    bwlimit\-in bwlimit\-out
-\&    compress restart
-\&    allow\-restart 
-\&    min\-interval
-\&    verbose loglevel debug stacktrace
+\& rsync\-cmd rsync\-opts remote\-rsync\-cmd
+\& include include\-from exclude exclude\-from
+\& bwlimit\-in bwlimit\-out
+\& compress restart
+\& allow\-restart 
+\& min\-interval
+\& verbose loglevel debug stacktrace
 .Ve
 .IP "\(bu" 4
 Options marked with '!' in the following list are required.
@@ -404,9 +404,9 @@ irrespective of where the \fBconfig\fR option appears on the command line.
 A local or remote file or directory to add to the snapshot.  Examples:
 .Sp
 .Vb 3
-\&        source ~/Documents
-\&        source /home
-\&        source chris@example.com:~/Documents
+\& source ~/Documents
+\& source /home
+\& source chris@example.com:~/Documents
 .Ve
 .Sp
 More than one source can be specified, in which case each source will be rsync'd, 
@@ -415,9 +415,9 @@ one at a time, to each destination in turn.
 Sources can be given specific options with the following syntax:
 .Sp
 .Vb 3
-\&    <source ~/>
-\&        exclude .cache
-\&    </source>
+\& <source ~/>
+\&     exclude .cache
+\& </source>
 .Ve
 .Sp
 Rsync can not copy from a remote source to a remote destination, 
@@ -438,8 +438,8 @@ See the \fBrsync-opts\fR option for ways to change this.
 A local or remote directory for use as the snapshot destination.  Examples:
 .Sp
 .Vb 2
-\&        destination /backups/
-\&        dest chris@example.com:/backups
+\& destination /backups/
+\& dest chris@example.com:/backups
 .Ve
 .Sp
 More than one destination can be specified (see \fBsource\fR).
@@ -447,10 +447,10 @@ More than one destination can be specified (see \fBsource\fR).
 Destinations can be given specific options (including sources) with the following syntax:
 .Sp
 .Vb 4
-\&    <destination chris@example.com:/backups>
-\&        bwlimit\-out = 2000
-\&        remote\-rsync\-cmd = sudo rsync
-\&    </destination>
+\& <destination chris@example.com:/backups>
+\&     bwlimit\-out = 2000
+\&     remote\-rsync\-cmd = sudo rsync
+\& </destination>
 .Ve
 .Sp
 Each destination must be writable by the user who runs brandysnap.
@@ -461,14 +461,14 @@ See the section on remote authorisation.
 The directory name of each snapshot is of the form
 .Sp
 .Vb 1
-\&        <template>\-<timestamp>
+\& <template>\-<timestamp>
 .Ve
 .Sp
 See the [Snapshot Names section](#snapshotNames) for more details.
 Example:
 .Sp
 .Vb 1
-\&        template docs
+\& template docs
 .Ve
 .IP "\fBspec \f(BIstring\fB\fR !" 4
 .IX Item "spec string !"
@@ -480,15 +480,15 @@ the name of temporary file which will be created and locked while brandysnap is 
 The user running brandysnap must have permission to create and delete this file.  For example:
 .Sp
 .Vb 1
-\&        lockfile /tmp/brandysnap\-docs.lock
+\& lockfile /tmp/brandysnap\-docs.lock
 .Ve
 .IP "\fBlogfile \f(BIfile\fB\fR" 4
 .IX Item "logfile file"
 The name of a file which will be used to log the output from brandysnap.  Examples:
 .Sp
 .Vb 2
-\&        logfile /var/log/brandysnap.log
-\&        logfile ~/bs\-docs.log
+\& logfile /var/log/brandysnap.log
+\& logfile ~/bs\-docs.log
 .Ve
 .Sp
 The user running brandysnap must have permission to create and write to the log file.
@@ -549,7 +549,7 @@ In \fBdry-run\fR mode, brandysnap goes through the motions, but doesn't actually
 The location of the rsync programme on your system.  The default is just \fBrsync\fR which means brandysnap looks for rsync in you normal path. On some systems, you might need to set it to something else such as
 .Sp
 .Vb 1
-\&        rsync\-cmd /usr/bin/rsync
+\& rsync\-cmd /usr/bin/rsync
 .Ve
 .Sp
 (default: \fBrsync\fR)

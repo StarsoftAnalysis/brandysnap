@@ -100,15 +100,15 @@
 
 <p>If you want to try it out without reading further, create a configuration file called brandysnap-test1.conf containing something like this:</p>
 
-<pre><code>    source      = /path/to/something/to/backup
-    destination = /path/to/writable/directory
-    template    = brandysnap-test1
-    spec        = 4h1,1h1,1d7
-    lockfile    = ~/brandysnap-test1.lock</code></pre>
+<pre><code> source      = /path/to/something/to/backup
+ destination = /path/to/writable/directory
+ template    = brandysnap-test1
+ spec        = 4h1,1h1,1d7
+ lockfile    = ~/brandysnap-test1.lock</code></pre>
 
 <p>and then run</p>
 
-<pre><code>    brandysnap --dry-run --conf brandysnap-test1.conf</code></pre>
+<pre><code> brandysnap --dry-run --conf brandysnap-test1.conf</code></pre>
 
 <p>The <b>dry-run</b> option will mean that nothing will actually be done. Once you&#39;re happy than the script won&#39;t break anything, try it without the <b>dry-run</b>.</p>
 
@@ -124,9 +124,9 @@
 
 <p>If the remote side of the transfer is running SSH on a non-standard port, you&#39;ll find that there is no way to include the port in the location: <b>fred@example.com:/thingy</b>. The work-around is to create an alias in <b>~/.ssh/config</b> like this:</p>
 
-<pre><code>    Host eg2022
-        HostName example.com
-        Port 2022</code></pre>
+<pre><code> Host eg2022
+     HostName example.com
+     Port 2022</code></pre>
 
 <p>and then specify the location as <b>fred@eg2022:/thingy</b>.</p>
 
@@ -144,7 +144,7 @@
 
 <p>The number of snapshots that are made depends on how often brandysnap is run. It creates a new snapshot every time. What is more interesting is how many snapshots are KEPT. This is determined by a series of specifications, or &#39;specs&#39;, such as</p>
 
-<pre><code>        4d5,3w3,1d11</code></pre>
+<pre><code> 4d5,3w3,1d11</code></pre>
 
 <p>which is a concise way of saying &#39;keep four snapshots a day from the last five days, then three a week for three weeks, then one a month for eleven months. If brandysnap has run successfully for the last year, then there will be at least 4x5 + 3x3 + 1x11 = 40 snapshots.</p>
 
@@ -152,11 +152,11 @@
 
 <p>Each spec is of the form</p>
 
-<pre><code>        &lt;frequency&gt;&lt;period&gt;&lt;count&gt;</code></pre>
+<pre><code> &lt;frequency&gt;&lt;period&gt;&lt;count&gt;</code></pre>
 
 <p>or</p>
 
-<pre><code>        &lt;minimum frequency&gt; - &lt;maximum frequency&gt;&lt;period&gt;&lt;count&gt;</code></pre>
+<pre><code> &lt;minimum frequency&gt; - &lt;maximum frequency&gt;&lt;period&gt;&lt;count&gt;</code></pre>
 
 <p>The &#39;frequency&#39; is the number of snapshots to be kept in each period. It can be a single number from 1 to...whatever is reasonable. Or it can be a minimum-maximum range: for example <i>0-4</i> means &#39;keep between 0 and 4 snapshots in this period&#39;.</p>
 
@@ -189,7 +189,7 @@
 
 <p>If the count is left out, the period is &#39;padded&#39; to make up to the next period, working backwards in time from &#39;now&#39;. For example,</p>
 
-<pre><code>        4d,2w4</code></pre>
+<pre><code> 4d,2w4</code></pre>
 
 <p>will be interpreted as <b>4d7,2w4</b>. The &#39;day&#39; specification is expanded to a week&#39;s worth of days to align with the next spec which is in weeks.</p>
 
@@ -205,7 +205,7 @@
 <li><p><b>1h24,4d6,3w3,4m11</b> - one an hour for the first day, then 4 a day for the rest of the week then 3 a week for the rest of the month, then 4 a month to give a whole year of snapshots.</p>
 
 </li>
-<li><p><b>0-6d5,2-5w3,4m12</b> - keep up to 6 snapshots a day for five days, but consider days with no snapshots at all to be valid; them keep between 2 and 5 a week for three weeks, then keep snapshots for 12 months with 4 snapshots in each.</p>
+<li><p><b>0-6d5,2-5w3,4m12</b> - keep up to 6 snapshots a day for five days, but consider days with no snapshots at all to be valid; then keep between 2 and 5 a week for three weeks, then keep snapshots for 12 months with 4 snapshots in each.</p>
 
 </li>
 <li><p></p>
@@ -227,7 +227,7 @@
 
 <p>On the command line, options must be preceded by one or two hyphens, and can be abbreviated as long as they do not become ambiguous. An &#39;equals&#39; sign (<b>=</b>) is optional. For example:</p>
 
-<pre><code>    brandysnap --source xyz -verbose=1 --conf=bs1.conf -nocal</code></pre>
+<pre><code> brandysnap --source xyz -verbose=1 --conf=bs1.conf -nocal</code></pre>
 
 <p>In the configuration file the hyphens are optional, but options can still be abbreviated. Lines beginning with &#39;#&#39; are considered to be comments and are ignored.</p>
 
@@ -235,7 +235,7 @@
 
 <p><b>~</b> can be used to specify local files and directories e.g.</p>
 
-<pre><code>    --logfile = ~/brandysnap.log</code></pre>
+<pre><code> --logfile = ~/brandysnap.log</code></pre>
 
 <p>The <b>~</b> will be expanded to the home directory of the user who _runs_ brandysnap. <b>~</b> can also be used on remote directories, e.g. <b>chris@example.com:~/documents</b>. In this case, the <b>~</b> will be expanded by rsync to mean the home directory of the user specified (or implied) before the <b>@</b> symbol, in this case <b>/home/chris/</b>. <b>~</b> can NOT be used in any of the <b>include</b>/<b>exclude</b> options.</p>
 
@@ -245,14 +245,14 @@
 
 <p>For example, this snippet from a configuration file:</p>
 
-<pre><code>    source /home/chris
-    destination /backups/one
-    &lt;destination /backups/two/&gt;
-        source /home/ann
-        exclude .cache
-    &lt;/destination&gt;
-    source /home/fred
-    exclude tmp</code></pre>
+<pre><code> source /home/chris
+ destination /backups/one
+ &lt;destination /backups/two/&gt;
+     source /home/ann
+     exclude .cache
+ &lt;/destination&gt;
+ source /home/fred
+ exclude tmp</code></pre>
 
 <p>Contexts are begun with <code>&lt;destination dest-name&gt;</code> or <code>&lt;source source-name&gt;</code> and finished with <code>&lt;/destination&gt;</code> or <code>&lt;/source&gt;</code>. Each <code>&lt;...&gt;</code> must be on a line by itself.</p>
 
@@ -262,29 +262,29 @@
 
 <p>Only certain options are valid within each context. A destination context can contain these options:</p>
 
-<pre><code>    hbest dbest wbest mbest ybest
-    safe calendar strict
-    source template spec
-    snapshot delete delete-cp
-    weekstart
-    rsync-cmd rsync-opts remote-rsync-cmd
-    expire-old
-    bwlimit-in bwlimit-out
-    compress restart
-    allow-restart ldcount
-    all-failed some-failed
-    min-interval
-    verbose loglevel debug stacktrace</code></pre>
+<pre><code> hbest dbest wbest mbest ybest
+ safe calendar strict
+ source template spec
+ snapshot delete delete-cp
+ weekstart
+ rsync-cmd rsync-opts remote-rsync-cmd
+ expire-old
+ bwlimit-in bwlimit-out
+ compress restart
+ allow-restart ldcount
+ all-failed some-failed
+ min-interval
+ verbose loglevel debug stacktrace</code></pre>
 
 <p>A source context can contain these options:</p>
 
-<pre><code>    rsync-cmd rsync-opts remote-rsync-cmd
-    include include-from exclude exclude-from
-    bwlimit-in bwlimit-out
-    compress restart
-    allow-restart 
-    min-interval
-    verbose loglevel debug stacktrace</code></pre>
+<pre><code> rsync-cmd rsync-opts remote-rsync-cmd
+ include include-from exclude exclude-from
+ bwlimit-in bwlimit-out
+ compress restart
+ allow-restart 
+ min-interval
+ verbose loglevel debug stacktrace</code></pre>
 
 <ul>
 
@@ -313,17 +313,17 @@
 
 <p>A local or remote file or directory to add to the snapshot. Examples:</p>
 
-<pre><code>        source ~/Documents
-        source /home
-        source chris@example.com:~/Documents</code></pre>
+<pre><code> source ~/Documents
+ source /home
+ source chris@example.com:~/Documents</code></pre>
 
 <p>More than one source can be specified, in which case each source will be rsync&#39;d, one at a time, to each destination in turn.</p>
 
 <p>Sources can be given specific options with the following syntax:</p>
 
-<pre><code>    &lt;source ~/&gt;
-        exclude .cache
-    &lt;/source&gt;</code></pre>
+<pre><code> &lt;source ~/&gt;
+     exclude .cache
+ &lt;/source&gt;</code></pre>
 
 <p>Rsync can not copy from a remote source to a remote destination, so any source/destination pairs which are both remote will be skipped.</p>
 
@@ -341,17 +341,17 @@
 
 <p>A local or remote directory for use as the snapshot destination. Examples:</p>
 
-<pre><code>        destination /backups/
-        dest chris@example.com:/backups</code></pre>
+<pre><code> destination /backups/
+ dest chris@example.com:/backups</code></pre>
 
 <p>More than one destination can be specified (see <b>source</b>).</p>
 
 <p>Destinations can be given specific options (including sources) with the following syntax:</p>
 
-<pre><code>    &lt;destination chris@example.com:/backups&gt;
-        bwlimit-out = 2000
-        remote-rsync-cmd = sudo rsync
-    &lt;/destination&gt;</code></pre>
+<pre><code> &lt;destination chris@example.com:/backups&gt;
+     bwlimit-out = 2000
+     remote-rsync-cmd = sudo rsync
+ &lt;/destination&gt;</code></pre>
 
 <p>Each destination must be writable by the user who runs brandysnap.</p>
 
@@ -363,11 +363,11 @@
 
 <p>The directory name of each snapshot is of the form</p>
 
-<pre><code>        &lt;template&gt;-&lt;timestamp&gt;</code></pre>
+<pre><code> &lt;template&gt;-&lt;timestamp&gt;</code></pre>
 
 <p>See the [Snapshot Names section](#snapshotNames) for more details. Example:</p>
 
-<pre><code>        template docs</code></pre>
+<pre><code> template docs</code></pre>
 
 </dd>
 <dt id="spec-string-"><b>spec <i>string</i></b> !</dt>
@@ -381,7 +381,7 @@
 
 <p>To prevent separate runs of brandysnap using the same destinations at the same time, you need to give the name of temporary file which will be created and locked while brandysnap is running. The user running brandysnap must have permission to create and delete this file. For example:</p>
 
-<pre><code>        lockfile /tmp/brandysnap-docs.lock</code></pre>
+<pre><code> lockfile /tmp/brandysnap-docs.lock</code></pre>
 
 </dd>
 <dt id="logfile-file"><b>logfile <i>file</i></b></dt>
@@ -389,8 +389,8 @@
 
 <p>The name of a file which will be used to log the output from brandysnap. Examples:</p>
 
-<pre><code>        logfile /var/log/brandysnap.log
-        logfile ~/bs-docs.log</code></pre>
+<pre><code> logfile /var/log/brandysnap.log
+ logfile ~/bs-docs.log</code></pre>
 
 <p>The user running brandysnap must have permission to create and write to the log file.</p>
 
@@ -504,7 +504,7 @@
 
 <p>The location of the rsync programme on your system. The default is just <b>rsync</b> which means brandysnap looks for rsync in you normal path. On some systems, you might need to set it to something else such as</p>
 
-<pre><code>        rsync-cmd /usr/bin/rsync</code></pre>
+<pre><code> rsync-cmd /usr/bin/rsync</code></pre>
 
 <p>(default: <b>rsync</b>)</p>
 
