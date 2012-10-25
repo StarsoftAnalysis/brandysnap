@@ -98,7 +98,7 @@ In order to preserver ownership of files, brandysnap needs to be run as root or 
 [More detail needed here re use of sudo and B<remote-rsync-cmd = 'sudo rsync'>]
 
 
-=head2 <a name="keepingSnapshots">Keeping Snapshots</a>
+=head2 Keeping Snapshots
 
 The number of snapshots that are made depends on how often brandysnap is run.  It creates a new snapshot every time.  What is more interesting is how many snapshots are KEPT.  This is 
 determined by a series of specifications, or 'specs', such as
@@ -358,7 +358,7 @@ Example:
 
 =item B<spec I<string>> !   
 
-The snapshot-keeping specification.  See the [Keeping Snapshots section](#keepingSnapshots) for full details.
+The snapshot-keeping specification.  See the Keeping Snapshots section for full details.
 
 =item B<lockfile I<file>> !
 
@@ -391,7 +391,12 @@ In calendar mode, hours start on the hours, days start at midnight, weeks start 
 
 In safe mode, snapshots are only considered for deletion if the specified periods are 'complete' -- i.e. they have the required number of snapshots.  If safe mode is turned off, all periods are considered complete, and extra snapshots in any of them will be deleted. See the [Safe Mode section](#safeMode) below for further details.  (default: B<safe>)
 
-The B<xbest> options can be used to tune the snapshot-matching algorithm which decides which snapshots should be deleted.  The defaults assume that the latest snapshots within a period are the most valuable, and should be kept.  Note that if calendar mode is turned off, the B<xbest> options are relative to the start of the period: for example B<wbest = 3> means the middle of the week, even if the week happens to start at 5:30am on a Tuesday.
+The B<xbest> options can be used to tune the snapshot-matching algorithm which decides which 
+snapshots should be deleted.  The defaults assume that the latest snapshots within a period 
+are the most valuable, and should be kept.  
+Note these options only apply in calendar mode: in nocalendar mode, the oldest snapshot in a period
+is always preferred (otherwise snapshots would never be kept long enough to be considered
+by the next spec)
 
 =item B<hbest I<0..59>>     
 
@@ -399,7 +404,7 @@ B<hbest> determines the favoured minute within an hour for an hourly specificati
 
 =item B<dbest I<0..23.9>>
 
-Determines the favoured time within day in hours.  For example, to prefer daily snapshots created at 5pm, use B<dbest 17>. (default: B<23.9>)
+Determines the favoured time within a day in hours.  For example, to prefer daily snapshots created at 5pm, use B<dbest 17>. (default: B<23.9>)
 
 =item B<wbest I<1..7>>
 
@@ -495,8 +500,7 @@ Options to pass to rsync, in addition to those that brandysnap will always use (
 
 What to do with the snapshot if none of the sources are copied successfully.
 B<I<keep>> will keep the incomplete snapshot and mark it as 'partial' in the metadata file.
-This
-means that it will not be considered as a proper snapshot when making future
+This means that it will not be considered as a proper snapshot when making future
 decisions about which snapshots to get rid of.
 If you specify B<I<delete>>, the incomplete snapshot will be deleted immediately, in the expectation
 that future snapshots will be more successful.

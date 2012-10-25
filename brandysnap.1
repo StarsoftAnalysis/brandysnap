@@ -124,7 +124,7 @@
 .\" ========================================================================
 .\"
 .IX Title "BRANDYSNAP 1"
-.TH BRANDYSNAP 1 "2012-10-12" "perl v5.16.1" "User Contributed Perl Documentation"
+.TH BRANDYSNAP 1 "2012-10-25" "perl v5.16.1" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -224,9 +224,8 @@ Multiple destinations can be configured, in which case snapshots will be created
 In order to preserver ownership of files, brandysnap needs to be run as root or via 'sudo'.
 .PP
 [More detail needed here re use of sudo and \fBremote-rsync-cmd = 'sudo rsync'\fR]
-.ie n .SS "<a name=""keepingSnapshots"">Keeping Snapshots</a>"
-.el .SS "<a name=``keepingSnapshots''>Keeping Snapshots</a>"
-.IX Subsection "<a name=keepingSnapshots>Keeping Snapshots</a>"
+.SS "Keeping Snapshots"
+.IX Subsection "Keeping Snapshots"
 The number of snapshots that are made depends on how often brandysnap is run.  It creates a new snapshot every time.  What is more interesting is how many snapshots are \s-1KEPT\s0.  This is 
 determined by a series of specifications, or 'specs', such as
 .PP
@@ -472,7 +471,7 @@ Example:
 .Ve
 .IP "\fBspec \f(BIstring\fB\fR !" 4
 .IX Item "spec string !"
-The snapshot-keeping specification.  See the [Keeping Snapshots section](#keepingSnapshots) for full details.
+The snapshot-keeping specification.  See the Keeping Snapshots section for full details.
 .IP "\fBlockfile \f(BIfile\fB\fR !" 4
 .IX Item "lockfile file !"
 To prevent separate runs of brandysnap using the same destinations at the same time, you need to give 
@@ -501,13 +500,18 @@ In calendar mode, hours start on the hours, days start at midnight, weeks start 
 .IX Item "[no]safe"
 In safe mode, snapshots are only considered for deletion if the specified periods are 'complete' \*(-- i.e. they have the required number of snapshots.  If safe mode is turned off, all periods are considered complete, and extra snapshots in any of them will be deleted. See the [Safe Mode section](#safeMode) below for further details.  (default: \fBsafe\fR)
 .Sp
-The \fBxbest\fR options can be used to tune the snapshot-matching algorithm which decides which snapshots should be deleted.  The defaults assume that the latest snapshots within a period are the most valuable, and should be kept.  Note that if calendar mode is turned off, the \fBxbest\fR options are relative to the start of the period: for example \fBwbest = 3\fR means the middle of the week, even if the week happens to start at 5:30am on a Tuesday.
+The \fBxbest\fR options can be used to tune the snapshot-matching algorithm which decides which 
+snapshots should be deleted.  The defaults assume that the latest snapshots within a period 
+are the most valuable, and should be kept.  
+Note these options only apply in calendar mode: in nocalendar mode, the oldest snapshot in a period
+is always preferred (otherwise snapshots would never be kept long enough to be considered
+by the next spec)
 .IP "\fBhbest \f(BI0..59\fB\fR" 4
 .IX Item "hbest 0..59"
 \&\fBhbest\fR determines the favoured minute within an hour for an hourly specification. For example, to prefer hourly snapshots created in the middle of an hours, use \fBhbest 30\fR.  (default: \fB59\fR)
 .IP "\fBdbest \f(BI0..23.9\fB\fR" 4
 .IX Item "dbest 0..23.9"
-Determines the favoured time within day in hours.  For example, to prefer daily snapshots created at 5pm, use \fBdbest 17\fR. (default: \fB23.9\fR)
+Determines the favoured time within a day in hours.  For example, to prefer daily snapshots created at 5pm, use \fBdbest 17\fR. (default: \fB23.9\fR)
 .IP "\fBwbest \f(BI1..7\fB\fR" 4
 .IX Item "wbest 1..7"
 Determines the favoured day within a week, with 1=Sunday, 7=Saturday.  For example, to prefer weekly snapshots created on Friday, use \fBwbest 6\fR. (default: \fB1\fR)
@@ -576,8 +580,7 @@ Options to pass to rsync, in addition to those that brandysnap will always use (
 .IX Item "all-failed keep/delete"
 What to do with the snapshot if none of the sources are copied successfully.
 \&\fB\f(BIkeep\fB\fR will keep the incomplete snapshot and mark it as 'partial' in the metadata file.
-This
-means that it will not be considered as a proper snapshot when making future
+This means that it will not be considered as a proper snapshot when making future
 decisions about which snapshots to get rid of.
 If you specify \fB\f(BIdelete\fB\fR, the incomplete snapshot will be deleted immediately, in the expectation
 that future snapshots will be more successful.

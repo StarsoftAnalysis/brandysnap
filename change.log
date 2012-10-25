@@ -1,6 +1,15 @@
 Changelog for brandysnap
 ========================
 
+0.2.4	25/10/12
+* More information in status report re periods covered by each spec.
+* Automatically restart if the previous snapshot failed and was less than
+  min-interval minutes ago.
+* Bug fixes:
+  - Corrected logic re deleteNew.
+  - Tweaked snapshot timing to prevent creep.
+  - Ignore <x>best options in nocalendar mode.
+
 0.2.3	11/10/12
 * Bug fixes:
   - Reset partial flag when restarting

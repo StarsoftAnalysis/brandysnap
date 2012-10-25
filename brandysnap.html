@@ -19,7 +19,7 @@
       <li><a href="#Very-Quick-Start">Very Quick Start</a></li>
       <li><a href="#Remote-Sources-and-Destinations">Remote Sources and Destinations</a></li>
       <li><a href="#Preserving-Ownership">Preserving Ownership</a></li>
-      <li><a href="#a-name-keepingSnapshotsKeeping-Snapshots-a">&lt;a name=&quot;keepingSnapshots&quot;&gt;Keeping Snapshots&lt;/a&gt;</a></li>
+      <li><a href="#Keeping-Snapshots">Keeping Snapshots</a></li>
       <li><a href="#Definition-of-snapshot-vs-full-incremental-backups">Definition of &#39;snapshot&#39; vs full/incremental backups</a></li>
       <li><a href="#Options">Options</a>
         <ul>
@@ -140,7 +140,7 @@
 
 <p>[More detail needed here re use of sudo and <b>remote-rsync-cmd = &#39;sudo rsync&#39;</b>]</p>
 
-<h2 id="a-name-keepingSnapshotsKeeping-Snapshots-a">&lt;a name=&quot;keepingSnapshots&quot;&gt;Keeping Snapshots&lt;/a&gt;</h2>
+<h2 id="Keeping-Snapshots">Keeping Snapshots</h2>
 
 <p>The number of snapshots that are made depends on how often brandysnap is run. It creates a new snapshot every time. What is more interesting is how many snapshots are KEPT. This is determined by a series of specifications, or &#39;specs&#39;, such as</p>
 
@@ -373,7 +373,7 @@
 <dt id="spec-string-"><b>spec <i>string</i></b> !</dt>
 <dd>
 
-<p>The snapshot-keeping specification. See the [Keeping Snapshots section](#keepingSnapshots) for full details.</p>
+<p>The snapshot-keeping specification. See the Keeping Snapshots section for full details.</p>
 
 </dd>
 <dt id="lockfile-file-"><b>lockfile <i>file</i></b> !</dt>
@@ -412,7 +412,7 @@
 
 <p>In safe mode, snapshots are only considered for deletion if the specified periods are &#39;complete&#39; -- i.e. they have the required number of snapshots. If safe mode is turned off, all periods are considered complete, and extra snapshots in any of them will be deleted. See the [Safe Mode section](#safeMode) below for further details. (default: <b>safe</b>)</p>
 
-<p>The <b>xbest</b> options can be used to tune the snapshot-matching algorithm which decides which snapshots should be deleted. The defaults assume that the latest snapshots within a period are the most valuable, and should be kept. Note that if calendar mode is turned off, the <b>xbest</b> options are relative to the start of the period: for example <b>wbest = 3</b> means the middle of the week, even if the week happens to start at 5:30am on a Tuesday.</p>
+<p>The <b>xbest</b> options can be used to tune the snapshot-matching algorithm which decides which snapshots should be deleted. The defaults assume that the latest snapshots within a period are the most valuable, and should be kept. Note these options only apply in calendar mode: in nocalendar mode, the oldest snapshot in a period is always preferred (otherwise snapshots would never be kept long enough to be considered by the next spec)</p>
 
 </dd>
 <dt id="hbest-0..59"><b>hbest <i>0..59</i></b></dt>
@@ -424,7 +424,7 @@
 <dt id="dbest-0..23.9"><b>dbest <i>0..23.9</i></b></dt>
 <dd>
 
-<p>Determines the favoured time within day in hours. For example, to prefer daily snapshots created at 5pm, use <b>dbest 17</b>. (default: <b>23.9</b>)</p>
+<p>Determines the favoured time within a day in hours. For example, to prefer daily snapshots created at 5pm, use <b>dbest 17</b>. (default: <b>23.9</b>)</p>
 
 </dd>
 <dt id="wbest-1..7"><b>wbest <i>1..7</i></b></dt>

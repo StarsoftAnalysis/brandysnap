@@ -82,8 +82,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-my $Version = '0.2.3';
-use constant VERSION => $Version;
+our $VERSION = '0.2.4';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -96,8 +95,6 @@ use constant EXITRSYNC  => 3;   # Error running rsync
 use constant EXITINT    => 4;   # Interrupted
 use constant EXITNOLOCK => 5;   # Can't get lock
 my $ExitCode = EXITOK;
-
-#my $SymlinkExists = eval { symlink("",""); 1 };  not used
 
 # Options -- need some options to start with
 our %Opt = ();   
@@ -1542,10 +1539,10 @@ sub processOptions () {
     #
     $defopt{debug}          = '';
     $defopt{test}           = 0;          # a non-zero value indicates which test to run
-    # options to prefer one part of a period, e.g. 5pm, Fridays
-    # defaults are at the end of the period 
-    $defopt{hbest}          = 59;         # preferred time within an hour 0-59, integer
-    $defopt{dbest}          = 23.99;      #                       a day 0-23.99, float
+    # xbest options to prefer one part of a period, e.g. 5pm, Fridays
+    # defaults are at the end of the period (calendar mode only!)
+    $defopt{hbest}          = 59;         # preferred minute within an hour 0-59, integer
+    $defopt{dbest}          = 23.99;      # preferred hour within a day 0-23.99, float
     $defopt{wbest}          = 7;          # preferred day within a week 1-7, integer, 1=Sun 7=Sat
     $defopt{mbest}          = 31;         # preferred day within a month 1-31  
     $defopt{ybest}          = 366;        # preferred day in the year 1-366
@@ -1743,7 +1740,7 @@ sub processOptions () {
     }
 
     # Add basic info to logfile (which couldn't be done before we had a valid logfile)
-    my $intro = "$Script version $Version starting at " . (strftime "%H:%M:%S", localtime);
+    my $intro = "$Script version $VERSION starting at " . (strftime "%H:%M:%S", localtime);
     logit under2("\n\n$intro\n\n"), 1;
     logit "Command line: $0 @ARGVcopy\n", 3;
 
@@ -1990,8 +1987,8 @@ sub displayContext ($$$) {
     my $indent  = shift;    # for pretty-printing
     my $text = '';
     foreach my $cref (@{$contRef->{$context}}) {
-        $text .= sprintf("%*s: '%s'>\n", $indent+16, "<$context", $cref->{location});
         if (keys %{$cref->{options}}) {
+            $text .= sprintf("%*s: '%s'>\n", $indent+16, "<$context", $cref->{location});
             my $copts = $cref->{options};
             my $text2 = '';    # put the sub-contexts last
             foreach my $subopt (sort keys %$copts) {
@@ -2009,8 +2006,11 @@ sub displayContext ($$$) {
                 }
             }
             $text .= $text2;    
+            $text .= sprintf("%*s\n", $indent+16+2, "</$context>");
+        } else {
+            # No sub-options, just display as a simple option
+            $text .= sprintf("%*s: '%s'\n", $indent+16, "$context", $cref->{location});
         }
-        $text .= sprintf("%*s\n", $indent+16+2, "</$context>");
     }
     return $text;
 }
@@ -2047,7 +2047,7 @@ sub displayOptions () {
 sub showLicence () {
     printit <<EOT;
 rsync-based backup snapshot creation and management        
-Copyright (C) 2011  Chris Dennis, chris\@starsoftanalysis.co.uk        
+Copyright (C) 2011,2012 Chris Dennis, chris\@starsoftanalysis.co.uk        
                                                                        
 This program is free software: you can redistribute it and/or modify  
 it under the terms of the GNU General Public License as published by  
@@ -2068,7 +2068,6 @@ EOT
 #---------------------------------------------------------------------------------------------------
 
 sub showHelp () {
-    # TODO indicate which are allowed in contexts
     printit <<EOT;
 
 Usage: $Script [option]...
@@ -2085,8 +2084,9 @@ Main options
 Tuning options
 --[no]calendar            d  use calendar mode (default: calendar)
 --[no]safe                d  use safe mode (default: safe)
---hbest        0..59      ds favoured time within hour (default: 59) 
---dbest        0..23.9    ds favoured time within day in hours (default: 23.9) 
+  Note: --<x>best options only apply to calendar mode.
+--hbest        0..59      ds favoured minute within hour (default: 59) 
+--dbest        0..23.9    ds favoured hour within day in hours (default: 23.9) 
 --mbest        1..31      ds favoured day within month (default: 31) 
 --wbest        1..7       ds favoured day within week, 1=Sunday (default: 1) 
 --ybest        1.366      ds favoured day within year (default: 366) 
@@ -2203,13 +2203,14 @@ sub deleteSnapshots (\@\@$) {
     my $errors = 0;
     printlog "\n", 1;
     debug "list is: " . (join(' ', map {$S{$_}{name}} @D)) . "\n", 'dS';
+    return 0 if !$Opt{delete};
     foreach my $di (0..$#D) {
         my $d = $D[$di];
         # Find the cSpec matching this snapshot (just for the log message)
         while ($cSpecs[$ci]->{beg} > $d) { 
             $ci += 1; 
         }; 
-        if ($di == 0 and ($deleteNew or !$Opt{delete})) {
+        if ($di == 0 and ($deleteNew)) {
             # Don't need to delete the new snapshot because we avoided creating it
             debug "not deleting newest snapshot because it was not created\n", 'dS';
         } else {
@@ -2302,7 +2303,9 @@ sub status ($;\@) {
     my $count  = 0; # complete
     my $xcount = 0; # incomplete
     my $total  = 0;
-    my $ci = 0; # index into @cSpecs
+    my $ci = 0;     # index into @cSpecs
+    my $pi = -1;    # index into $Opt{pspecs}
+    debug "pspecs: " . Dumper($Opt{pspecs}), 'status';
 
     my $plevel = 1; # only output at this level or above
     my $llevel = 1;
@@ -2333,13 +2336,19 @@ sub status ($;\@) {
                 $count += 1;
                 if (@cSpecs) {
                     # Find which cSpec applies (complete snapshots only)
-                    while (@cSpecs and $cSpecs[$ci]->{beg} > $s) { 
+                    while ($cSpecs[$ci]->{beg} > $s) { 
                         $ci += 1; 
                     }; 
                     $label = $cSpecs[$ci]->{label};
                     #$label = $cSpecs[$ci]->{rawspec};
                     #$label .= (' ' . $LevelName{$cSpecs[$ci]->{period}});
                 }
+            }
+            # Print period details if we've got to a new spec
+            while ($pi < 0 or ${$Opt{pspecs}}[$pi]->{beg} > $s) {
+                $pi += 1;
+                printlog "Period covered by spec ${$Opt{pspecs}}[$pi]->{rawspec} is " .
+                    pair2range(${$Opt{pspecs}}[$pi]->{beg}, ${$Opt{pspecs}}[$pi]->{end}) . "\n", 1;
             }
             printlog sprintf("%-*s   %15s   %s\n", $nameLength, $name, 
                 bytes($size) || 'empty', $label), $plevel,$llevel;
@@ -2366,11 +2375,11 @@ sub displaySummary () {
     printlog "\n\nResults Summary\n", 1;
     printlog     "===============\n", 1;
     foreach my $dest (sort keys %Summary) {
-        printlog "Destination $dest:\n";
+        printlog "Destination $dest\n";
         foreach my $source (sort keys %{$Summary{$dest}}) {
             #debug "source=$source DestResult=$DestResult\n", 'dS';
             next if $source eq $DestResult;
-            printlog "\tSource $source:\n", 1;
+            printlog "\tSource $source\n", 1;
             printlog "\t\t$Summary{$dest}{$source}\n", 1;
         }
         printlog "\t$Summary{$dest}{$DestResult}\n", 1;
@@ -2383,10 +2392,8 @@ sub displaySummary () {
 # NB periods end on the beginning of the next one
 
 sub getPeriod ($$) {
-    # Return the beginning and end of the period containing
-    # the moment specified
-    # e.g. if the period is 1 ('d'), return the midnights
-    # before and after the moment
+    # Return the beginning and end of the period containing the moment specified
+    # e.g. if the period is 1 (day), return the midnights before and after the moment
     # (If $moment is already the beginning of the period,
     # then stay in that period - don't skip back one)
     # Note: this is for use in calendar mode only
@@ -2837,8 +2844,8 @@ sub getMatchingSnapshots ($$$$\@) {
                                  # in descending order
 
     my $range  = $end - $beg;   # the length of the period in seconds
-    debug "beg=$beg end=$end range=$range best=$best freqmax=$freqmax\n", 'getMatchingSnapshots';
-    debug " (first S = $S[0]    last S = $S[-1]  -- in descending order)\n", 9 if @S;
+    debug "beg=$beg end=$end range=$range best=$best freqmax=$freqmax\n", 'gMS';
+    debug " (first S = $S[0]    last S = $S[-1]  -- in descending order)\n", 'gMS' if @S;
 
     # Special case: if freqmax is zero, delete all snapshots (i.e. keep none)
     if ($freqmax == 0) {
@@ -3050,6 +3057,8 @@ sub bestOffset {
     my $time   = shift; # a time within the period
     my $best;
 
+    return 0 if !$Opt{calendar};    # Silently ignore xbest options in nocalendar mode
+
     if ($period eq 'h') {
         # Best is a minute from 0-59
         $best = $Opt{hbest} * MINUTE;
@@ -3072,7 +3081,7 @@ sub bestOffset {
         $best = ($ybest-0.5) * DAY;
     } else {
         # Shouldn't happen, but return a usable answer anyway
-        $best = 1;  
+        $best = 0;  
     }
     return $best;
 }
@@ -3290,7 +3299,7 @@ sub findGoodPeriodsNoCal ($$$\@) {
         " freqmin=$spec->{freqmin} periodn=$spec->{periodn} " . 
         "count=$spec->{count} oldestS=" . time2stamp($oldestS) . "\n", 'fGPNC';
 
-    # Special case:
+    # Special case:  WHY???   -- I've removed this test now
     # if this is an 'unlimited' spec, then its count will be (effectively) infinite
     # -- we need to keep filling periods until there are no more snapshots
     # -- if any periods have less than freqmin, then relax, just treat them as full
@@ -3301,7 +3310,7 @@ sub findGoodPeriodsNoCal ($$$\@) {
         debug "looking for $spec->{freqmin} snapshots in one $spec->{period}\n", 'fGPNC';
         my $sip = snapshotsInPeriod(@S, $beg, $end);
         # Look for a contiguous period first
-        if (($spec->{count} == UNLIMITED) or 
+        if (# FIXME why?! ($spec->{count} == UNLIMITED) or 
             ($sip >= $spec->{freqmin}   )    ) {
             push @good, [$beg, $end, 1, $sip, 1];
             $gpCount += 1;    # count it as good
@@ -3372,13 +3381,12 @@ sub findAllPeriods ($$$\@) {
 #===================================================================================================
 # Specs
 
-sub compileSpecs ($$;$) {  
+sub compileSpecs ($$) {  
     # 'Compile' the specs into a list that takes into account
     # the current date and existing snapshots.
     # Works backwards in time from 'now'.
     my $now        = shift;
-    my $specsR     = shift; # = @{(shift)};
-    my $quiet      = shift // 0;   # FIXME not used?
+    my $specsR     = shift; # array ref
 
     my $oldestS = $now; # Will be the time of the oldest snapshot
     # List good and bad snapshots separately
@@ -3391,23 +3399,10 @@ sub compileSpecs ($$;$) {
         }
         $oldestS = $s if $s < $oldestS; # including the bad ones
     }
-
-    my $pl = 2;
-    if ($quiet and !$Opt{debug}) {
-        # In 'quiet' mode, override the print and log levels
-        # so that the user doesn't see unnecessary messages
-        # (there may only be debug messages here later) TODO
-        # TODO in fact quiet mode may not be needed any more if 
-        # compileSpecs is only called once
-        $pl = 9;
-    }    
-    debug "now=" . time2stamp($now) . " specsR=$specsR quiet=$quiet\n", 'cS';
+    debug "now=" . time2stamp($now) . " specsR=$specsR\n", 'cS';
 
     my $firstSpec = 1;  # first spec applies to the current period
-    my @cSpecs;
-
-    # Not like this -- need to take account of bad ones too
-    #my $oldestS = @S ? $S[-1] : $now; # back to the oldestS idea
+    my @cSpecs; # compile specs
 
     my $end = $now + 1; # +1 to ensure 'now' is within the current period
     debug "starting with oldestS=" . time2stamp($oldestS) . 
@@ -3428,6 +3423,7 @@ sub compileSpecs ($$;$) {
             # period that ends now
             ($beg, undef) = prevPeriod($end, $spec->{periodn});
         }
+        my $sEnd = $end;    # end of all periods covered by $spec 
 
         debug "[1] spec=$spec->{rawspec} beg,end=" . pair2range($beg,$end) . "\n", 'cS';
 
@@ -3514,7 +3510,7 @@ sub compileSpecs ($$;$) {
                     "count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . 
                     time2stamp($cSpecs[-1]->{beg}+$cSpecs[-1]->{best}) . 
                     " label=$cSpecs[-1]->{label} " . 
-                    "snapshots=$cSpecs[-1]->{sgood}/$cSpecs[-1]->{sbad}\n", 'fGPNC';
+                    "snapshots=$cSpecs[-1]->{sgood}/$cSpecs[-1]->{sbad}\n", 'cS';
             } else { # it's a complete period
                 push @cSpecs, {
                     beg     => $beg, 
@@ -3537,7 +3533,7 @@ sub compileSpecs ($$;$) {
                     "count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . 
                     time2stamp($cSpecs[-1]->{beg}+$cSpecs[-1]->{best}) . 
                     "label=$cSpecs[-1]->{label} " . 
-                    "snapshots=$cSpecs[-1]->{sgood}/$cSpecs[-1]->{sbad}\n", 'fGPNC';
+                    "snapshots=$cSpecs[-1]->{sgood}/$cSpecs[-1]->{sbad}\n", 'cS';
                 $p += 1;
             }
             # Move back a period beyond @goodPeriods
@@ -3553,7 +3549,7 @@ sub compileSpecs ($$;$) {
         my $count = ($spec->{count} == UNLIMITED) ? 1 : $spec->{count};
         debug "any left over? gpCount=$gpCount, count=$count \n", 'cS';
         for my $i (($gpCount+1)..$count) {
-            # HERE THERE ARE NO MORE SPECS!! FIXME should that be NO MORE SNAPSHOTS ? 
+            # HERE THERE ARE NO MORE SNAPSHOTS.
             # WE'RE JUST ITERATING THE REMAINING PERIODS OF REMAINING SPECS
             push @cSpecs, {
                 beg     => $beg,
@@ -3572,14 +3568,14 @@ sub compileSpecs ($$;$) {
                 partial => 0,
                 fullend => $end,
             };  
-            debug "'empty' cSpec is not empty!!!!!!!!!!!!!!!!!!!!\n", 'fGPNC'
+            debug "'empty' cSpec is not empty!!!!!!!!!!!!!!!!!!!!\n", 'cS'
                 if snapshotsInPeriod(@Sgood, $beg, $end) > 0 ;
             debug "created cSpec [5] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) . 
                 " freq=$cSpecs[-1]->{freqmin}-$cSpecs[-1]->{freqmax} " . 
                 "count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . 
                 time2stamp($cSpecs[-1]->{beg}+$cSpecs[-1]->{best}) . 
                 " label=$cSpecs[-1]->{label} " . 
-                "snapshots=$cSpecs[-1]->{sgood}/$cSpecs[-1]->{sbad}\n", 'fGPNC';
+                "snapshots=$cSpecs[-1]->{sgood}/$cSpecs[-1]->{sbad}\n", 'cS';
             $p += 1;
             ($beg, $end) = prevPeriod($beg, $spec->{periodn});
         }
@@ -3588,6 +3584,11 @@ sub compileSpecs ($$;$) {
         # i.e. its end is OK, but its beg is wrong
         # that's fine, we're working back from that end, so
         # we don't even need now = end -- leave end as it is for next time round loop.
+        
+        # Store details of complete original spec
+        $spec->{beg} = $end;
+        $spec->{end} = $sEnd;
+        debug "status spec=$spec->{rawspec} beg/end " .pair2range($spec->{beg},$spec->{end}), 'cS';
 
         $firstSpec = 0;
 
@@ -3768,7 +3769,7 @@ sub newSnapshot ($$) {
     # Create a new snapshot stamped with the current time,
     # add the entry to the %S hash, and return its time stamp
     my $dest         = shift;
-    my $lastSnapshot = shift;
+    my $lastSnapshot = shift // 0;   # time of last snapshot (or 0 if none)
     my $snapshot = time();
     
     # Avoid having snapshots in the same period that should be in adjacent periods
@@ -3779,34 +3780,36 @@ sub newSnapshot ($$) {
     my $fudgetime = 30; # seconds;
     my $delay = 0;
     my $periodn = ${$Opt{pspecs}}[0]->{periodn}; # period of first spec
-    if ($Opt{calendar}) {
-        # Calendar mode - get beginning and end of current period
-        my ($beg, $end) = getPeriod($snapshot, $periodn);
-        if ( $lastSnapshot         > $beg       and
-            ($lastSnapshot - $beg) < $fudgetime and
-            ($end - $snapshot)     < $fudgetime     )  {
-            # last snapshot is soon after beginning of period
-            # so delay the new one until the beginning of the next period
-            $delay = ($end - $snapshot) + 1;
+    if ($lastSnapshot) {
+        if ($Opt{calendar}) {
+            # Calendar mode - get beginning and end of current period
+            my ($beg, $end) = getPeriod($snapshot, $periodn);
+            if ( $lastSnapshot         > $beg       and
+                ($lastSnapshot - $beg) < $fudgetime and
+                ($end - $snapshot)     < $fudgetime     )  {
+                # last snapshot is soon after beginning of period
+                # so delay the new one until the beginning of the next period
+                $delay = ($end - $snapshot);
+            }
+            debug "calendar: snapshot=" . time2stamp($snapshot) . 
+            " last=" . time2stamp($lastSnapshot) . 
+            " periodn=$periodn beg/end=" . pair2range($beg, $end) . 
+            " delay=$delay\n", 'nS';
+        } else {
+            # Non-calendar mode - if the last snapshot was slightly less than a period ago,
+            # delay the new one until slightly more than a period since the last one.
+            debug "non-calendar\n", 'nS';
+            my $sinceLast = $snapshot - $lastSnapshot;
+            my $periodSecs = $Hours[$periodn] * HOUR;
+            if ($sinceLast < $periodSecs                  and
+                $sinceLast > ($periodSecs - 2*$fudgetime)     ) {
+                $delay = ($lastSnapshot + $periodSecs) - $snapshot;
+            }
+            debug "non-calendar: snapshot=" . time2stamp($snapshot) . 
+            " last=" . time2stamp($lastSnapshot) . 
+            " periodn=$periodn periodSecs=$periodSecs" . 
+            " sinceLast=$sinceLast delay=$delay\n", 'nS';
         }
-        debug "calendar: snapshot=" . time2stamp($snapshot) . 
-                 " last=" . time2stamp($lastSnapshot) . 
-                 " periodn=$periodn beg/end=" . pair2range($beg, $end) . 
-                 " delay=$delay\n", 'nS';
-    } else {
-        # Non-calendar mode - if the last snapshot was slightly less than a period ago,
-        # delay the new one until slightly more than a period since the last one.
-        debug "non-calendar\n", 'nS';
-        my $sinceLast = $snapshot - $lastSnapshot;
-        my $periodSecs = $Hours[$periodn] * 3600;
-        if ($sinceLast < $periodSecs                  and
-            $sinceLast > ($periodSecs - 2*$fudgetime)     ) {
-            $delay = ($lastSnapshot + $periodSecs + 1) - $snapshot;
-        }
-        debug "non-calendar: snapshot=" . time2stamp($snapshot) . 
-                 " last=" . time2stamp($lastSnapshot) . 
-                 " periodn=$periodn periodSecs=$periodSecs" . 
-                 " sinceLast=$sinceLast delay=$delay\n", 'nS';
     }
     if ($delay) {
         printlog "\nWaiting $delay seconds so that the new snapshot will be at the beginning of " .
@@ -4125,32 +4128,43 @@ sub processDestination ($) {
 
     my $now = time();   # Now, and/or timestamp of new snapshot
     if ($Opt{snapshot}) {
+        # Check when the last successful snapshot was run
+        if ($Opt{'min-interval'} > 0 and @S > 1) {
+            # If the last snapshot was unsuccessful and within min-interval, just restart it
+            if ($Opt{'allow-restart'} and 
+                $S{$S[0]}{partial}    and 
+                ($now - $S[0]) < ($Opt{'min-interval'} * MINUTE)) {
+                if (!$Opt{restart}) {
+                    printlog "\nNOTE: Automatically restarting recent unsuccessful snapshot", 1;
+                    $Opt{restart} = 1;
+                }
+            } else {
+                # No auto-restart -- don't run if successful recently
+                my $s = 1;
+                while ($s < @S and $S{$S[$s]}{partial}) {
+                    $s += 1;
+                }
+                if ($s < @S and ($now - $S[$s]) < ($Opt{'min-interval'} * MINUTE)) {
+                    printlog "\nNOTE: It has been less than $Opt{'min-interval'} minutes\n" . 
+                    "      since the last successful snapshot: skipping this destination\n", 1;
+                    return;
+                }
+            }
+        }
         if ($Opt{restart}) {
-            # Restarting the previous snapshot
+            # Restarting the previous snapshot (whether complete or not)
             $now = $S[0];
             debug "restarting with now=$now: " . dumpSnapshot($now) . "\n", 'pD';
-            printlog "NOTE: Restarting snapshot $S{$now}{name}\n", 1;
             # remove the partial flag -- hopefully, we'll complete it
             $S{$now}{partial} = 0;
+            printlog under1("\nRestarting snapshot $S{$now}{name}\n"), 1;
         } else {
             # Normal run, creating a new snapshot.
             # Create the new entry in %S, and get the new time stamp
             $now = newSnapshot($dest, $S[0]);
             # and include it in the list 
             unshift @S, $now;
-        }
-        printlog under1("\nCreating snapshot $S{$now}{name}\n"), 1;
-        # Check when the last successful snapshot was run
-        if ($Opt{'min-interval'} > 0 and @S > 1) {
-            my $s = 1;
-            while ($s < @S and $S{$S[$s]}{partial}) {
-                $s += 1;
-            }
-            if ($s < @S and ($now - $S[$s]) < ($Opt{'min-interval'} * 60)) {
-                printlog "NOTE: It has been less than $Opt{'min-interval'} minutes\n" . 
-                "      since the last successful snapshot: skipping this destination\n", 1;
-                return;
-            }
+            printlog under1("\nCreating snapshot $S{$now}{name}\n"), 1;
         }
     }
 
@@ -4166,10 +4180,11 @@ sub processDestination ($) {
     # FIXME this assumes that the current one will be good!
     #   -- done -- gDL now called again below
     my $deleteNew = grep {$_ == $now} @D;
+    debug "deleteNew=$deleteNew", 'pD';
 
     my $lostDest = 0;
-    if ($Opt{snapshot}) {
-        if ($deleteNew and $Opt{delete} and $Opt{'delete-cp'} and !$Opt{'allow-restart'}) {
+    if ($Opt{snapshot}) {                                         # FIXME why? -v
+        if ($deleteNew and $Opt{delete} and $Opt{'delete-cp'}) { #  and !$Opt{'allow-restart'}) {
             printlog "NOTE: The new snapshot would be immediately deleted,\n" . 
                      "      so rsync will NOT be run for this destination\n", 1;
         } else {
@@ -4198,17 +4213,13 @@ sub processDestination ($) {
         }
     }
 
-    #?return if $Interrupted;
-    # FIXME: or should we carry on and do the metadata??
-
     if (!$lostDest) {
         # Complete and store the metadata
         updateSnapshotSizes();
         writeMetadata($dest) 
     }
     # Display the current situation after recompiling the specs to allow for changes
-    @cSpecs = compileSpecs($now, $Opt{pspecs}, 1);  
-    #   # FIXME this is just to make status more helpful -- is it really needed?
+    @cSpecs = compileSpecs($now, $Opt{pspecs});  
     status($dest, @cSpecs);
 
 }
@@ -4239,7 +4250,7 @@ sub systemCall ($$$$;$$) {
             return 0;
         }
     }
-    debug "cmd=|$cmd| args=|$args|\n", 'systemCall';
+    debug "cmd=|$cmd| args=|$args|\n", 'sC';
     printlog "Running command: $cmd $args\n", $stdoutLevel;
     {
         local *CATCHERR = IO::File->new_tmpfile;
@@ -4284,7 +4295,7 @@ sub systemCall ($$$$;$$) {
             if (ref($stderrRef) eq 'ARRAY') {
                 push @$stderrRef, $_; 
             } elsif (ref($stderrRef) eq 'GLOB') {
-                print $stdoutRef $_;
+                print $stderrRef $_;
             } else {
                 printlog $_, $stderrLevel;
             }
@@ -4866,7 +4877,7 @@ sub testSuite {
 # Mainline is here
 
 # Display basic info -- logging will happen later
-my $intro = "$Script version $Version starting at " . (strftime "%H:%M:%S", localtime), 1;
+my $intro = "$Script version $VERSION starting at " . (strftime "%H:%M:%S", localtime), 1;
 printit under2("\n$intro\n"), 1;
 printit "Command line: $0 @ARGV\n", 3;
 
@@ -4881,7 +4892,7 @@ if (@ARGV == 0) {
 if (processOptions() > 0) {
     printlog "ERROR: Problems found in configuration -- stopping\n", 1;
     printlog "Try '$Script --help' or 'man $Script' for help.\n", 1;
-    logit '-' x 80, 1;
+    logit '-'x80 . "\n", 1;
     exit EXITCONFIG;
 }
 
@@ -4932,13 +4943,14 @@ foreach my $dest (@{$Opt{destination}}) {
     }
     if ($Opt{status}) {
         getSnapshotList($dest->{location});
-        status($dest->{location});
+        my @cSpecs = compileSpecs(time(), $Opt{pspecs});
+        displayCSpecs(@cSpecs) if $Opt{debug}->{status};
+        status($dest->{location}, @cSpecs);
     } else {
         processDestination($dest->{location});
     }
 }
 
-debug "testing debug with code abc\n", 'abc';
 displaySummary();
 
 if ($Interrupted) { # FIXME is this useful?
