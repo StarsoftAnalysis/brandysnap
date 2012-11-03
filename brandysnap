@@ -82,7 +82,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-our $VERSION = '0.2.4';
+our $VERSION = '0.2.5';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -112,7 +112,7 @@ use constant STAMPFMT0 => '00000000-000000';
 #  name     - name of the snapshot directory e.g. 'docs-20111130-320234'
 #  path     - directory path to name (NOT ending with '/')
 #  fullname - same as path/name   
-#  partial  - true if it's a partial (incomplete) snapshot, with a name ending with the suffix
+#  partial  - true if it's a partial (incomplete) snapshot
 #  size     - size of the snapshot in bytes
 #  remote   - true if it's on a remote destination
 #  daemon   - true if it's remote and accessed via an rsync daemon
@@ -166,7 +166,7 @@ use constant DAY    => HOUR * 24;
 use constant WEEK   => DAY * 7;
 # months and years aren't fixed in terms of seconds!
 
-# Regexp used for parsing specs
+# Regexp used for parsing a spec, e.g. 1d or 1d7 or 0-2d31
 my $specRegex = 
            '\s*(?<freqmin>\d+)
             \s*(-\s*(?<freqmax>\d+))?
@@ -410,6 +410,8 @@ sub max ($$) {
 
 #---------------------------------------------------------------------------------------------------
 
+my @Suffix = ('B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB', 'EiB', 'ZiB', 'YiB');
+        # see http://physics.nist.gov/cuu/Units/binary.html
 sub bytes ($) {
     # Simple routine for displaying a file size
     # Return '' if size is zero or less
@@ -417,8 +419,6 @@ sub bytes ($) {
     my $n = shift;
     return '' if $n <= 0;
     my $base = 1024;
-    my @suffix = ('B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB', 'EiB', 'ZiB', 'YiB');
-        # see http://physics.nist.gov/cuu/Units/binary.html
     my $mult = 0;
     while ($n >= $base) { 
         $n /= $base;
@@ -427,15 +427,15 @@ sub bytes ($) {
     my $dp = 0;
     if ($mult > 0) {
         # minimal code for displaying 3 significant figures:
-        if ($n > 99) {
+        if ($n >= 100) {
             $dp = 0;
-        } elsif ($n > 9) {
+        } elsif ($n >= 10) {
             $dp = 1;
         } else {
             $dp = 2;
         }
     }
-    return sprintf ("%4.*f %s", $dp, $n, $suffix[$mult]);
+    return sprintf ("%4.*f %s", $dp, $n, $Suffix[$mult]);
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -2127,13 +2127,13 @@ Advanced options
 --[no]delete-cp           d  delete even in current period (default: delete-cp)
 --[no]expire-old          d  delete oldest snapshots when disk is full (default: no-expire-old)
 --ldcount      n          d  number of --link-dest options to create (default: 1) 
---[no]restart             ds continue previous snapshot (default: norestart)
+--[no]restart             ds continue snapshot(s) from previous run (default: norestart)
                               (implies --snapshot) 
 --[no]snapshot            d  create new snapshots (default: snapshot)
 --status                     print a status report only
 --[no]strict              d  use strict mode (default: nostrict)
 Development options
---debug        0..3       ds amount of debugging information (default: 0) 
+--debug    code[,code...] ds sections in which to enable debugging (default: none) 
 --[no]stacktrace          ds print a stack trace on error (default: nostacktrace)
 --test         n             run test case 'n' 
 Options marked with '!' are required -- others have sensible default values.
@@ -2684,15 +2684,14 @@ sub getSnapshotList ($) {
     # Set empty snapshots as partial (this shouldn't happen, but 
     # we might as well encourage the system to prune empty snapshots)
     foreach my $s (keys %S) {
-        $S{$s}{partial} = 1 if $S{$s} == 0;
+        $S{$s}{partial} = 1 if $S{$s}{size} == 0;
     }
 }
 
 #---------------------------------------------------------------------------------------------------
 
 sub visualise ($$$$$$@) {
-    # Draw a pretty picture of the actual and ideal snapshots
-    # given pairs of (label, array)
+    # Draw a pretty picture of the actual and ideal snapshots given pairs of (label, array).
     # Doesn't distinguish good and bad snapshots -- the caller
     # should visualise bad snapshots separately.
     my $beg        = shift;
@@ -2853,9 +2852,9 @@ sub getMatchingSnapshots ($$$$\@) {
         return ();
     }
 
-    # Special case: if freqmax is -1, keep all snapshots
-    if ($freqmax == -1) {
-        debug "freqmax==-1 -- keeping all\n", 'gMS';
+    # Special case: if freqmax is UNLIMITED, keep all snapshots
+    if ($freqmax == UNLIMITED) {
+        debug "freqmax==UNLIMITED -- keeping all\n", 'gMS';
         return @S;
     }
 
@@ -3437,33 +3436,39 @@ sub compileSpecs ($$) {
             } else {
                 # Period is incomplete ...?
                 my (undef, $fullend) = getPeriod($beg, $spec->{periodn});
-                push @cSpecs, {
-                    beg     => $beg, 
-                    end     => $end, 
-                    freqmin => $spec->{freqmin},
-                    freqmax => ($firstSpec and !$Opt{'delete-cp'}) ? -1 : $spec->{freqmax},    
-                        # -1 means keep all
-                    count   => $spec->{count},
-                    period  => $spec->{period},
-                    best    => min(bestOffset($spec->{period}, $beg), $end-$beg-1),  
-                        # limit best to partial period
-                    rawspec => $spec->{rawspec}, 
-                    label   => $spec->{rawspec} . ($firstSpec ? '-current' : '-partial'),
-                    sgood   => $sip,
-                    sbad    => snapshotsInPeriod(@Sbad, $beg, $end),
-                    partial => 1,
-                    fullend => $fullend,    # end of period if it weren't partial
-                };  
-                # If $end>$oldestS, we should append 'empty' to the label 
-                $cSpecs[-1]->{label} .= ' empty (1)' if $end <= $oldestS;  # is this a nasty hack?  
-                    # YES -- maybe we should stop compiling or at least printing out the 
-                    #   cSpecs once there are no more snapshots   FIXME
-                debug "created cSpec [1] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end})
+                if ($end <= $oldestS) {
+                    debug "not compiling spec $spec->{rawspec} cos it's empty\n", 'cS';
+                } else {
+                    push @cSpecs, {
+                        beg     => $beg, 
+                        end     => $end, 
+                        freqmin => $spec->{freqmin},
+                        # if this is the first period, apply the delete-cp option
+                        # by setting freqmax to UNLIMITED so that none will be deleted
+                        freqmax => ($firstSpec and !$Opt{'delete-cp'}) ? 
+                                        UNLIMITED : $spec->{freqmax},
+                        count   => '', # FIXME $spec->{count},
+                        period  => $spec->{period},
+                        # limit best to partial period:
+                        best    => min(bestOffset($spec->{period}, $beg), $end-$beg-1),  
+                        rawspec => $spec->{rawspec}, 
+                        label   => $spec->{rawspec} . ($firstSpec ? ':current' : ':partial'),
+                        sgood   => $sip,
+                        sbad    => snapshotsInPeriod(@Sbad, $beg, $end),
+                        partial => 1,
+                        fullend => $fullend,    # end of period if it weren't partial
+                    };  
+#                # If $end is older than $oldestS, we should append 'empty' to the label 
+#               $cSpecs[-1]->{label} .= ' empty (1)' if $end <= $oldestS;  # is this a nasty hack?  
+#                    # YES -- maybe we should stop compiling or at least printing out the 
+#                    #   cSpecs once there are no more snapshots   FIXME
+                    debug "created cSpec [1] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end})
                     . " freq=$cSpecs[-1]->{freqmin}-$cSpecs[-1]->{freqmax} " . 
                     "count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . 
                     time2stamp($cSpecs[-1]->{beg}+$cSpecs[-1]->{best}) . 
                     " label=$cSpecs[-1]->{label} " . 
                     "snapshots=$cSpecs[-1]->{sgood}/$cSpecs[-1]->{sbad}\n", 'cS';
+                }
                 # move to previous complete period
                 ($beg, $end) = prevPeriod($beg, $spec->{periodn});   
             }
@@ -3491,18 +3496,18 @@ sub compileSpecs ($$) {
                     beg     => $beg,
                     end     => $end,
                     freqmin => $spec->{freqmin},
-                    freqmax => -1,    # keep them all
+                    freqmax => UNLIMITED,    # keep them all  could use freqmax*pCount?
                     period  => $spec->{period},
                     count   => $pCount,   # may be fractional
                     best    => 0,
                     rawspec => $spec->{rawspec}, 
-                    label   => 'skipped - incomplete ' . $LevelName[$spec->{periodn}] . '(s)',   
+                    label   => $LevelName[$spec->{periodn}] . '(s) with too few snapshots',   
                     sgood   => $sip,
                     sbad    => snapshotsInPeriod(@Sbad, $beg, $end), 
                     partial => 0,
                     fullend => $end,
                 };
-                # FIXME if there are no more snapshots, then printing 'incomplete period'
+                # FIXME if there are no more snapshots, then printing 'too few'
                 # (which may be for a fractional period) and then doing a list of 'empty' cSpecs
                 # looks silly.  Possibly.
                 debug "created cSpec [3] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end})
@@ -3517,12 +3522,14 @@ sub compileSpecs ($$) {
                     end     => $end, 
                     freqmin => $spec->{freqmin},
                     # if this is the first period, apply the delete-cp option
-                    freqmax => (($end == $now+1) and !$Opt{'delete-cp'}) ? -1 : $spec->{freqmax}, 
+                    # by setting freqmax to UNLIMITED so that none will be deleted
+                    freqmax => (($end == $now+1) and !$Opt{'delete-cp'}) ? 
+                                    UNLIMITED : $spec->{freqmax}, 
                     period  => $spec->{period},
-                    count   => $spec->{count},
+                    count   => '', # FIXME $spec->{count},
                     best    => bestOffset($spec->{period}, $beg),
                     rawspec => $spec->{rawspec}, 
-                    label   => $spec->{rawspec} . "-$p",
+                    label   => $spec->{rawspec} . ":$p",
                     sgood   => $sip, 
                     sbad    => snapshotsInPeriod(@Sbad, $beg, $end), 
                     partial => 0,
@@ -3543,7 +3550,7 @@ sub compileSpecs ($$) {
         debug "[3] spec=$spec->{rawspec} beg,end=" . pair2range($beg,$end) . "\n", 'cS';
 
         # We'll get straight here for specs after the one with not enough good periods
-        # (or possibly first time if there aren't any specs)
+        # (or possibly first time if there aren't any snapshots)
         # NOTE -- we're just accessing the array @goodPeriod.
         # If count is UNLIMITED, potentially unlimited specs -- just do one for documentation.
         my $count = ($spec->{count} == UNLIMITED) ? 1 : $spec->{count};
@@ -3551,26 +3558,27 @@ sub compileSpecs ($$) {
         for my $i (($gpCount+1)..$count) {
             # HERE THERE ARE NO MORE SNAPSHOTS.
             # WE'RE JUST ITERATING THE REMAINING PERIODS OF REMAINING SPECS
-            push @cSpecs, {
-                beg     => $beg,
-                end     => $end,
-                freqmin => $spec->{freqmin},
-                freqmax => $spec->{freqmax},    # no reason for -1 here
-                period  => $spec->{period},
-                count   => $spec->{count},    # or 0,  ?
-                best    => 0,
-                rawspec => $spec->{rawspec}, 
-                label   => $spec->{rawspec} . "-$p empty (2)",
-                sgood   => snapshotsInPeriod(@Sgood, $beg, $end), 
-                    # should always be 0 -- we'll check
-                sbad    => snapshotsInPeriod(@Sbad, $beg, $end), 
-                    # should always be 0 -- we'll check
-                partial => 0,
-                fullend => $end,
-            };  
+            debug "not compiling $spec->{rawspec} count=$i\n", 'cS';
+#            push @cSpecs, {
+#                beg     => $beg,
+#                end     => $end,
+#                freqmin => $spec->{freqmin},
+#                freqmax => $spec->{freqmax},  # no reason for UNLIMITED here (single period)
+#                period  => $spec->{period},
+#                count   => $spec->{count},    # or 0,  ?
+#                best    => 0,
+#                rawspec => $spec->{rawspec}, 
+#                label   => $spec->{rawspec} . ":$p empty (2)",
+#                sgood   => snapshotsInPeriod(@Sgood, $beg, $end), 
+#                    # should always be 0 -- we'll check
+#                sbad    => snapshotsInPeriod(@Sbad, $beg, $end), 
+#                    # should always be 0 -- we'll check
+#                partial => 0,
+#                fullend => $end,
+#            };  
             debug "'empty' cSpec is not empty!!!!!!!!!!!!!!!!!!!!\n", 'cS'
                 if snapshotsInPeriod(@Sgood, $beg, $end) > 0 ;
-            debug "created cSpec [5] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) . 
+            debug "didn't create cSpec [5] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) . 
                 " freq=$cSpecs[-1]->{freqmin}-$cSpecs[-1]->{freqmax} " . 
                 "count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . 
                 time2stamp($cSpecs[-1]->{beg}+$cSpecs[-1]->{best}) . 
@@ -3603,7 +3611,7 @@ sub compileSpecs ($$) {
             freqmin => 0,
             freqmax => 0,     # keep none of them
             period  => '',    # not a proper period -- maps to '' in %LevelName
-            count   => 1,     # there is 1 of these
+            count   => '', # FIXME 1,     # there is only 1 of these 'old' specs
             best    => 0,
             rawspec => '',
             label   => 'old',
@@ -3617,20 +3625,20 @@ sub compileSpecs ($$) {
             "count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . 
             time2stamp($cSpecs[-1]->{beg}+$cSpecs[-1]->{best}) . 
             " label=$cSpecs[-1]->{label} snapshots=$cSpecs[-1]->{sgood}/$cSpecs[-1]->{sbad}\n", 
-            'fGPNC';
+            'cS';
     }
 
     # Double check that it's ok
     my $lastbeg = $cSpecs[0]->{end};
     foreach my $c (@cSpecs) {
         if ($c->{end} != $lastbeg) {
-            debug "      skipped " . fmtRange($c->{end}, $lastbeg) . ' with ' . 
-                snapshotsInPeriod(@Sgood, $c->{end}, $lastbeg) . " snapshots\n";
-            debug "      !!!!!!!!!!!!! This shouldn't happen any more!\n"; 
+            debug "skipped " . fmtRange($c->{end}, $lastbeg) . ' with ' . 
+                snapshotsInPeriod(@Sgood, $c->{end}, $lastbeg) . " snapshots\n", 'cS';
+            debug "!!!!!!!!!!!!! This shouldn't happen any more!\n", 'cS'; 
         }
         if ($c->{beg} > $c->{end}) {
-            debug "      invalid cSpec -- beg > end: " . fmtRange($c->{beg}, $c->{end}) . "\n"; 
-            debug "      !!!!!!!!!!!!! This shouldn't happen any more!\n"; 
+            debug "invalid cSpec -- beg > end: " . fmtRange($c->{beg}, $c->{end}) . "\n", 'cS'; 
+            debug "!!!!!!!!!!!!! This shouldn't happen any more!\n", 'cS'; 
         }
         $lastbeg = $c->{beg};
     }
@@ -3649,29 +3657,25 @@ sub displayCSpecs (\@;\%) {
     printlog "\nCompiled specs:\n", 3;  
     printlog   "---------------\n", 3;
 
-    # e.g.  From              To                F  P      C  Comment               Ss    Ps    Ds
-    #       20080101-111122 - 20090101-221111   0  d  99999  6d7.............30  9999  9999  9999
-    printlog sprintf("%-15s - %-15s  %5s  %1s  %5s  %-30s  %4s  %4s  %4s\n",
-        'From', 'To', 'Freq', 'P', 'C', 'Comment', 'Ss', 'Ps', 'Ds'), 3;
-    printlog sprintf("%-15s - %-15s  %5s  %1s  %5s  %-30s  %4s  %4s  %4s\n",
-        '-'x15, '-'x15, '-----', '-', '-----', '-'x30, '----', '----', '----'), 3;
+    # e.g.  From              To                F  P      C  Comment              Ss    Ps    Ds
+    #       20080101-111122 - 20090101-221111   0  d  99999  6d7.............31 9999  9999  9999
+    printlog sprintf("%-15s - %-15s  %5s  %1s  %-37s  %4s  %4s  %4s\n",
+        'From', 'To', 'Freq', 'P', 'Spec / Comment', 'Ss', 'Ps', 'Ds'), 3;
+    printlog sprintf("%-15s - %-15s  %5s  %1s  %-37s  %4s  %4s  %4s\n",
+        '-'x15, '-'x15, '-----', '-', '-'x37, '----', '----', '----'), 3;
     my $totalS = 0;
     my $totalX = 0;
     my $totalD = 0;
     foreach my $c (@cSpecs) { 
-        my $excess = 0; # how many to delete
-        if ($c->{freqmax} >= 0 and 
-            $c->{sgood} + $c->{sbad} > $c->{freqmax}) {
-            $excess = $c->{sgood}+$c->{sbad} - $c->{freqmax};
-        }
-        printlog sprintf("%s - %s  %2d:%2d  %1s  %5s  %-30s  %4d  %4d  %4.0d\n",
+        my $excess = max($c->{sgood} + $c->{sbad} - $c->{freqmax}, 0); # how many to delete
+        printlog sprintf("%s - %s  %2d-%-2s  %1s  %-37s  %4d  %4d  %4.0d\n",
             time2stamp($c->{beg}), 
             time2stamp($c->{end}),
             $c->{freqmin}, 
-            $c->{freqmax} == -1 ? 99 :$c->{freqmax},    # i.e. all
+            $c->{freqmax} == UNLIMITED ? '*' : $c->{freqmax},    # i.e. all
             $c->{period}, 
-            $c->{count} eq UNLIMITED ? 'all' : $c->{count},
-            $c->{label}, 
+            #$c->{count} == UNLIMITED ? 'all' : sprintf("%g", $c->{count}),
+            ($c->{count} eq '' ? '' : sprintf("%g ", $c->{count})) . $c->{label}, 
             $c->{sgood},
             $c->{sbad},
             $excess,
@@ -3680,10 +3684,10 @@ sub displayCSpecs (\@;\%) {
         $totalX += $c->{sbad};
         $totalD += $excess;
     }
-    printlog sprintf("%-15s   %-15s  %5s  %1s  %5s  %-30s  %4s  %4s  %4s\n",
-        '', '', '', '', '', '-' x 30, '----', '----', '----'), 3;
-    printlog sprintf("%-15s   %-15s  %5s  %1s  %5s  %-30s  %4d  %4d  %4d\n",
-        '', '', '', '', '', 'Totals:', $totalS, $totalX, $totalD), 3;
+    printlog sprintf("%-15s   %-15s  %5s  %1s  %37s  %4s  %4s  %4s\n",
+        '', '', '', '', '-'x37, '----', '----', '----'), 3;
+    printlog sprintf("%-15s   %-15s  %5s  %1s  %37s  %4d  %4d  %4d\n",
+        '', '', '', '', 'Totals:', $totalS, $totalX, $totalD), 3;
 
     # Visualise each cSpec period
     if ($Sref) {
@@ -3966,7 +3970,7 @@ sub runRsync ($\@$) {
         # Run rsync, dealing with various types of error
         while ($keepTrying and !$Interrupted) {
             $tries += 1;
-            printlog "Running rsync -- try $tries of $maxTries\n", 2;
+            printlog "Running rsync" . ($maxTries>1 ? " -- try $tries of $maxTries" : "") . "\n", 2;
             my $rsyncInterrupted = '';     # only true of interrupted during the main rsync  
             my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'}, $args, 2,2);
             $rsyncInterrupted = $Interrupted;
@@ -4924,7 +4928,7 @@ if ($Opt{test}) {
 # Create a lock to prevent overlapping runs
 unless (open(LOCKFILE, '>', $Opt{lockfile}) and
         flock(LOCKFILE, LOCK_EX | LOCK_NB)      ) {
-    printlog "Can not open and lock lock-file '$Opt{lockfile}'.\n" .
+    printlog "\nCan not open and lock lock-file '$Opt{lockfile}'.\n" .
         "$Script is probably already running with that lock-file.\n" .
         "If you're sure it isn't, delete the lock-file and try again.\n", 1;
     exit EXITNOLOCK; 

@@ -486,6 +486,8 @@ Band-width limit for receiving in kbps.  Set it to 0 for no limit.  (default: B<
 
 Band-width limit for sending in kbps. Set it to 0 for no limit.  (default: B<0>)
 
+Tip: keep the value low (e.g. 200) if connecting over wifi to avoid swamping the connection.
+
 =item B<rsync-opts I<options>>
 
 Options to pass to rsync, in addition to those that brandysnap will always use (i.e. --relative and --link-dest). Use this only if you know what you are doing.  (default: -aHx --numeric-ids)

@@ -124,7 +124,7 @@
 .\" ========================================================================
 .\"
 .IX Title "BRANDYSNAP 1"
-.TH BRANDYSNAP 1 "2012-10-25" "perl v5.16.1" "User Contributed Perl Documentation"
+.TH BRANDYSNAP 1 "2012-10-28" "perl v5.16.1" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -571,6 +571,8 @@ Band-width limit for receiving in kbps.  Set it to 0 for no limit.  (default: \f
 .IP "\fBbwlimit-out\fR <n>" 4
 .IX Item "bwlimit-out <n>"
 Band-width limit for sending in kbps. Set it to 0 for no limit.  (default: \fB0\fR)
+.Sp
+Tip: keep the value low (e.g. 200) if connecting over wifi to avoid swamping the connection.
 .IP "\fBrsync-opts \f(BIoptions\fB\fR" 4
 .IX Item "rsync-opts options"
 Options to pass to rsync, in addition to those that brandysnap will always use (i.e. \-\-relative and \-\-link\-dest). Use this only if you know what you are doing.  (default: \-aHx \-\-numeric\-ids)

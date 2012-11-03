@@ -1,6 +1,12 @@
 Changelog for brandysnap
 ========================
 
+0.2.5	3/11/12
+* Streamlined compileCSpecs to ignore old periods before any snapshots.
+* Improved displayCSpecs.
+* Bug fixes:
+  - Use UNLIMITED instead of -1 for freqmax to indicate 'keep all'.
+
 0.2.4	25/10/12
 * More information in status report re periods covered by each spec.
 * Automatically restart if the previous snapshot failed and was less than
