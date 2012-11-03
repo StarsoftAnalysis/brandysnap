@@ -1,5 +1,20 @@
 #!/usr/bin/perl
 
+# Forked from 0.2.5 to hack on Windows -- commented as 'W7'
+# To do:
+#   * can we do hard links!?
+#   * lots of stuff with slashes
+#   * different defaults?
+#   * is blocksize 512?
+#   * absPath()
+#   * sourceDir()
+#   * C:\ looks remote to rsync -- might require cygwin
+#   * tests for remoteness
+#   * absPath is OK, but not for things that are for rsync -- maybe just don't
+#      absPath them, make the user specify them properly
+#   * so need to tweak paths when passing them to rsync
+#      in rsyncReadable and other places
+#   * Signals!!!
 #########################################################################
 # brandysnap: rsync-based backup snapshot creation and management       #
 # Copyright (C) 2011,2012 Chris Dennis, chris@starsoftanalysis.co.uk    #
@@ -40,7 +55,7 @@ use File::Path qw(remove_tree);
 use File::Glob qw(:glob); 
 use File::Find;
 use File::Temp qw(tempfile tempdir);
-use File::Spec::Functions qw(rel2abs splitdir catfile catdir);
+use File::Spec::Functions qw(canonpath rel2abs splitdir catfile catdir);
 use File::Basename;
 use Fcntl qw(:flock);
 use Scalar::Util qw(looks_like_number);
@@ -60,7 +75,7 @@ $SIG{__DIE__} = sub { Carp::confess(@_) };
 # $Interrupted becomes true if the script has been interrupted
 my $Interrupted = '';
 # Set the process group so that we can tidy up child processes:
-setpgrp(0, 0);
+# What's the W7 way for this?: setpgrp(0, 0);
 # Trap interrupts: set a flag and make sure any children are killed
 sub killgroup {
     my $sig = shift;
@@ -96,9 +111,17 @@ use constant EXITINT    => 4;   # Interrupted
 use constant EXITNOLOCK => 5;   # Can't get lock
 my $ExitCode = EXITOK;
 
+# Operating system -- assume Linux unless these flags say otherwise
+my $Win = 0;
+my $Cygwin = 0;
+print "OS=$^O\n";
+given ($^O) {
+    when ('MSWin32') { $Win = 1; }
+}
+
 # Options -- need some options to start with
 our %Opt = ();   
-$Opt{debug}    = {}; #{'rc'=>1, 'cos'=>1}; # Set this when debugging processOptions(), or just {}
+$Opt{debug}    = {'ap'=>1, 'po'=>1 }; # Set this when debugging processOptions(), or just {}
 $Opt{verbose}  = 1;
 $Opt{loglevel} = 1;
 
@@ -709,6 +732,7 @@ sub remote ($) {
     # (via daemon or just ssh)
     # (See rsync's man page re the significance of ':')
     my $path = shift;
+    return 0 if ($Win and $path =~ /^[A-Za-z]:(\\|\/)/);    # FIXME is this OK?
     return 1 if index($path, ':') > -1;
     return 0;
 }
@@ -719,6 +743,7 @@ sub remoteDaemon ($) {
     # Returns 'true' if the path is considered by rsync to be remote
     # via the rsync daemon
     # (See rsync's man page re the significance of '::' and 'rsync://')
+    # W7 TODO what does this look like on Windows?
     my $path = shift;
     return 1 if $path =~ m|^rsync://|;
     return 1 if index($path, '::') > -1;
@@ -741,20 +766,41 @@ sub absPath ($) {
     # Convert a file or directory name into an absolute
     # path, with '~' (home directory) expansion.
     my $path = shift;
+    if ($Win) {     # assumes cygwin
+        # No change if path already starts with /cygdrive/
+        return $path if $path =~ m|^/cygdrive/|;
+        # Change C:\... to /cygdrive/c/... etc.; no other change
+        # !! What if it's really a single-letter hostname?
+        return $path if ($path =~ s|^([A-Za-z]):|"/cygdrive/".lc($1)|e);
+        # No change if remote
+        return $path if remote($path);
+        ## Swap \ for / -- can't be right!?
+        #$abspath =~ s|\\|/|g;
+    }
+    # Not Windows:
     # NOTE: This is Unix-specific
     # See http://stackoverflow.com/questions/4404628/abs-path-with-the-home-directory
     # and http://docstore.mik.ua/orelly/perl4/cook/ch07_04.htm
     $path =~ s{^~([^/]*)}{$1?(getpwnam($1))[7]:($ENV{HOME} || $ENV{LOGDIR} || (getpwuid($<))[7])}ex;
-    return rel2abs($path);
+    my $abspath = rel2abs($path);
+    debug "$path becomes $abspath", 'aP';
+    return $abspath;
 }
 
 #---------------------------------------------------------------------------------------------------
 
-sub safeAbsPath ($) {
-    # A version of absPath that does not change the path at all
-    # if it contains a ':', i.e. if it's an rsync-style remote path
+sub rsyncAbsPath ($) {
+    # A version of absPath that allows for the fact rsync uses ':' to 
+    # indicate a remote location (and :: for a remote daemon).
+    # FIXME and what about rsync://... style?
+    # On Windows, we have convert C:\... to /cygdrive/c... etc. first.
     my $path = shift;
+    return absPath($path);
+    # FIXME what's going on?
+    #my $abspath = rel2abs($path);
+    debug "path=$path   r2a=".rel2abs($path)."   canon=".canonpath($path)."\n", 'rAP';
     return $path if remote($path);
+    return $path if $path =~ /cygdrive/;    # W7 FIXME
     return absPath($path);
 }
 
@@ -803,7 +849,7 @@ sub updateSnapshotSizes () {
     # Make sure that each snapshot in %S has size information --
     # if not, get the size of the snapshot via rsync.
     # 
-    # rsync returns directory listings thusly (even for recent dates):
+    # rsync returns directory listings thusly (even for recent dates, and even on Windows):
     #    -rwxr-xr-x         149 2008/06/13 13:56:30 textsmart
     #    drwxr-xr-x        4096 2011/05/07 17:41:48 40dnamer
     # and gives return code 23 if the directory is not found
@@ -811,6 +857,8 @@ sub updateSnapshotSizes () {
     # Note the lack of nlink information, so we can't calculate 'delete size'.
     # Process in latest-first order so that we can always update the latest one
     # which will be non-zero if we restarted it.
+    # W7 TODO C:\ looks like a remote host to rsync
+# W7 initial scan to here
     my $firstOne = 1;
     foreach my $snapshot (rsort keys %S) {
         debug "initial snapshot size is $S{$snapshot}{size}\n", 'uSS';
@@ -819,8 +867,10 @@ sub updateSnapshotSizes () {
         my $totalSize = 0;
         # Get rsync listing into an array
         my @items;
+        my @errors;
         my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'}, 
-            stdArgs(0) . " --recursive '$S{$snapshot}{fullname}/'", 9,9, \@items);
+            stdArgs(0) . " --list-only --recursive '$S{$snapshot}{fullname}/'", 
+            9,9, \@items, \@errors);    # FIXME let @errors be printed by sC
         debug "snapshot=$snapshot rc=$rc rc2='$rc2'\n", 'uSS';
         if (!$rc) {
             foreach my $item (@items) {
@@ -830,7 +880,7 @@ sub updateSnapshotSizes () {
                     (?<t>.)
                     (?<p>.{9})\s+
                     (?<size>\d+)\s\d{4}/\d{2}/\d{2}\s\d{2}:\d{2}:\d{2}\s
-                    (?<name>.*)$
+                    (?<name>.+)$
                     |x) {
                     next if $+{name} eq '.';
                     next if $+{name} eq '..';
@@ -852,6 +902,8 @@ sub updateSnapshotSizes () {
             }
             $S{$snapshot}{size} = $totalSize;
             debug "adding size information for $S{$snapshot}{name}, size: $totalSize\n", 'uSS';
+        } else {
+            debug "rsync errors: @errors", 'uSS';
         }
     }
 }
@@ -900,8 +952,9 @@ sub rsyncWritable ($) {
         return rsyncReadable($dest);
     }
     my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'},
-        stdArgs(1) . "--recursive $EmptyDir/ $dest/$tempdir/", 
-        9,9, \@output, \@errors);
+        #stdArgs(1) . "--recursive $EmptyDir/ $dest/$tempdir/",  W7 FIXME
+        stdArgs(1) . "--recursive $EmptyDir $dest/$tempdir/", 
+        9,9, ); #\@output, \@errors);
     debug "create rc=$rc\n", 'rW';
     return 0 if $rc;  # non-zero - it's not writable, return false
     # temp dir was created, so delete it
@@ -1769,7 +1822,7 @@ sub processOptions () {
         my @tempSources = @{$Opt{source}};
         @{$Opt{source}} = ();
         foreach my $src (@tempSources) {
-            my $abssrc = safeAbsPath($src->{location});
+            my $abssrc = rsyncAbsPath($src->{location});
             if (rsyncReadable($abssrc)) {
                 $readableSources += 1; 
                 push @{$Opt{source}}, {location=>$abssrc, options=>$src->{options}};
@@ -1810,7 +1863,7 @@ sub processOptions () {
     @{$Opt{destination}} = ();
     foreach my $dest (@tempDests) {
         # Check that destination is writable
-        my $absdest = safeAbsPath($dest->{location});
+        my $absdest = rsyncAbsPath($dest->{location});
         #debug "destination: absdest=$absdest\n", 'pO';
         if (rsyncWritable($absdest)) {
             my $options = $dest->{options};
@@ -1823,7 +1876,7 @@ sub processOptions () {
                 my @tempSources = @{$options->{source}};
                 @{$options->{source}} = ();
                 foreach my $src (@tempSources) {
-                    my $abssrc = safeAbsPath($src->{location});
+                    my $abssrc = rsyncAbsPath($src->{location});
                     #debug "checking $abssrc within $absdest\n", 'pO';
                     if (rsyncReadable($abssrc)) {
                         $readableSubSources += 1; 
@@ -2543,7 +2596,10 @@ sub writeMetadata ($) {
     debug "json is '$json'\n", 'wM';
 
     # Write to a temporary local file
-    my ($tempfh, $tempfilename) = tempfile(UNLINK => 1);
+    my $tempdir = $ENV{TMP} || '.';
+    my ($tempfh, $tempfilename) = 
+        $Win ? tempfile('bsXXXXXXXX', UNLINK => 1, DIR=>$tempdir)  # Windows
+             : tempfile(UNLINK => 1);                              # not Windows
     my $succeeded = 0;
     print $tempfh "# Status of brandysnap backups for '$Opt{template}' on '$dest' as at " . 
         time2stamp(time()) . "\n";
@@ -2556,7 +2612,7 @@ sub writeMetadata ($) {
     #my $remPath = $Opt{'remote-rsync-cmd'} ? "--rsync-path '$Opt{'remote-rsync-cmd'}'" : '';
     my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'}, 
         stdArgs(1) . " --chmod=ug=rw,o=r '$tempfilename' '$dest/$mdfile'", 
-        9,9, \@output);    
+        9,9, ); # FIXME \@output);    
     debug "rc=$rc output: '@output'\n", 'wM';
     $succeeded = 1 if !$rc;
 
@@ -4928,7 +4984,7 @@ if ($Opt{test}) {
 # Create a lock to prevent overlapping runs
 unless (open(LOCKFILE, '>', $Opt{lockfile}) and
         flock(LOCKFILE, LOCK_EX | LOCK_NB)      ) {
-    printlog "\nCan not open and lock lock-file '$Opt{lockfile}'.\n" .
+    printlog "Can not open and lock lock-file '$Opt{lockfile}'.\n" .
         "$Script is probably already running with that lock-file.\n" .
         "If you're sure it isn't, delete the lock-file and try again.\n", 1;
     exit EXITNOLOCK; 
