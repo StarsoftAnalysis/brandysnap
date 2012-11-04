@@ -3504,12 +3504,9 @@ sub compileSpecs ($$) {
                     label   => $LevelName[$spec->{periodn}] . '(s) with too few snapshots',   
                     sgood   => $sip,
                     sbad    => snapshotsInPeriod(@Sbad, $beg, $end), 
-                    partial => 0,
+                    #partial => 0,
                     fullend => $end,
                 };
-                # FIXME if there are no more snapshots, then printing 'too few'
-                # (which may be for a fractional period) and then doing a list of 'empty' cSpecs
-                # looks silly.  Possibly.
                 debug "created cSpec [3] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end})
                     . " freq=$cSpecs[-1]->{freqmin}-$cSpecs[-1]->{freqmax} " . 
                     "count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . 
@@ -3532,7 +3529,7 @@ sub compileSpecs ($$) {
                     label   => $spec->{rawspec} . ":$p",
                     sgood   => $sip, 
                     sbad    => snapshotsInPeriod(@Sbad, $beg, $end), 
-                    partial => 0,
+                    #partial => 0,
                     fullend => $end,
                 };  
                 debug "created cSpec [4] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) .
@@ -3573,7 +3570,7 @@ sub compileSpecs ($$) {
 #                    # should always be 0 -- we'll check
 #                sbad    => snapshotsInPeriod(@Sbad, $beg, $end), 
 #                    # should always be 0 -- we'll check
-#                partial => 0,
+#                #partial => 0,
 #                fullend => $end,
 #            };  
             debug "'empty' cSpec is not empty!!!!!!!!!!!!!!!!!!!!\n", 'cS'
@@ -3617,7 +3614,7 @@ sub compileSpecs ($$) {
             label   => 'old',
             sgood   => snapshotsInPeriod(@Sgood, $oldestS, $end), 
             sbad    => snapshotsInPeriod(@Sbad, $oldestS, $end), 
-            partial => 0,
+            #partial => 0,
             fullend => $end,
         };  
         debug "created cSpec [6] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) . 
