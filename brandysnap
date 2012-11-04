@@ -2,8 +2,8 @@
 
 # Forked from 0.2.5 to hack on Windows -- commented as 'W7'
 # To do:
-#   * can we do hard links!?
-#   * lots of stuff with slashes
+#   * can we do hard links!?    yes   
+#   * lots of stuff with slashes   not needed
 #   * different defaults?
 #   * is blocksize 512?
 #   * absPath()
@@ -14,7 +14,24 @@
 #      absPath them, make the user specify them properly
 #   * so need to tweak paths when passing them to rsync
 #      in rsyncReadable and other places
-#   * Signals!!!
+#   * Signals!!! -- ctrl-c works with cygwin!
+
+# Assumptions / limitations
+#   * assumes the usual /cygdrive/c structure
+#
+# Problems -- permissions / ACLs on /cygdrive/c -- on w7u it's
+#   Chris@W7U /cygdrive
+#   $ ls -la
+#   total 12
+#   dr-xr-xr-x  1 Chris            None             0 Nov  4 22:16 .
+#   drwxr-xr-x+ 1 Chris            None             0 Nov  4 17:05 ..
+#   d---------+ 1 TrustedInstaller TrustedInstaller 0 Nov  3 23:32 c
+#   drwxr-xr-x  1 Chris            None             0 Oct 18 15:44 d
+# - can create backup, but not delete stuff
+#   - better without --relative??
+# - maybe we just can't create the backup within /cygdrive/c, 
+#   which is a stupid place to put it anyway.
+# 
 #########################################################################
 # brandysnap: rsync-based backup snapshot creation and management       #
 # Copyright (C) 2011,2012 Chris Dennis, chris@starsoftanalysis.co.uk    #
@@ -65,6 +82,17 @@ use IO::File;
 use Sys::Hostname;
 use Data::Dumper;   # only for dev
 
+# Operating system -- assume Linux unless these flags say otherwise ===============================
+
+my $Win = 0;
+my $Cygwin = 0;
+print "OS=$^O\n";
+given ($^O) {   # Don't forget: $^O is the OS Perl was compiled for, not what it's running on.
+    when (/Win/) { $Win = 1; }
+    when ('cygwin') { $Win = 1; $Cygwin = 1; }
+    # TODO: if Win but not cygwin, could check for '-d /cygdrive' to see if we're in cygwin env.
+}
+
 # Interrupts and other housekeeping ===============================================================
 
 # get a stack trace: (may get turned off later)
@@ -111,17 +139,9 @@ use constant EXITINT    => 4;   # Interrupted
 use constant EXITNOLOCK => 5;   # Can't get lock
 my $ExitCode = EXITOK;
 
-# Operating system -- assume Linux unless these flags say otherwise
-my $Win = 0;
-my $Cygwin = 0;
-print "OS=$^O\n";
-given ($^O) {
-    when ('MSWin32') { $Win = 1; }
-}
-
 # Options -- need some options to start with
 our %Opt = ();   
-$Opt{debug}    = {'ap'=>1, 'po'=>1 }; # Set this when debugging processOptions(), or just {}
+$Opt{debug}    = {}; #{'rc'=>1, 'ap'=>1, 'po'=>1 }; # Set this when debugging processOptions(), or just {}
 $Opt{verbose}  = 1;
 $Opt{loglevel} = 1;
 
@@ -410,7 +430,7 @@ sub debug ($;$) {
     my $prefix = '';
     $prefix = "$level: " if $level;
     if ($Opt{debug}->{lc($level)}) {
-        (my $leadingnl, $text) = ($text =~ m/^(\n?)(.*)$/s); 
+        (my $leadingnl, $text) = ($text =~ m/^(\n*)(.*)$/s); 
         printlog "${leadingnl}dbg: $prefix$text", 0,0;
     }
 }
@@ -459,6 +479,18 @@ sub bytes ($) {
         }
     }
     return sprintf ("%4.*f %s", $dp, $n, $Suffix[$mult]);
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub superchomp ($) {
+    # Chomp that also removes trailing \015 -- why is this needed??
+    # - because in cygwin \n is just \012, but files (such as the
+    # configuration file) have probably been edited with Windows' \015\012 newlines
+    # That doesn't explain why this is only need for 'spec' though.
+    foreach (@_) {
+        s/\r?\n?$//;
+    }
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -774,8 +806,8 @@ sub absPath ($) {
         return $path if ($path =~ s|^([A-Za-z]):|"/cygdrive/".lc($1)|e);
         # No change if remote
         return $path if remote($path);
-        ## Swap \ for / -- can't be right!?
-        #$abspath =~ s|\\|/|g;
+        # what happens now?
+        return rel2abs($path);
     }
     # Not Windows:
     # NOTE: This is Unix-specific
@@ -943,7 +975,7 @@ sub rsyncReadable ($) {
 sub rsyncWritable ($) {
     # Use rsync to check if a destination is writable
     my $dest = shift;
-    my $tempdir = 'brandysnap-temp-dir';    # is this ok?
+    my $tempdir = "$Script-temp-dir";    # is this ok?
     my @output;
     my @errors;
     #my $rc = mkdirRsync("$dest/$tempdir");
@@ -952,8 +984,8 @@ sub rsyncWritable ($) {
         return rsyncReadable($dest);
     }
     my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'},
-        #stdArgs(1) . "--recursive $EmptyDir/ $dest/$tempdir/",  W7 FIXME
-        stdArgs(1) . "--recursive $EmptyDir $dest/$tempdir/", 
+        stdArgs(1) . "--recursive $EmptyDir/ $dest/$tempdir/",  # W7 FIXME
+        #stdArgs(1) . "--recursive $EmptyDir $dest/$tempdir/", 
         9,9, ); #\@output, \@errors);
     debug "create rc=$rc\n", 'rW';
     return 0 if $rc;  # non-zero - it's not writable, return false
@@ -1009,7 +1041,7 @@ sub parseSpecs ($) {
     # backup disk is full.
 
     my $rawspec = lc(shift);
-    debug "rawspec = $rawspec\n", 'pS';
+    debug "rawspec = '$rawspec'\n", 'pS';
 
     my @rawspecs = split /,/, $rawspec;
     my @specs = ();
@@ -1017,6 +1049,10 @@ sub parseSpecs ($) {
     my $errorcount   = 0;
 
     foreach my $spec (@rawspecs) {
+        #print "pS: before chomp: spec='$spec'  len=".length($spec)."\n";
+        superchomp($spec);
+        debug "spec = '$spec'\n", 'pS';
+        #print "pS: after superchomp: spec='$spec'  len=".length($spec)."\n";
         if ($spec =~ /^$specRegex$/x) {
             my $freqmin = int($+{freqmin});
             my $freqmax = $freqmin;
@@ -1426,7 +1462,7 @@ sub readConfig ($$) {
         my %confopt;
         my $rc = 0;
         LINE: while (<CONFIG>) {  # to end of context or end of file
-            chomp;
+            superchomp($_);
             $lineno += 1;
             debug "config line $lineno is '$_'\n", 'rC';
             next if /^\s*$/;	# Skip blank lines
@@ -2236,7 +2272,7 @@ sub deleteSnapshot ($) {
     debug "rsync returned $rc, '$rc2'\n", 'dS';
     # This returns no error if the snapshot didn't exist, which is fine
     if ($rc) {
-        printlog "ERROR: failed to delete remote snapshot '$S{$snapshot}{name}' " .
+        printlog "ERROR: failed to delete snapshot '$S{$snapshot}{name}' " .
             "from '$S{$snapshot}{path}' (code $rc)", 1,1;
         return 1;
     }
@@ -4016,6 +4052,8 @@ sub runRsync ($\@$) {
         printlog "Running rsync from source '$location' to destination '$destDir'\n", 2;
         # Note that rsync-opts is put first -- 
         # our own required options will override the user's
+        my $relative = '--relative';
+        $relative = '' if $Win;     # FIXME random test!
         my $args = "$Opt{'rsync-opts'} $verbose $linkdest $incExcOpts $compression " . 
             "$bwlimit --relative $rsyncPath '$location' '$destDir'";
 
