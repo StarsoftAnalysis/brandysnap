@@ -535,7 +535,7 @@ sub diskSpace ($) {
     #       is probably impossible since we want to use rsync for everything.
     my $size = shift;
     my $blocksize = 512;
-    return ceil($size / 512) * 512; 
+    return ceil($size / $blocksize) * $blocksize; 
 }
 
 # Date/time routines ===============================================================================
