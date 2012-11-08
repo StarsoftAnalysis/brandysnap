@@ -15,6 +15,7 @@
 #   * so need to tweak paths when passing them to rsync
 #      in rsyncReadable and other places
 #   * Signals!!! -- ctrl-c works with cygwin!
+#   * check if /cygdrive is really that, or has been set to something else.
 
 # Assumptions / limitations
 #   * assumes the usual /cygdrive/c structure
@@ -31,6 +32,11 @@
 #   - better without --relative??
 # - maybe we just can't create the backup within /cygdrive/c, 
 #   which is a stupid place to put it anyway.
+# Some suggest putting noacl in fstab, but that means everything
+# gets owned by the brandysnap runner.
+# Plan: treat /cygdrive/c as a special case -- it gets 000 permissions
+# so set them to 777.
+#   -- per dest, if dest include /cygdrive/c
 # 
 #########################################################################
 # brandysnap: rsync-based backup snapshot creation and management       #
@@ -88,9 +94,18 @@ my $Win = 0;
 my $Cygwin = 0;
 print "OS=$^O\n";
 given ($^O) {   # Don't forget: $^O is the OS Perl was compiled for, not what it's running on.
-    when (/Win/) { $Win = 1; }
+    when (/Win/) { $Win = 1; } # TODO if /Win/, look for cygwin environment
     when ('cygwin') { $Win = 1; $Cygwin = 1; }
     # TODO: if Win but not cygwin, could check for '-d /cygdrive' to see if we're in cygwin env.
+}
+my $Cygdrive  = '/cygdrive';    # default
+my $CygdriveC = '/cygdrive/c';
+if ($Cygwin) {
+    chomp(my $cygpath = `cygpath --windir` // '');  # returns e.g. /cygdrive/c/Windows
+    if (!$?) {
+        ($CygdriveC = $cygpath)   =~ s|/[^/]*$||;    # gets e.g. /cygdrive/c
+        ($Cygdrive  = $CygdriveC) =~ s|/[^/]*$||;    # gets e.g. /cygdrive
+    }
 }
 
 # Interrupts and other housekeeping ===============================================================
@@ -125,7 +140,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-our $VERSION = '0.2.5';
+our $VERSION = '0.2.5portable';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -141,7 +156,7 @@ my $ExitCode = EXITOK;
 
 # Options -- need some options to start with
 our %Opt = ();   
-$Opt{debug}    = {}; #{'rc'=>1, 'ap'=>1, 'po'=>1 }; # Set this when debugging processOptions(), or just {}
+$Opt{debug}    = {'ap'=>1}; #{'rc'=>1, 'ap'=>1, 'po'=>1 }; # Set this when debugging processOptions(), or just {}
 $Opt{verbose}  = 1;
 $Opt{loglevel} = 1;
 
@@ -764,7 +779,7 @@ sub remote ($) {
     # (via daemon or just ssh)
     # (See rsync's man page re the significance of ':')
     my $path = shift;
-    return 0 if ($Win and $path =~ /^[A-Za-z]:(\\|\/)/);    # FIXME is this OK?
+#    return 0 if ($Cygwin and $path =~ /^[A-Za-z]:(\\|\/)/);    # FIXME is this OK?
     return 1 if index($path, ':') > -1;
     return 0;
 }
@@ -798,9 +813,13 @@ sub absPath ($) {
     # Convert a file or directory name into an absolute
     # path, with '~' (home directory) expansion.
     my $path = shift;
-    if ($Win) {     # assumes cygwin
+    if ($Cygwin) {
+#        # cygpath mangles remote paths...!!!
+#        chomp(my $cygpath = `cygpath -ua $path`);
+#        debug "'$path' becomes '$cygpath'", 'aP';
+#        return $cygpath;
         # No change if path already starts with /cygdrive/
-        return $path if $path =~ m|^/cygdrive/|;
+        return $path if $path =~ m|^/$Cygdrive/|;
         # Change C:\... to /cygdrive/c/... etc.; no other change
         # !! What if it's really a single-letter hostname?
         return $path if ($path =~ s|^([A-Za-z]):|"/cygdrive/".lc($1)|e);
@@ -813,6 +832,7 @@ sub absPath ($) {
     # NOTE: This is Unix-specific
     # See http://stackoverflow.com/questions/4404628/abs-path-with-the-home-directory
     # and http://docstore.mik.ua/orelly/perl4/cook/ch07_04.htm
+    return $path if remote($path);
     $path =~ s{^~([^/]*)}{$1?(getpwnam($1))[7]:($ENV{HOME} || $ENV{LOGDIR} || (getpwuid($<))[7])}ex;
     my $abspath = rel2abs($path);
     debug "$path becomes $abspath", 'aP';
@@ -828,12 +848,13 @@ sub rsyncAbsPath ($) {
     # On Windows, we have convert C:\... to /cygdrive/c... etc. first.
     my $path = shift;
     return absPath($path);
-    # FIXME what's going on?
-    #my $abspath = rel2abs($path);
-    debug "path=$path   r2a=".rel2abs($path)."   canon=".canonpath($path)."\n", 'rAP';
-    return $path if remote($path);
-    return $path if $path =~ /cygdrive/;    # W7 FIXME
-    return absPath($path);
+    # FIXME -- always call absPath, so rsyncAbsPath seems redundant.  Is it on linux?
+#    # FIXME what's going on?
+#    #my $abspath = rel2abs($path);
+#    debug "path=$path   r2a=".rel2abs($path)."   canon=".canonpath($path)."\n", 'rAP';
+#    return $path if remote($path);
+#    return $path if $path =~ /cygdrive/;    # W7 FIXME
+#    return absPath($path);
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -995,6 +1016,27 @@ sub rsyncWritable ($) {
         9,9, \@output, \@errors);
     debug "delete rc=$rc\n", 'rW';
     return 1;
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub rsyncFixPermsC ($$) {
+    # Tweak the permissions of /cygdrive/c  (this is for cygwin only, obviously).
+    # See e.g. http://tinyurl.com/dxucxg and http://tinyurl.com/2e7q6z8
+    # for a discussion of the problem.
+    # An alternative would be to set 'noacl' in cygwin's /etc/fstab, but that results in every
+    # file being owned by the user who ran brandysnap.
+    my $destdir = shift;
+    my $args    = shift;
+    debug "destdir='$destdir' args='$args'", 'rFPC';
+    my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'},
+        "$args -pr --chmod ugo=rwx $EmptyDir/ $destdir$CygdriveC",  9,9); 
+    debug "rsync rc=$rc/$rc2\n", 'rFPC';
+    if ($rc) {
+        printlog "\nNOTE: Could not set the permissions of $destdir$CygdriveC\n" . 
+        "      to sensible values: manual intervention will be required to access this snapshot\n", 
+            1,1
+    }
 }
 
 #===================================================================================================
@@ -2632,10 +2674,8 @@ sub writeMetadata ($) {
     debug "json is '$json'\n", 'wM';
 
     # Write to a temporary local file
-    my $tempdir = $ENV{TMP} || '.';
-    my ($tempfh, $tempfilename) = 
-        $Win ? tempfile('bsXXXXXXXX', UNLINK => 1, DIR=>$tempdir)  # Windows
-             : tempfile(UNLINK => 1);                              # not Windows
+    my ($tempfh, $tempfilename) = tempfile(UNLINK => 1);
+    debug "tempfilename is '$tempfilename'", 'wM';
     my $succeeded = 0;
     print $tempfh "# Status of brandysnap backups for '$Opt{template}' on '$dest' as at " . 
         time2stamp(time()) . "\n";
@@ -4052,8 +4092,8 @@ sub runRsync ($\@$) {
         printlog "Running rsync from source '$location' to destination '$destDir'\n", 2;
         # Note that rsync-opts is put first -- 
         # our own required options will override the user's
-        my $relative = '--relative';
-        $relative = '' if $Win;     # FIXME random test!
+#        my $relative = '--relative';
+#        $relative = '' if $Win;     # FIXME random test!
         my $args = "$Opt{'rsync-opts'} $verbose $linkdest $incExcOpts $compression " . 
             "$bwlimit --relative $rsyncPath '$location' '$destDir'";
 
@@ -4170,6 +4210,15 @@ sub runRsync ($\@$) {
             debug "No more tries\n", 'rR' if $keepTrying <= 0;
         } # while keep trying for this source
 
+        if ($Cygwin) {
+            # Hacky work-around for the fact that /cygdrive/c, aka C:\, 
+            # is a special case that gets 000 permissions thanks to Windows' ACL system.
+            # This has to be done per-source, because $subDir may be different.
+            if ($location =~ m|^/cygdrive/c|) {
+                rsyncFixPermsC($destDir, "$verbose $rsyncPath");
+            }
+        }
+
         if ($deletions) {
             printlog "NOTE: $deletions expirable snapshots were deleted while " . 
                 "processing source '$location'\n", 2;
@@ -4179,6 +4228,7 @@ sub runRsync ($\@$) {
     } # for each source
 
     if ($succeeded) {
+        # Announce success
         printlog "\nrsync successfully created new snapshot '$S{$snapshot}{fullname}'\n", 1;  
         printlog "(dry run: no snapshot actually created)\n", 1 if $Opt{'dry-run'};
         if ($deletionsAllSources) {
