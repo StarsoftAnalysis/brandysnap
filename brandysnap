@@ -48,12 +48,12 @@ use IPC::Open3;
 use Symbol qw(gensym);
 use IO::File;
 use Sys::Hostname;
+use Carp;
 use Data::Dumper;   # only for dev
 
 # Interrupts and other housekeeping ===============================================================
 
-# get a stack trace: (may get turned off later)
-use Carp;
+# get a stacktrace: (may get turned off later)
 $SIG{__DIE__} = sub { Carp::confess(@_) };
 
 # Make this script robust against interruptions.
@@ -82,7 +82,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-our $VERSION = '0.2.6';
+our $VERSION = '0.2.7';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -174,7 +174,7 @@ my $specRegex =
             \s*(?<count>\d*)
             \s*';
 
-# An empty temporary directory for use in deleteSnapshot(), mkdirRsync(), etc.
+# An empty temporary directory for use in deleteSnapshot(), rsyncMkdir(), etc.
 # (yes, I know, this is a bit of a kludge)
 my $EmptyDir = tempdir(CLEANUP => 1);
 
@@ -194,7 +194,7 @@ my @AllOpt = qw(
     config destination spec template source
     snapshot delete delete-cp
     dry-run version help
-    stacktrace weekstart
+    weekstart
     logfile lockfile 
     rsync-cmd rsync-opts remote-rsync-cmd
     include include-from exclude exclude-from
@@ -207,16 +207,15 @@ my @AllOpt = qw(
     );
 my %AllOpt = (map {$_ => 1} @AllOpt);
 # Required options (not including those that have a default value)
-#my @ReqOpt = qw(destination source template lockfile spec);
 # also not including DestReqOpt ones
-my @ReqOpt = qw(destination lockfile);
+my @ReqOpt = qw(destination);
 my %ReqOpt = (map {$_ => 1} @ReqOpt);
 # Multi-value options (are also all string options)
 my %MultiOpt = (map {$_ => 1} qw(source include include-from
     exclude exclude-from destination debug));
 # Boolean options
 my @BoolOpt  = qw(safe calendar snapshot delete delete-cp dry-run help strict 
-    stacktrace version expire-old status compress restart allow-restart);
+    version expire-old status compress restart allow-restart);
 my %BoolOpt = (map {$_ => 1} @BoolOpt);
 # String options (NOT the multi-value ones, which are dealt with separately)
 my @StringOpt = qw(config lockfile logfile template
@@ -261,7 +260,7 @@ my %Matrix = (
         allow-restart ldcount
         all-failed some-failed
         min-interval
-        verbose loglevel debug stacktrace
+        verbose loglevel debug
     )},
     # some dest-related options can be specified per-source
     # so that each dest-source combination can be different
@@ -272,7 +271,7 @@ my %Matrix = (
         compress restart
         allow-restart 
         min-interval
-        verbose loglevel debug stacktrace
+        verbose loglevel debug
     )},
 );
 # Required options for each destination
@@ -354,12 +353,12 @@ sub logit ($;$) {
     my $tnl = chomps(\$text);
     $text =~ s/\n/\n                  /gs;
     my $now  = strftime "%y/%m/%d %H:%M:%S ", localtime;
-    my $oldfh = select LOGFILE;
-    $| = 1;
-    open  LOGFILE,'>>', "$Opt{validLogfile}" or die "Unable to write to logfile $Opt{validLogfile}";
+#   my $oldfh = select LOGFILE;
+#   $| = 1;
+#   open  LOGFILE,'>>', "$Opt{validLogfile}" or die "Unable to write to logfile $Opt{validLogfile}";
     print LOGFILE "\n"x$lnl . "${now}${text}" . "\n"x$tnl;
-    close LOGFILE;
-    select $oldfh;
+#   close LOGFILE;
+#   select $oldfh;
     $blanks = $tnl - 1;
 }
 
@@ -855,18 +854,51 @@ sub updateSnapshotSizes () {
 
 #---------------------------------------------------------------------------------------------------
 
-sub mkdirRsync ($) { 
-    # Use rsync to create a directory
-    # (rsync will only create one level of directory normally)
-    #my $dest   = shift;
+sub rsyncMkdir ($) { 
+    # Use rsync to create a directory.
+    # Returns rsync return code -- zero if successful.
     my $newdir = shift;  # full path of dir to be created
     my @output;
     my @errors;
     my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'},
         stdArgs(1) . " -v --recursive --chmod=ug=rwx,o=rx $EmptyDir/ $newdir", 
-        9,9); #, \@output, \@errors);
-    debug "rc=$rc output='@output' errors='@errors'\n", 'mR';
+        9,9, \@output, \@errors);
+    debug "newdir='$newdir' rc=$rc rc2=$rc2 output='@output' errors='@errors'\n", 'rMd';
+    # Note: no error if it's already there
     return $rc;
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub rsyncRmdir ($$) {
+    # Use rsync to remove a directory.  (seems to work on files too)
+    # Returns rsync return code -- zero if successful.
+    my $dir    = shift;  # full path of containing directory
+    my $subdir = shift;  # subdir within dir to be deleted
+    my @output;
+    my @errors;
+    my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'},
+        stdArgs(1) . "--dirs -f '-!r $subdir' --delete $EmptyDir/ $dir",
+        9,9, \@output, \@errors);
+    debug "dir='$dir' subdir='$subdir' rc=$rc rc2=$rc2 output='@output' errors='@errors'\n", 'rRd';
+    return $rc;
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub rsyncExists ($) {
+    # Use rsync to check if a directory or file exists.
+    # Returns 1 if it does, 0 otherwise.
+    my $item = shift;   # full path of directory or file
+    my @output;
+    my @errors;
+    my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'},
+        stdArgs(1) . " --list-only $item", 
+        9,9, \@output, \@errors);
+    debug "item='$item' rc=$rc rc2=$rc2 output='@output' errors='@errors'\n", 'rEx';
+    # rc=23 if it doesn't exist.
+    # FIXME what about other errors?
+    return ($rc == 0 ? 1 : 0);
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -879,7 +911,7 @@ sub rsyncReadable ($) {
     my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'},
         stdArgs(0) . "--list-only $source",
         9,9, \@output, \@errors);
-    debug "rc=$rc\n", 'rR';
+    debug "source='$source' rc=$rc rc2=$rc2 output='@output' errors='@errors'\n", 'rR';
     return ($rc == 0); 
 }
 
@@ -891,7 +923,7 @@ sub rsyncWritable ($) {
     my $tempdir = 'brandysnap-temp-dir';    # is this ok?
     my @output;
     my @errors;
-    #my $rc = mkdirRsync("$dest/$tempdir");
+    #my $rc = rsyncMkdir("$dest/$tempdir");
     if ($Opt{'dry-run'}) {
         # Dry-run -- can't write to dest: just see if it's readable
         return rsyncReadable($dest);
@@ -899,14 +931,77 @@ sub rsyncWritable ($) {
     my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'},
         stdArgs(1) . "--recursive $EmptyDir/ $dest/$tempdir/", 
         9,9, \@output, \@errors);
-    debug "create rc=$rc\n", 'rW';
+    debug "dest='$dest' tempdir='$tempdir' rc=$rc rc2=$rc2 output='@output' errors='@errors'\n", 
+        'rW';
     return 0 if $rc;  # non-zero - it's not writable, return false
     # temp dir was created, so delete it
-    ($rc, $rc2) = systemCall($Opt{'rsync-cmd'},
-        stdArgs(1) . "--dirs -f '-!r $tempdir' --delete $EmptyDir/ $dest",
-        9,9, \@output, \@errors);
-    debug "delete rc=$rc\n", 'rW';
+    rsyncRmdir($dest, $tempdir);
+#    ($rc, $rc2) = systemCall($Opt{'rsync-cmd'},
+#        stdArgs(1) . "--dirs -f '-!r $tempdir' --delete $EmptyDir/ $dest",
+#        9,9, \@output, \@errors);
+#    debug "delete rc=$rc\n", 'rW';
     return 1;
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub lockName ($) {
+    # Construct the name of a lock directory, given a pid
+    my $pid = shift;
+    return "$Opt{template}-lock-$pid";
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub rsyncLockDest ($) {
+    # Use rsync to create a lock directory on the destination, marking it as 'in use'.
+    # The directory's name is '<template>-lock-<pid>', with the pid of the brandysnap process.
+    # If any lock directories already exist and the pid is not running,
+    # then delete the lock directory first.
+    # If the pid is still running, then return 0 meaning "can't lock"
+    my $dest = shift;
+    my $locked = 0;
+    my @output;
+    my @errors;
+    my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'},
+        stdArgs(0) . "--list-only $dest/",
+        9,9, \@output, \@errors);
+    debug "dest='$dest' rc=$rc rc2=$rc2 output='@output' errors='@errors'\n", 'rLD';
+    return 0 if $rc;   # Can't get directory list, so fail
+    # Loop through listing, and deal with any lock dirs
+    # looking for -rw-r--r--           0 2012/11/21 16:32:44 bstest-lock-123
+    my $stillrunning = 0;
+    foreach (@output) {
+        my $lockdirpattern = lockName('(?<pid>\d+)');
+        if (/$lockdirpattern/) {
+            if (kill 0, $+{pid}) {
+                # process is still running
+                $stillrunning = 1;
+            } else {
+                # no process - remove the lock dir
+                rsyncRmdir($dest, lockName($+{pid}));
+                # (if that fails, the lock directory will be left there untidily,
+                # but we can carry on with a new lock directory)
+            }
+        } 
+    }
+    if (!$stillrunning) {
+        # Create a new lock directory with our pid
+        if (rsyncMkdir("$dest/" . lockName($$))) {
+            printlog "ERROR: Failed to create lock directory " . lockName($$) . "\n", 1,1;
+        } else {
+           $locked = 1;
+        }
+    }
+    return $locked;
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub rsyncUnlockDest ($) {
+    # Use rsync to remove our lock directory from a destination.
+    my $dest = shift;
+    return rsyncRmdir($dest, lockName($$));
 }
 
 #===================================================================================================
@@ -1563,13 +1658,12 @@ sub processOptions () {
     $defopt{safe}           = 1;        
     $defopt{snapshot}       = 1;
     $defopt{'some-failed'}  = 'keep';
-    $defopt{stacktrace}     = 0;
     $defopt{status}         = 0;
     $defopt{strict}         = 0;
     $defopt{version}        = 0;
     $defopt{weekstart}      = 1;          # 1=Sunday
     # The following deliberately do not have defaults:
-    #   template   source  lockfile   logfile   config  destination  spec
+    #   template   source  logfile   config  destination  spec
     #   include include-from exclude exclude-from
     #   remote-rsync-cmd
 
@@ -1612,7 +1706,6 @@ sub processOptions () {
             'some-failed=s',
             'source=s@',
             'spec=s',
-            'stacktrace!',
             'status!',
             'strict!',
             'template=s',
@@ -1679,7 +1772,7 @@ sub processOptions () {
             printlog "ERROR: Configuration file '$cmdopt{config}' can not be read\n", 1,1;
             return 1;
         }
-        printlog "\nConfiguration file is '$cmdopt{config}'\n\n", 1,1;
+        printlog "\nConfiguration file is '" . hostname . ":$cmdopt{config}'\n\n", 1,1;
     }
 
     debug "def  options: " . join(' ', 
@@ -1713,31 +1806,6 @@ sub processOptions () {
         }
     }
 
-    # Lock file (must be local)
-    # This is checked and acted on before proceeding, otherwise
-    # we could be writing in the logfile while a previous run is still in progress
-    if (!$Opt{lockfile}) {
-        printlog "ERROR: Option 'lockfile' is missing, and must be specified\n", 1,1;
-        $errorcount += 1;
-    } else {
-        $Opt{lockfile} = absPath($Opt{lockfile});
-        # Check that the lockfile is in a writable directory
-        if (-d -w dirname($Opt{lockfile})) {
-            # Create a lock to prevent overlapping runs
-            unless (open(LOCKFILE, '>', $Opt{lockfile}) and
-                    flock(LOCKFILE, LOCK_EX | LOCK_NB)      ) {
-                printlog "\nCan not open and lock lock-file '$Opt{lockfile}'.\n" .
-                "$Script is probably already running with that lock-file.\n" .
-                "If you're sure it isn't, delete the lock-file and try again.\n", 1;
-                exit EXITNOLOCK; 
-            }
-        } else {
-            printlog "ERROR: Lockfile '$Opt{lockfile}' (option 'lockfile') can not be created\n", 1;
-            $errorcount += 1;
-        }
-    }
-    return $errorcount if $errorcount;
-
     # Logging (check this next, so that we can log later errors).
     # Note that, once validated, the 'logfile' option is copied to
     # $Opt{validLogfile}, which is what is used by logit().
@@ -1747,17 +1815,28 @@ sub processOptions () {
         $Opt{loglevel} = 0;
     } else {
         $Opt{logfile} = absPath($Opt{logfile});
-        # Check that the logfile is a writable file, 
-        # or if it does not exist, will be in a writable directory
-        if (-f -w $Opt{logfile} or
-            -d -w dirname($Opt{logfile})) {
-            $Opt{validLogfile} = $Opt{logfile};
+        # Open and lock the logfile
+        if (open LOGFILE, '>>', $Opt{logfile}) {
+            if (flock(LOGFILE, LOCK_EX | LOCK_NB)) {
+                $Opt{validLogfile} = $Opt{logfile};
+                # Make the logfile unbuffered
+                my $oldfh = select LOGFILE;
+                $| = 1;
+                select $oldfh;
+            } else {
+                printit "\nCan not lock logfile '$Opt{logfile}'.\n" .
+                    "$Script is probably already running with that logfile.\n\n", 1;
+                    #"If you're sure it isn't, delete the lock-file and try again.\n", 1;
+                close LOGFILE;
+                exit EXITNOLOCK;
+            } 
         } else {
             printit "ERROR: Logfile '$Opt{logfile}' (option 'logfile') can not be written\n", 1;
             $Opt{loglevel} = 0;
             $errorcount += 1;
         }
     }
+
     return $errorcount if $errorcount;
 
     # Add basic info to logfile (which couldn't be done before we had a valid logfile)
@@ -1786,6 +1865,13 @@ sub processOptions () {
                 # (and don't copy it to the final array)
             }
         }
+    }
+
+    # lockfile option is obsolete
+    if ($Opt{lockfile}) {
+        printlog "NOTE: Option 'lockfile' is no longer used, and will be ignored.\n" .
+                 "      It will become invalid in the future: please remove it.\n";
+        delete $Opt{lockfile};
     }
 
     # Check for required options per destination
@@ -2085,7 +2171,6 @@ Main options
 --destination  dir      !*   local or remote snapshot destination
 --template     name     ! d  prefix for snapshot directories 
 --spec         ...      !    snapshot-keeping specification 
---lockfile     file     !    lock-file 
 --logfile      file          file used for logging 
 Tuning options
 --[no]calendar            d  use calendar mode (default: calendar)
@@ -2140,7 +2225,6 @@ Advanced options
 --[no]strict              d  use strict mode (default: nostrict)
 Development options
 --debug    code[,code...] ds sections in which to enable debugging (default: none) 
---[no]stacktrace          ds print a stack trace on error (default: nostacktrace)
 --test         n             run test case 'n' 
 Options marked with '!' are required -- others have sensible default values.
 Options marked with '*' can be specified more than once.
@@ -3771,7 +3855,8 @@ sub getExpirableSnapshots ($\@$) {
 
 sub newSnapshot ($$) {
     # Create a new snapshot stamped with the current time,
-    # add the entry to the %S hash, and return its time stamp
+    # add the entry to the %S hash, and return its time stamp.
+    # Also creates the directory for the snapshot to avoid race conditions.
     my $dest         = shift;
     my $lastSnapshot = shift // 0;   # time of last snapshot (or 0 if none)
     my $snapshot = time();
@@ -3827,8 +3912,8 @@ sub newSnapshot ($$) {
     my $fullname = "$dest/$name";
 
     # Make sure that a snapshot with that name doesn't already exist
-    while ($S{$snapshot} or -e $fullname) {
-        debug "Sleeping for a second...\n", 3;
+    # and create the directory for it.
+    while ($S{$snapshot} or rsyncExists($fullname)) { 
         # Yes, we could just add 1 to $snapshot,
         # but then we might end up in the future...
         sleep 1;
@@ -3836,6 +3921,8 @@ sub newSnapshot ($$) {
         $name = "$Opt{template}-" . time2stamp($snapshot);
         $fullname = "$dest/$name";
     }
+    my $rc = rsyncMkdir($fullname);
+    # if that didn't work, things will go wrong later...
     $S{$snapshot} = {
         name     => $name,
         path     => $dest,
@@ -3866,7 +3953,7 @@ sub runRsync ($\@$) {
     my $succeeded = 1;          # stays true if ALL sources are copied successfully
     my $sourcesSucceeded = 0;   # count of successfully backed-up sources
     my $restartable = 0;        # becomes true if unfinished snapshot should be kept for restarting
-    my $lostDest = 0;           # becomes true if lost connection to destination
+    my $lostDest = 0;           # becomes true if we lose connection to destination
 
     my $deletionsAllSources = 0;
 
@@ -3907,37 +3994,24 @@ sub runRsync ($\@$) {
         }
 
         my $destDir = $S{$snapshot}{fullname};    
-        #debug "dest '$dest'  destdir '$destDir'\n", 'rR';
-
-        my $subDir  = '';   # These two are for adjusting the link-dest path
-        my $upDir   = '';
-
+        my $subDir;
         if ($remoteSource) {
             $subDir = sourceDir($location);
         } else {
             $subDir = hostname;
         }
-        # The extra directory level won't be created by rsync normally,
-        # so we'll have to do it manually
-        # (It may already be there)
-        my $mdrc = mkdirRsync("$destDir");
-        printlog "WARNING: Unable to create directory '$destDir' ($!)\n" if $mdrc;
-        unless ($mdrc or $Opt{'dry-run'}) {
-            $destDir = "$destDir/$subDir"; # can't use catdir because it nobbles rsync:// URLs
-            $upDir = '../'; 
-        }
+        $destDir = "$destDir/$subDir";
 
-        # Set up link-dest options if there are any previous snapshots
-        # (as a relative path, which will work whether local or remote).
+        # Set up link-dest options if there are any previous snapshots.
         # Loop to create as many link-dests as required.
-        # Previous 'bad' snapshots are linked in case they contain useful
+        # Previous unfinished snapshots are linked in case they contain useful
         # files, but don't count towards the total.
         my $ld = 0; # number of 'good' link-dests created
         my $s = 1;  # start at snapshot 1 (i.e. skip the 0th one that we're creating now)
         my $linkdest = '';
         while ($ld < $Opt{ldcount} and $s <= $#S) {
             debug "linking: s=$s S[s]=$S[$s] S{S[s]}{name}=$S{$S[$s]}{name}\n", 'rR';
-            $linkdest .= "--link-dest='$upDir../$S{$S[$s]}{name}/$subDir' ";
+            $linkdest .= "--link-dest='../../$S{$S[$s]}{name}/$subDir' ";
             $ld += 1 if !$S{$S[$s]}{unfinished};
             $s += 1;
         }
@@ -4177,15 +4251,17 @@ sub processDestination ($) {
     @cSpecs = compileSpecs($now, $Opt{pspecs});
     displayCSpecs(@cSpecs);
     
-    # Get the list of snapshots to be deleted...
+    # Get the list of snapshots to be deleted
     my @D;
     @D = getDeleteList(@cSpecs) if $Opt{delete};
-    # ...to see if the new snapshot would be one of the ones deleted
-    # FIXME this assumes that the current one will be good!
-    #   -- done -- gDL now called again below
+    # deleteNew is true if the new snapshot would be one of those to be deleted:
     my $deleteNew = grep {$_ == $now} @D;
     debug "deleteNew=$deleteNew", 'pD';
 
+    if ($Opt{snapshot} or $Opt{delete}) {
+        # Set the destination lock, and give up if that failed
+        return if !rsyncLockDest($dest);
+    }
     my $lostDest = 0;
     if ($Opt{snapshot}) {                                         # FIXME why? -v
         if ($deleteNew and $Opt{delete} and $Opt{'delete-cp'}) { #  and !$Opt{'allow-restart'}) {
@@ -4195,11 +4271,6 @@ sub processDestination ($) {
             my @expirableSnapshots = getExpirableSnapshots($Opt{pspecs}, @cSpecs, $now);
             # Run rsync to create the new snapshot
             (my $rsyncOK, $lostDest) = runRsync($dest, @expirableSnapshots, $now);  
-            if (!$rsyncOK and $Opt{delete}) {
-                # Failed to create a new snapshot, so re-do the list of deletions
-                #getSnapshotList($dest);   # is this enough or too much?  FIXME needed?
-                #@D = getDeleteList(@cSpecs, 3); # 3 should be 9 FIXME -- level, and needed?
-            }
         }
     } else {
         printlog "NOTE: Option 'no-snapshot' given, so no new snapshot will be created\n", 2;
@@ -4217,10 +4288,12 @@ sub processDestination ($) {
         }
     }
 
-    if (!$lostDest) {
+    if (!$lostDest and ($Opt{snapshot} or $Opt{delete})) {
         # Complete and store the metadata
         updateSnapshotSizes();
-        writeMetadata($dest) 
+        writeMetadata($dest);
+        # Clear the destination lock
+        rsyncUnlockDest($dest);
     }
     # Display the current situation after recompiling the specs to allow for changes
     @cSpecs = compileSpecs($now, $Opt{pspecs});  
@@ -4338,9 +4411,7 @@ sub testSuite {
     # FIXME change source and dest to use contexts
     ${$Opt{source}}[0]      = '~/tmp/bstestsource';
     ${$Opt{destination}}[0] = '~/tmp/bstestdest';
-    $Opt{lockfile} = '~/tmp/bstest.lock';
     $Opt{verbose}  = 3;
-    $Opt{stacktrace} = 1;
     state $template = $Opt{template};   # 'state' to avoid sharing warning
     state $dest = ${$Opt{destination}}[0];
     state $now = stamp2time('20110529-230000');
@@ -4653,7 +4724,6 @@ sub testSuite {
 
         when (12) {
             # testing expirables  
-            $Opt{lockfile} = '/home/chris/Dropbox/perlwork/brandysnap/bs.lock';
             $Opt{source} = ['/home/chris/Dropbox/perlwork', '/library/pictures/Fujical.jpg'];
             $Opt{destination} = '/home/chris/tmp/bstest12/';
             $Opt{template} = 'test12';
@@ -4911,12 +4981,10 @@ if ($Opt{version}) {
     exit EXITOK;
 }
 
-# Turn off stacktrace if not required
-if ($Opt{stacktrace}) {
-    $SIG{__DIE__} = sub { Carp::confess( @_ ) };
-} else {
+# Turn off stacktrace unless we're debugging
+if (keys $Opt{debug} == 0) {
     $SIG{__DIE__} = 'DEFAULT';  
-}
+} 
 
 # Just run the test suite if required 
 if ($Opt{test}) {
@@ -4955,9 +5023,8 @@ printlog "\n$Script stopping at " . (strftime "%H:%M:%S", localtime) .
     " with exit code $ExitCode\n", 1,1;
 logit '-' x 80, 1;
 
-# Free the lock
-close(LOCKFILE);    # closing the file automatically unlocks it
-unlink $Opt{lockfile};
+# Free the lock on the logfile
+close(LOGFILE);    # closing the file automatically unlocks it
 
 exit $ExitCode;
 # That's the end
