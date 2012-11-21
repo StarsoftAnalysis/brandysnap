@@ -82,7 +82,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-our $VERSION = '0.2.5';
+our $VERSION = '0.2.6';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -2640,7 +2640,7 @@ sub getSnapshotList ($) {
     foreach (@listing) {
         chomp;
         # matching e.g. 'drwxr-xr-x        4096 2011/08/09 23:01:29 library-20110809-165521'
-        if (^/\d\d:\d\d:\d\d\s+ 
+        if (/\d\d:\d\d:\d\d\s+ 
             (?<name>($template)-
             (?<Y>\d{4})(?<M>\d{2})(?<D>\d{2})-
             (?<h>\d{2})(?<m>\d{2})(?<s>\d{2}))
@@ -2655,9 +2655,9 @@ sub getSnapshotList ($) {
             next if $+{s} > 60;
             # Add information about the snapshot to the global hash
             $S{stamp2time($_)} = {
-                name     => "$+{name}$ps",
+                name     => "$+{name}",
                 path     => $dest,
-                fullname => "$dest/$+{name}$ps",
+                fullname => "$dest/$+{name}",
                 unfinished => 0,    # unless metadata says otherwise -- see below
                 size     => -1,     # no size information yet -- see below
                 remote   => $remote,
