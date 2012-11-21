@@ -1,6 +1,18 @@
 Changelog for brandysnap
 ========================
 
+0.2.6
+* Bug fixes:
+  - Check for lock before writing anything to the log file.
+  - Clarify use of terms 'partial', 'incomplete', and 'unfinished'.  
+    Now, the specific meanings are:
+     'incomplete' -- a period with too few snapshots.
+     'partial'    -- part of a period, e.g. the part of a week used to
+                     pad out a full month.
+     'unfinished' -- a snapshot that was not created fully for some reason.
+  - Fix min-interval code to check date of S[0], not S[1].
+  - Tidy up unused $PartialSuffix.
+
 0.2.5	3/11/12
 * Streamlined compileCSpecs to ignore old periods before any snapshots.
 * Improved displayCSpecs.
