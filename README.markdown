@@ -48,7 +48,8 @@ Requirements
 ------------
 
 Brandysnap has been developed on and runs on Linux.
-I have heard that it also runs on Mac OS X.
+I have heard that it also runs on Mac OS X (at least a previous version did).  Work to let 
+it run on Windows in the Cygwin environment is under way.
 
 It requires Perl 5 version 5.10.1 or later, and the following non-core modules:
 

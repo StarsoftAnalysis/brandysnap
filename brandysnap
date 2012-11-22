@@ -86,6 +86,7 @@ use IPC::Open3;
 use Symbol qw(gensym);
 use IO::File;
 use Sys::Hostname;
+use Carp;
 use Data::Dumper;   # only for dev
 
 # Operating system -- assume Linux unless these flags say otherwise ===============================
@@ -110,8 +111,7 @@ if ($Cygwin) {
 
 # Interrupts and other housekeeping ===============================================================
 
-# get a stack trace: (may get turned off later)
-use Carp;
+# get a stacktrace: (may get turned off later)
 $SIG{__DIE__} = sub { Carp::confess(@_) };
 
 # Make this script robust against interruptions.
@@ -140,7 +140,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-our $VERSION = '0.2.5portable';
+our $VERSION = '0.2.7portable';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -170,7 +170,7 @@ use constant STAMPFMT0 => '00000000-000000';
 #  name     - name of the snapshot directory e.g. 'docs-20111130-320234'
 #  path     - directory path to name (NOT ending with '/')
 #  fullname - same as path/name   
-#  partial  - true if it's a partial (incomplete) snapshot
+#  unfinished - true if it's an unfinished snapshot
 #  size     - size of the snapshot in bytes
 #  remote   - true if it's on a remote destination
 #  daemon   - true if it's remote and accessed via an rsync daemon
@@ -232,7 +232,7 @@ my $specRegex =
             \s*(?<count>\d*)
             \s*';
 
-# An empty temporary directory for use in deleteSnapshot(), mkdirRsync(), etc.
+# An empty temporary directory for use in deleteSnapshot(), rsyncMkdir(), etc.
 # (yes, I know, this is a bit of a kludge)
 my $EmptyDir = tempdir(CLEANUP => 1);
 
@@ -252,7 +252,7 @@ my @AllOpt = qw(
     config destination spec template source
     snapshot delete delete-cp
     dry-run version help
-    stacktrace weekstart
+    weekstart
     logfile lockfile 
     rsync-cmd rsync-opts remote-rsync-cmd
     include include-from exclude exclude-from
@@ -265,16 +265,15 @@ my @AllOpt = qw(
     );
 my %AllOpt = (map {$_ => 1} @AllOpt);
 # Required options (not including those that have a default value)
-#my @ReqOpt = qw(destination source template lockfile spec);
 # also not including DestReqOpt ones
-my @ReqOpt = qw(destination lockfile);
+my @ReqOpt = qw(destination);
 my %ReqOpt = (map {$_ => 1} @ReqOpt);
 # Multi-value options (are also all string options)
 my %MultiOpt = (map {$_ => 1} qw(source include include-from
     exclude exclude-from destination debug));
 # Boolean options
 my @BoolOpt  = qw(safe calendar snapshot delete delete-cp dry-run help strict 
-    stacktrace version expire-old status compress restart allow-restart);
+    version expire-old status compress restart allow-restart);
 my %BoolOpt = (map {$_ => 1} @BoolOpt);
 # String options (NOT the multi-value ones, which are dealt with separately)
 my @StringOpt = qw(config lockfile logfile template
@@ -319,7 +318,7 @@ my %Matrix = (
         allow-restart ldcount
         all-failed some-failed
         min-interval
-        verbose loglevel debug stacktrace
+        verbose loglevel debug
     )},
     # some dest-related options can be specified per-source
     # so that each dest-source combination can be different
@@ -330,16 +329,13 @@ my %Matrix = (
         compress restart
         allow-restart 
         min-interval
-        verbose loglevel debug stacktrace
+        verbose loglevel debug
     )},
 );
 # Required options for each destination
 # (not including those that have a default value)
 my @DestReqOpt = qw(source template spec);
 my %DestReqOpt = (map {$_ => 1} @ReqOpt);
-
-# Suffix used to indicate that a snapshot is incomplete
-my $PartialSuffix = 'x';  
 
 # Mainline code is at the end of this file
 
@@ -415,12 +411,12 @@ sub logit ($;$) {
     my $tnl = chomps(\$text);
     $text =~ s/\n/\n                  /gs;
     my $now  = strftime "%y/%m/%d %H:%M:%S ", localtime;
-    my $oldfh = select LOGFILE;
-    $| = 1;
-    open  LOGFILE,'>>', "$Opt{validLogfile}" or die "Unable to write to logfile $Opt{validLogfile}";
+#   my $oldfh = select LOGFILE;
+#   $| = 1;
+#   open  LOGFILE,'>>', "$Opt{validLogfile}" or die "Unable to write to logfile $Opt{validLogfile}";
     print LOGFILE "\n"x$lnl . "${now}${text}" . "\n"x$tnl;
-    close LOGFILE;
-    select $oldfh;
+#   close LOGFILE;
+#   select $oldfh;
     $blanks = $tnl - 1;
 }
 
@@ -557,7 +553,7 @@ sub dumpSnapshot ($) {
     # Return a printable version of a %S entry
     my $s = shift;
     return "$s (" . time2stamp($s) . ") => {name=>$S{$s}{name} path=>$S{$s}{path} " 
-        . "fullname=>$S{$s}{fullname} partial=>$S{$s}{partial} size=>$S{$s}{size} "
+        . "fullname=>$S{$s}{fullname} unfinished=>$S{$s}{unfinished} size=>$S{$s}{size} "
         . "remote=>$S{$s}{remote} daemon=>$S{$s}{daemon}}";
 }
 
@@ -575,7 +571,7 @@ sub dumpSnapshots2 (\@) {
     # Return a list of snapshots as a string for printing
     # This version also uses %S to mark snapshots as good or bad
     my @S = @{(shift)};
-    return join(', ', map {time2stamp($_) . ($S{$_}{partial} ? '-b' : '-g')} @S);
+    return join(', ', map {time2stamp($_) . ($S{$_}{unfinished} ? '-b' : '-g')} @S);
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -608,7 +604,7 @@ sub diskSpace ($) {
     #       is probably impossible since we want to use rsync for everything.
     my $size = shift;
     my $blocksize = 512;
-    return ceil($size / 512) * 512; 
+    return ceil($size / $blocksize) * $blocksize; 
 }
 
 # Date/time routines ===============================================================================
@@ -963,18 +959,51 @@ sub updateSnapshotSizes () {
 
 #---------------------------------------------------------------------------------------------------
 
-sub mkdirRsync ($) { 
-    # Use rsync to create a directory
-    # (rsync will only create one level of directory normally)
-    #my $dest   = shift;
+sub rsyncMkdir ($) { 
+    # Use rsync to create a directory.
+    # Returns rsync return code -- zero if successful.
     my $newdir = shift;  # full path of dir to be created
     my @output;
     my @errors;
     my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'},
         stdArgs(1) . " -v --recursive --chmod=ug=rwx,o=rx $EmptyDir/ $newdir", 
-        9,9); #, \@output, \@errors);
-    debug "rc=$rc output='@output' errors='@errors'\n", 'mR';
+        9,9, \@output, \@errors);
+    debug "newdir='$newdir' rc=$rc rc2=$rc2 output='@output' errors='@errors'\n", 'rMd';
+    # Note: no error if it's already there
     return $rc;
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub rsyncRmdir ($$) {
+    # Use rsync to remove a directory.  (seems to work on files too)
+    # Returns rsync return code -- zero if successful.
+    my $dir    = shift;  # full path of containing directory
+    my $subdir = shift;  # subdir within dir to be deleted
+    my @output;
+    my @errors;
+    my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'},
+        stdArgs(1) . "--dirs -f '-!r $subdir' --delete $EmptyDir/ $dir",
+        9,9, \@output, \@errors);
+    debug "dir='$dir' subdir='$subdir' rc=$rc rc2=$rc2 output='@output' errors='@errors'\n", 'rRd';
+    return $rc;
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub rsyncExists ($) {
+    # Use rsync to check if a directory or file exists.
+    # Returns 1 if it does, 0 otherwise.
+    my $item = shift;   # full path of directory or file
+    my @output;
+    my @errors;
+    my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'},
+        stdArgs(1) . " --list-only $item", 
+        9,9, \@output, \@errors);
+    debug "item='$item' rc=$rc rc2=$rc2 output='@output' errors='@errors'\n", 'rEx';
+    # rc=23 if it doesn't exist.
+    # FIXME what about other errors?
+    return ($rc == 0 ? 1 : 0);
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -987,7 +1016,7 @@ sub rsyncReadable ($) {
     my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'},
         stdArgs(0) . "--list-only $source",
         9,9, \@output, \@errors);
-    debug "rc=$rc\n", 'rR';
+    debug "source='$source' rc=$rc rc2=$rc2 output='@output' errors='@errors'\n", 'rR';
     return ($rc == 0); 
 }
 
@@ -999,22 +1028,23 @@ sub rsyncWritable ($) {
     my $tempdir = "$Script-temp-dir";    # is this ok?
     my @output;
     my @errors;
-    #my $rc = mkdirRsync("$dest/$tempdir");
+    #my $rc = rsyncMkdir("$dest/$tempdir");
     if ($Opt{'dry-run'}) {
         # Dry-run -- can't write to dest: just see if it's readable
         return rsyncReadable($dest);
     }
     my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'},
-        stdArgs(1) . "--recursive $EmptyDir/ $dest/$tempdir/",  # W7 FIXME
-        #stdArgs(1) . "--recursive $EmptyDir $dest/$tempdir/", 
-        9,9, ); #\@output, \@errors);
-    debug "create rc=$rc\n", 'rW';
+        stdArgs(1) . "--recursive $EmptyDir/ $dest/$tempdir/", 
+        9,9, \@output, \@errors);
+    debug "dest='$dest' tempdir='$tempdir' rc=$rc rc2=$rc2 output='@output' errors='@errors'\n", 
+        'rW';
     return 0 if $rc;  # non-zero - it's not writable, return false
     # temp dir was created, so delete it
-    ($rc, $rc2) = systemCall($Opt{'rsync-cmd'},
-        stdArgs(1) . "--dirs -f '-!r $tempdir' --delete $EmptyDir/ $dest",
-        9,9, \@output, \@errors);
-    debug "delete rc=$rc\n", 'rW';
+    rsyncRmdir($dest, $tempdir);
+#    ($rc, $rc2) = systemCall($Opt{'rsync-cmd'},
+#        stdArgs(1) . "--dirs -f '-!r $tempdir' --delete $EmptyDir/ $dest",
+#        9,9, \@output, \@errors);
+#    debug "delete rc=$rc\n", 'rW';
     return 1;
 }
 
@@ -1037,6 +1067,66 @@ sub rsyncFixPermsC ($$) {
         "      to sensible values: manual intervention will be required to access this snapshot\n", 
             1,1
     }
+
+#---------------------------------------------------------------------------------------------------
+
+sub lockName ($) {
+    # Construct the name of a lock directory, given a pid
+    my $pid = shift;
+    return "$Opt{template}-lock-$pid";
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub rsyncLockDest ($) {
+    # Use rsync to create a lock directory on the destination, marking it as 'in use'.
+    # The directory's name is '<template>-lock-<pid>', with the pid of the brandysnap process.
+    # If any lock directories already exist and the pid is not running,
+    # then delete the lock directory first.
+    # If the pid is still running, then return 0 meaning "can't lock"
+    my $dest = shift;
+    my $locked = 0;
+    my @output;
+    my @errors;
+    my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'},
+        stdArgs(0) . "--list-only $dest/",
+        9,9, \@output, \@errors);
+    debug "dest='$dest' rc=$rc rc2=$rc2 output='@output' errors='@errors'\n", 'rLD';
+    return 0 if $rc;   # Can't get directory list, so fail
+    # Loop through listing, and deal with any lock dirs
+    # looking for -rw-r--r--           0 2012/11/21 16:32:44 bstest-lock-123
+    my $stillrunning = 0;
+    foreach (@output) {
+        my $lockdirpattern = lockName('(?<pid>\d+)');
+        if (/$lockdirpattern/) {
+            if (kill 0, $+{pid}) {
+                # process is still running
+                $stillrunning = 1;
+            } else {
+                # no process - remove the lock dir
+                rsyncRmdir($dest, lockName($+{pid}));
+                # (if that fails, the lock directory will be left there untidily,
+                # but we can carry on with a new lock directory)
+            }
+        } 
+    }
+    if (!$stillrunning) {
+        # Create a new lock directory with our pid
+        if (rsyncMkdir("$dest/" . lockName($$))) {
+            printlog "ERROR: Failed to create lock directory " . lockName($$) . "\n", 1,1;
+        } else {
+           $locked = 1;
+        }
+    }
+    return $locked;
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub rsyncUnlockDest ($) {
+    # Use rsync to remove our lock directory from a destination.
+    my $dest = shift;
+    return rsyncRmdir($dest, lockName($$));
 }
 
 #===================================================================================================
@@ -1697,13 +1787,12 @@ sub processOptions () {
     $defopt{safe}           = 1;        
     $defopt{snapshot}       = 1;
     $defopt{'some-failed'}  = 'keep';
-    $defopt{stacktrace}     = 0;
     $defopt{status}         = 0;
     $defopt{strict}         = 0;
     $defopt{version}        = 0;
     $defopt{weekstart}      = 1;          # 1=Sunday
     # The following deliberately do not have defaults:
-    #   template   source  lockfile   logfile   config  destination  spec
+    #   template   source  logfile   config  destination  spec
     #   include include-from exclude exclude-from
     #   remote-rsync-cmd
 
@@ -1746,7 +1835,6 @@ sub processOptions () {
             'some-failed=s',
             'source=s@',
             'spec=s',
-            'stacktrace!',
             'status!',
             'strict!',
             'template=s',
@@ -1813,7 +1901,7 @@ sub processOptions () {
             printlog "ERROR: Configuration file '$cmdopt{config}' can not be read\n", 1,1;
             return 1;
         }
-        printlog "\nConfiguration file is '$cmdopt{config}'\n\n", 1,1;
+        printlog "\nConfiguration file is '" . hostname . ":$cmdopt{config}'\n\n", 1,1;
     }
 
     debug "def  options: " . join(' ', 
@@ -1846,9 +1934,8 @@ sub processOptions () {
             $errorcount += 1;
         }
     }
-    return $errorcount if $errorcount;
 
-    # Logging (check this first, so that we can log later errors).
+    # Logging (check this next, so that we can log later errors).
     # Note that, once validated, the 'logfile' option is copied to
     # $Opt{validLogfile}, which is what is used by logit().
     # The logfile must be local.
@@ -1857,38 +1944,34 @@ sub processOptions () {
         $Opt{loglevel} = 0;
     } else {
         $Opt{logfile} = absPath($Opt{logfile});
-        # Check that the logfile is a writable file, 
-        # or if it does not exist, will be in a writable directory
-        if (-f -w $Opt{logfile} or
-            -d -w dirname($Opt{logfile})) {
-            $Opt{validLogfile} = $Opt{logfile};
+        # Open and lock the logfile
+        if (open LOGFILE, '>>', $Opt{logfile}) {
+            if (flock(LOGFILE, LOCK_EX | LOCK_NB)) {
+                $Opt{validLogfile} = $Opt{logfile};
+                # Make the logfile unbuffered
+                my $oldfh = select LOGFILE;
+                $| = 1;
+                select $oldfh;
+            } else {
+                printit "\nCan not lock logfile '$Opt{logfile}'.\n" .
+                    "$Script is probably already running with that logfile.\n\n", 1;
+                    #"If you're sure it isn't, delete the lock-file and try again.\n", 1;
+                close LOGFILE;
+                exit EXITNOLOCK;
+            } 
         } else {
             printit "ERROR: Logfile '$Opt{logfile}' (option 'logfile') can not be written\n", 1;
             $Opt{loglevel} = 0;
             $errorcount += 1;
-            return $errorcount;
         }
     }
+
+    return $errorcount if $errorcount;
 
     # Add basic info to logfile (which couldn't be done before we had a valid logfile)
     my $intro = "$Script version $VERSION starting at " . (strftime "%H:%M:%S", localtime);
     logit under2("\n\n$intro\n\n"), 1;
     logit "Command line: $0 @ARGVcopy\n", 3;
-
-    # Lock file (must be local)
-    if (!$Opt{lockfile}) {
-        printlog "ERROR: Option 'lockfile' is missing, and must be specified\n", 1,1;
-        $errorcount += 1;
-    } else {
-        $Opt{lockfile} = absPath($Opt{lockfile});
-        # Check that the lockfile is in a writable directory
-        # (if the file already exists, we won't have got this far)
-        unless (-d -w dirname($Opt{lockfile})) {
-            printlog "ERROR: Lockfile '$Opt{lockfile}' (option 'lockfile') can not be created\n", 1;
-            $errorcount += 1;
-        }
-    }
-
     # TODO code for checking readable sources should be factorised
     #      because it's used here and per-destination
     #      especially if it is extended to have required options
@@ -1911,6 +1994,13 @@ sub processOptions () {
                 # (and don't copy it to the final array)
             }
         }
+    }
+
+    # lockfile option is obsolete
+    if ($Opt{lockfile}) {
+        printlog "NOTE: Option 'lockfile' is no longer used, and will be ignored.\n" .
+                 "      It will become invalid in the future: please remove it.\n";
+        delete $Opt{lockfile};
     }
 
     # Check for required options per destination
@@ -2210,7 +2300,6 @@ Main options
 --destination  dir      !*   local or remote snapshot destination
 --template     name     ! d  prefix for snapshot directories 
 --spec         ...      !    snapshot-keeping specification 
---lockfile     file     !    lock-file 
 --logfile      file          file used for logging 
 Tuning options
 --[no]calendar            d  use calendar mode (default: calendar)
@@ -2265,7 +2354,6 @@ Advanced options
 --[no]strict              d  use strict mode (default: nostrict)
 Development options
 --debug    code[,code...] ds sections in which to enable debugging (default: none) 
---[no]stacktrace          ds print a stack trace on error (default: nostacktrace)
 --test         n             run test case 'n' 
 Options marked with '!' are required -- others have sensible default values.
 Options marked with '*' can be specified more than once.
@@ -2345,11 +2433,11 @@ sub deleteSnapshots (\@\@$) {
             # Don't need to delete the new snapshot because we avoided creating it
             debug "not deleting newest snapshot because it was not created\n", 'dS';
         } else {
-            my $partial = $S{$d}{partial} ? 'partial ' : '';
+            my $unfinished = $S{$d}{unfinished} ? 'unfinished ' : '';
             if ($cSpecs[$ci]->{label} eq 'old') {
-                printlog "Deleting old ${partial}snapshot '$S{$d}{name}'\n", 1;
+                printlog "Deleting old ${unfinished}snapshot '$S{$d}{name}'\n", 1;
             } else {
-                printlog "Deleting ${partial}snapshot '$S{$d}{name}'" . 
+                printlog "Deleting ${unfinished}snapshot '$S{$d}{name}'" . 
                 " because there are too many for spec '" . $cSpecs[$ci]->{label} . "'\n", 1;
             }
             $errors += deleteSnapshot($d);
@@ -2406,7 +2494,7 @@ sub markOrDeleteSnapshot ($$$) {
     }
 
     if ($Opt{'dry-run'} and ($action eq 'delete')) {
-        printlog "Dry run: would have deleted incomplete snapshot '$sName'\n", 1;
+        printlog "Dry run: would have deleted unfinished snapshot '$sName'\n", 1;
         return;
     }
 
@@ -2418,8 +2506,8 @@ sub markOrDeleteSnapshot ($$$) {
             printlog "WARNING: Snapshot could not be deleted (error $rc)\n", 1;
         }
     } else {
-        # Mark it as partial
-        $S{$snapshot}{partial} = 1;
+        # Mark it as unfinished
+        $S{$snapshot}{unfinished} = 1;
     }
 }
 
@@ -2432,7 +2520,7 @@ sub status ($;\@) {
     @cSpecs    = @{(shift)} if @_;
 
     my $count  = 0; # complete
-    my $xcount = 0; # incomplete
+    my $ucount = 0; # unfinished
     my $total  = 0;
     my $ci = 0;     # index into @cSpecs
     my $pi = -1;    # index into $Opt{pspecs}
@@ -2457,12 +2545,12 @@ sub status ($;\@) {
             '-----------', '-------------', @cSpecs ? '--------' : ''), $plevel,$llevel;
         foreach my $s (rsort keys %S) {
             my $name = $S{$s}{name};
-            $name .= ' (p)' if $S{$s}{partial};
+            $name .= ' (u)' if $S{$s}{unfinished};
             my $size = $S{$s}{size};
             next if $size < 0;  # skip no-snapshot snapshot
             my $label = '';
-            if ($S{$s}{partial}) {
-                $xcount += 1;
+            if ($S{$s}{unfinished}) {
+                $ucount += 1;
             } else {
                 $count += 1;
                 if (@cSpecs) {
@@ -2487,10 +2575,10 @@ sub status ($;\@) {
         }
         printlog sprintf("%-*s   %15s\n", $nameLength, '-'x$nameLength, 
             '-----------'), $plevel,$llevel;
-        my $incomplete = '';
-        $incomplete = "(+$xcount incomplete)" if $xcount;
+        my $unfinished = '';
+        $unfinished = "(+$ucount unfinished)" if $ucount;
         printlog sprintf("%8s %s %-16s %3d   %15s\n", 'Total:', ' 'x($nameLength-30), 
-            $incomplete, $count, bytes($total)), $plevel,$llevel;
+            $unfinished, $count, bytes($total)), $plevel,$llevel;
         if ($count > 0) {
             my $average = floor($total/$count);
             printlog sprintf("%-*s   %15s\n", $nameLength, 'Average:', 
@@ -2667,7 +2755,7 @@ sub writeMetadata ($) {
     # Create subset of %S to store
     my @S;
     foreach my $s (sort keys %S) {
-        push @S, {snapshot => time2stamp($s), partial => $S{$s}{partial}, size => $S{$s}{size}}
+        push @S,{snapshot => time2stamp($s), unfinished => $S{$s}{unfinished}, size => $S{$s}{size}}
             if $S{$s}{size} >= 0;   # skip no-snapshot snapshot
     }
     my $json = to_json(\@S, {pretty => 1});
@@ -2732,9 +2820,9 @@ sub readMetadata ($) {
         $mdArrayRef = from_json($json, {relaxed => 1});
         foreach my $s (@$mdArrayRef) { 
             # Check that all values are there
-            $s->{partial} =  0 if !defined $s->{partial};
-            $s->{size}    = -1 if !defined $s->{size};
-            debug "$s->{snapshot} / $s->{partial} / $s->{size}\n", 'rM'; 
+            $s->{unfinished} =  0 if !defined $s->{unfinished};
+            $s->{size}       = -1 if !defined $s->{size};
+            debug "$s->{snapshot} / $s->{unfinished} / $s->{size}\n", 'rM'; 
         } 
     } else { 
         debug "Unable to read temporary metadata file '$tempdir/$mdfile'\n", 'rM';
@@ -2770,7 +2858,7 @@ sub getSnapshotList ($) {
             (?<name>($template)-
             (?<Y>\d{4})(?<M>\d{2})(?<D>\d{2})-
             (?<h>\d{2})(?<m>\d{2})(?<s>\d{2}))
-            (?<ps>-$PartialSuffix)?$/x) {
+            $/x) {
             # Skip over any template with an invalid date (should not happen)
             next if $+{M} < 1;
             next if $+{M} > 12;
@@ -2780,13 +2868,12 @@ sub getSnapshotList ($) {
             next if $+{m} > 59;
             next if $+{s} > 60;
             # Add information about the snapshot to the global hash
-            my $ps = $+{ps} // '';
             $S{stamp2time($_)} = {
-                name     => "$+{name}$ps",
+                name     => "$+{name}",
                 path     => $dest,
-                fullname => "$dest/$+{name}$ps",
-                partial  => $+{ps} ? 1 : 0, # obsolete -- suffixes will no longer be used
-                size     => -1,             # no size information yet
+                fullname => "$dest/$+{name}",
+                unfinished => 0,    # unless metadata says otherwise -- see below
+                size     => -1,     # no size information yet -- see below
                 remote   => $remote,
                 daemon   => $daemon,
             };
@@ -2800,23 +2887,23 @@ sub getSnapshotList ($) {
         debug "mdArrayRef=$mdArrayRef\n", 'gSL';
         # And combine the two:
         # - warn about entries in metadata for which there is no snapshot
-        # - add any partial and size information for the existing snapshots
+        # - add any unfinished and size information for the existing snapshots
         foreach my $md (@$mdArrayRef) {
-            debug "matching md: $md->{snapshot} / $md->{partial} / $md->{size}\n", 'gSL';
+            debug "matching md: $md->{snapshot} / $md->{unfinished} / $md->{size}\n", 'gSL';
             my $s = stamp2time($md->{snapshot});
             if ($S{$s}) {
                 debug "updating metadata for snapshot $md->{snapshot}\n", 'gSL';
-                $S{$s}{partial} |= $md->{partial};  # It's partial if either source says it is
-                $S{$s}{size}     = $md->{size};
+                $S{$s}{unfinished} = $md->{unfinished};  
+                $S{$s}{size}       = $md->{size};
             } else {
                 printlog "WARNING: snapshot '$template-$md->{snapshot}' is missing\n", 1;
             }
         }
     }
-    # Set empty snapshots as partial (this shouldn't happen, but 
+    # Set empty snapshots as unfinished (this shouldn't happen, but 
     # we might as well encourage the system to prune empty snapshots)
     foreach my $s (keys %S) {
-        $S{$s}{partial} = 1 if $S{$s}{size} == 0;
+        $S{$s}{unfinished} = 1 if $S{$s}{size} == 0;
     }
 }
 
@@ -2896,7 +2983,8 @@ sub snapshotBefore ($) {
     # For bad snapshots, any previous one will do.
     my $this = shift;   # the snapshot to compare 
     foreach my $s (rsort keys %S) {
-        next if !$S{$this}{partial} and $S{$s}{partial}; # skip the bad ones if this one is good
+        # skip the bad ones if this one is good:
+        next if !$S{$this}{unfinished} and $S{$s}{unfinished}; 
         return $s if $s < $this;
     }
     return 0;   # None found, return 0 which will test as false
@@ -2909,12 +2997,13 @@ sub snapshotAfter ($) {
     my $this = shift;   # the snapshot to compare 
     my $prevs = 0; # If none found, return 0 which will test as false
     foreach my $s (rsort keys %S) {
-        next if !$S{$this}{partial} and $S{$s}{partial}; # skip the bad ones if this one is good
+        # skip the bad ones if this one is good:
+        next if !$S{$this}{unfinished} and $S{$s}{unfinished}; 
         return $prevs if $s <= $this;
         $prevs = $s;
     }
-    return $S{$prevs}{partial} ? 0 : $prevs; # all snapshots are after the date given, 
-                                             # so return the first one (if it's good)
+    return $S{$prevs}{unfinished} ? 0 : $prevs; # all snapshots are after the date given, 
+                                                # so return the first one (if it's good)
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -3067,13 +3156,13 @@ sub getMatchingSnapshots ($$$$\@) {
         $sbFactor1 = 0;
     }
 
-    # Further adjustment to weighting of incomplete snapshots
-    # as a 'distance' in time -- makes incomplete snapshots always a bad match
+    # Further adjustment to weighting of unfinished snapshots
+    # as a 'distance' in time -- makes unfinished snapshots always a bad match
     # Factor may need tuning -- currently it's arbitrarily large at 10000 to make 
     # sure that bad snapshots are deleted first.
     my @badoffset;
     foreach my $s (@S) {
-        push @badoffset, ($S{$s}{partial} ? $range * 10000 : 0);
+        push @badoffset, ($S{$s}{unfinished} ? $range * 10000 : 0);
     }
     debug "badoffsets: @badoffset\n", 'gMS';
 
@@ -3223,18 +3312,18 @@ sub getDeleteList (\@;$) {
     # Using the global hash of existing snapshots,
     # return a list of the ones to be deleted by checking against the list of cSpecs.
     # Plan 
-    # - get separate lists of good and incomplete S's
+    # - get separate lists of good and bad (unfinished) S's
     # - for each cSpec
     # -   if there are enough good ones, delete all the bad ones
     # -   if more than enough (good+bad), choose as before, but with extra weighting on the bad
     my @cSpecs = @{(shift)};
     my $plevel = shift // 3;    # optional to override print level
 
-    # Separate the complete ('good') from the incomplete ('bad') snapshots
+    # Separate the complete ('good') from the unfinished ('bad') snapshots
     my @Sgood;
     my @Sbad;
     foreach my $s (rsort keys %S) {
-        if ($S{$s}{partial}) {
+        if ($S{$s}{unfinished}) {
             push @Sbad, $s;
         } else {
             push @Sgood, $s;
@@ -3523,7 +3612,7 @@ sub compileSpecs ($$) {
     # List good and bad snapshots separately
     my (@Sgood, @Sbad);
     foreach my $s (rsort keys %S) {
-        if ($S{$s}{partial}) {
+        if ($S{$s}{unfinished}) {
             push @Sbad, $s;
         } else {
             push @Sgood, $s;
@@ -3566,7 +3655,7 @@ sub compileSpecs ($$) {
                 # This partial period can count as a good one -- do nothing here
                 debug "firstSpec and enough S's -- will count as good\n", 'cS';
             } else {
-                # Period is incomplete ...?
+                # Period is partial ...?
                 my (undef, $fullend) = getPeriod($beg, $spec->{periodn});
                 if ($end <= $oldestS) {
                     debug "not compiling spec $spec->{rawspec} cos it's empty\n", 'cS';
@@ -3584,16 +3673,12 @@ sub compileSpecs ($$) {
                         # limit best to partial period:
                         best    => min(bestOffset($spec->{period}, $beg), $end-$beg-1),  
                         rawspec => $spec->{rawspec}, 
-                        label   => $spec->{rawspec} . ($firstSpec ? ':current' : ':partial'),
+                        label   => $spec->{rawspec} . ($firstSpec ? ':current' : ':part'),
                         sgood   => $sip,
                         sbad    => snapshotsInPeriod(@Sbad, $beg, $end),
-                        partial => 1,
+                        #partial => 1,
                         fullend => $fullend,    # end of period if it weren't partial
                     };  
-#                # If $end is older than $oldestS, we should append 'empty' to the label 
-#               $cSpecs[-1]->{label} .= ' empty (1)' if $end <= $oldestS;  # is this a nasty hack?  
-#                    # YES -- maybe we should stop compiling or at least printing out the 
-#                    #   cSpecs once there are no more snapshots   FIXME
                     debug "created cSpec [1] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end})
                     . " freq=$cSpecs[-1]->{freqmin}-$cSpecs[-1]->{freqmax} " . 
                     "count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . 
@@ -3636,12 +3721,9 @@ sub compileSpecs ($$) {
                     label   => $LevelName[$spec->{periodn}] . '(s) with too few snapshots',   
                     sgood   => $sip,
                     sbad    => snapshotsInPeriod(@Sbad, $beg, $end), 
-                    partial => 0,
+                    #partial => 0,
                     fullend => $end,
                 };
-                # FIXME if there are no more snapshots, then printing 'too few'
-                # (which may be for a fractional period) and then doing a list of 'empty' cSpecs
-                # looks silly.  Possibly.
                 debug "created cSpec [3] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end})
                     . " freq=$cSpecs[-1]->{freqmin}-$cSpecs[-1]->{freqmax} " . 
                     "count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . 
@@ -3664,7 +3746,7 @@ sub compileSpecs ($$) {
                     label   => $spec->{rawspec} . ":$p",
                     sgood   => $sip, 
                     sbad    => snapshotsInPeriod(@Sbad, $beg, $end), 
-                    partial => 0,
+                    #partial => 0,
                     fullend => $end,
                 };  
                 debug "created cSpec [4] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) .
@@ -3705,7 +3787,7 @@ sub compileSpecs ($$) {
 #                    # should always be 0 -- we'll check
 #                sbad    => snapshotsInPeriod(@Sbad, $beg, $end), 
 #                    # should always be 0 -- we'll check
-#                partial => 0,
+#                #partial => 0,
 #                fullend => $end,
 #            };  
             debug "'empty' cSpec is not empty!!!!!!!!!!!!!!!!!!!!\n", 'cS'
@@ -3749,7 +3831,7 @@ sub compileSpecs ($$) {
             label   => 'old',
             sgood   => snapshotsInPeriod(@Sgood, $oldestS, $end), 
             sbad    => snapshotsInPeriod(@Sbad, $oldestS, $end), 
-            partial => 0,
+            #partial => 0,
             fullend => $end,
         };  
         debug "created cSpec [6] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) . 
@@ -3866,15 +3948,15 @@ sub getExpirableSnapshots ($\@$) {
         debug "no \@S, so no expirables\n", 'gES';
         return @expirable;
     }
-    # Put partial snapshots on the list first
+    # Put unfinished snapshots on the list first
     foreach my $s (@S) {
-        if ($S{$s}{partial}) {
+        if ($S{$s}{unfinished}) {
             unshift @expirable, $s;
             #delete $S{$s};  FIXME why was that there?
         }
     }
-    debug "expiring partials: " . join(' ', map {time2stamp($_)} @expirable) . "\n", 'gES';
-    @S = rsort keys %S;  # now with no partial snapshots
+    debug "expiring unfinisheds: " . join(' ', map {time2stamp($_)} @expirable) . "\n", 'gES';
+    @S = rsort keys %S;  # now with no unfinished snapshots
     # Return if there are none left
     return @expirable if !@S;
     if ($Opt{'expire-old'}) {
@@ -3903,7 +3985,8 @@ sub getExpirableSnapshots ($\@$) {
 
 sub newSnapshot ($$) {
     # Create a new snapshot stamped with the current time,
-    # add the entry to the %S hash, and return its time stamp
+    # add the entry to the %S hash, and return its time stamp.
+    # Also creates the directory for the snapshot to avoid race conditions.
     my $dest         = shift;
     my $lastSnapshot = shift // 0;   # time of last snapshot (or 0 if none)
     my $snapshot = time();
@@ -3959,8 +4042,8 @@ sub newSnapshot ($$) {
     my $fullname = "$dest/$name";
 
     # Make sure that a snapshot with that name doesn't already exist
-    while ($S{$snapshot} or -e $fullname) {
-        debug "Sleeping for a second...\n", 3;
+    # and create the directory for it.
+    while ($S{$snapshot} or rsyncExists($fullname)) { 
         # Yes, we could just add 1 to $snapshot,
         # but then we might end up in the future...
         sleep 1;
@@ -3968,11 +4051,13 @@ sub newSnapshot ($$) {
         $name = "$Opt{template}-" . time2stamp($snapshot);
         $fullname = "$dest/$name";
     }
+    my $rc = rsyncMkdir($fullname);
+    # if that didn't work, things will go wrong later...
     $S{$snapshot} = {
         name     => $name,
         path     => $dest,
         fullname => $fullname,
-        partial  => 0,
+        unfinished => 0,
         size     => -1, # not known yet
         remote   => remote($dest),
         daemon   => remoteDaemon($dest),
@@ -3997,8 +4082,8 @@ sub runRsync ($\@$) {
 
     my $succeeded = 1;          # stays true if ALL sources are copied successfully
     my $sourcesSucceeded = 0;   # count of successfully backed-up sources
-    my $restartable = 0;        # becomes true if partial snapshot should be kept for restarting
-    my $lostDest = 0;           # becomes true if lost connection to destination
+    my $restartable = 0;        # becomes true if unfinished snapshot should be kept for restarting
+    my $lostDest = 0;           # becomes true if we lose connection to destination
 
     my $deletionsAllSources = 0;
 
@@ -4039,38 +4124,25 @@ sub runRsync ($\@$) {
         }
 
         my $destDir = $S{$snapshot}{fullname};    
-        #debug "dest '$dest'  destdir '$destDir'\n", 'rR';
-
-        my $subDir  = '';   # These two are for adjusting the link-dest path
-        my $upDir   = '';
-
+        my $subDir;
         if ($remoteSource) {
             $subDir = sourceDir($location);
         } else {
             $subDir = hostname;
         }
-        # The extra directory level won't be created by rsync normally,
-        # so we'll have to do it manually
-        # (It may already be there)
-        my $mdrc = mkdirRsync("$destDir");
-        printlog "WARNING: Unable to create directory '$destDir' ($!)\n" if $mdrc;
-        unless ($mdrc or $Opt{'dry-run'}) {
-            $destDir = "$destDir/$subDir"; # can't use catdir because it nobbles rsync:// URLs
-            $upDir = '../'; 
-        }
+        $destDir = "$destDir/$subDir";
 
-        # Set up link-dest options if there are any previous snapshots
-        # (as a relative path, which will work whether local or remote).
+        # Set up link-dest options if there are any previous snapshots.
         # Loop to create as many link-dests as required.
-        # Previous 'bad' snapshots are linked in case they contain useful
+        # Previous unfinished snapshots are linked in case they contain useful
         # files, but don't count towards the total.
         my $ld = 0; # number of 'good' link-dests created
         my $s = 1;  # start at snapshot 1 (i.e. skip the 0th one that we're creating now)
         my $linkdest = '';
         while ($ld < $Opt{ldcount} and $s <= $#S) {
             debug "linking: s=$s S[s]=$S[$s] S{S[s]}{name}=$S{$S[$s]}{name}\n", 'rR';
-            $linkdest .= "--link-dest='$upDir../$S{$S[$s]}{name}/$subDir' ";
-            $ld += 1 if !$S{$S[$s]}{partial};
+            $linkdest .= "--link-dest='../../$S{$S[$s]}{name}/$subDir' ";
+            $ld += 1 if !$S{$S[$s]}{unfinished};
             $s += 1;
         }
 
@@ -4243,9 +4315,9 @@ sub runRsync ($\@$) {
         printlog   "         $sourcesSucceeded out of " . @{$Opt{source}} . 
             " sources were completed\n", 1;
         if ($restartable and $Opt{'allow-restart'}) {
-            printlog "NOTE: partial snapshot has been left to allow the run to be restarted\n", 1;
+            printlog "NOTE: Unfinished snapshot has been left to allow the run to be restarted\n",1;
             printlog "      (use the --restart option to do so)\n", 1;
-            $Summary{$dest}{$DestResult} = 'incomplete (restartable)';
+            $Summary{$dest}{$DestResult} = 'unfinished (restartable)';
         } else {
             $Summary{$dest}{$DestResult} = "failed -- $sourcesSucceeded sources succeeded";
         }
@@ -4280,7 +4352,7 @@ sub processDestination ($) {
         if ($Opt{'min-interval'} > 0 and @S > 1) {
             # If the last snapshot was unsuccessful and within min-interval, just restart it
             if ($Opt{'allow-restart'} and 
-                $S{$S[0]}{partial}    and 
+                $S{$S[0]}{unfinished} and 
                 ($now - $S[0]) < ($Opt{'min-interval'} * MINUTE)) {
                 if (!$Opt{restart}) {
                     printlog "\nNOTE: Automatically restarting recent unsuccessful snapshot", 1;
@@ -4288,8 +4360,8 @@ sub processDestination ($) {
                 }
             } else {
                 # No auto-restart -- don't run if successful recently
-                my $s = 1;
-                while ($s < @S and $S{$S[$s]}{partial}) {
+                my $s = 0;
+                while ($s < @S and $S{$S[$s]}{unfinished}) {
                     $s += 1;
                 }
                 if ($s < @S and ($now - $S[$s]) < ($Opt{'min-interval'} * MINUTE)) {
@@ -4303,8 +4375,8 @@ sub processDestination ($) {
             # Restarting the previous snapshot (whether complete or not)
             $now = $S[0];
             debug "restarting with now=$now: " . dumpSnapshot($now) . "\n", 'pD';
-            # remove the partial flag -- hopefully, we'll complete it
-            $S{$now}{partial} = 0;
+            # remove the unfinished flag -- hopefully, we'll complete it
+            $S{$now}{unfinished} = 0;
             printlog under1("\nRestarting snapshot $S{$now}{name}\n"), 1;
         } else {
             # Normal run, creating a new snapshot.
@@ -4321,15 +4393,17 @@ sub processDestination ($) {
     @cSpecs = compileSpecs($now, $Opt{pspecs});
     displayCSpecs(@cSpecs);
     
-    # Get the list of snapshots to be deleted...
+    # Get the list of snapshots to be deleted
     my @D;
     @D = getDeleteList(@cSpecs) if $Opt{delete};
-    # ...to see if the new snapshot would be one of the ones deleted
-    # FIXME this assumes that the current one will be good!
-    #   -- done -- gDL now called again below
+    # deleteNew is true if the new snapshot would be one of those to be deleted:
     my $deleteNew = grep {$_ == $now} @D;
     debug "deleteNew=$deleteNew", 'pD';
 
+    if ($Opt{snapshot} or $Opt{delete}) {
+        # Set the destination lock, and give up if that failed
+        return if !rsyncLockDest($dest);
+    }
     my $lostDest = 0;
     if ($Opt{snapshot}) {                                         # FIXME why? -v
         if ($deleteNew and $Opt{delete} and $Opt{'delete-cp'}) { #  and !$Opt{'allow-restart'}) {
@@ -4339,11 +4413,6 @@ sub processDestination ($) {
             my @expirableSnapshots = getExpirableSnapshots($Opt{pspecs}, @cSpecs, $now);
             # Run rsync to create the new snapshot
             (my $rsyncOK, $lostDest) = runRsync($dest, @expirableSnapshots, $now);  
-            if (!$rsyncOK and $Opt{delete}) {
-                # Failed to create a new snapshot, so re-do the list of deletions
-                #getSnapshotList($dest);   # is this enough or too much?  FIXME needed?
-                #@D = getDeleteList(@cSpecs, 3); # 3 should be 9 FIXME -- level, and needed?
-            }
         }
     } else {
         printlog "NOTE: Option 'no-snapshot' given, so no new snapshot will be created\n", 2;
@@ -4361,10 +4430,12 @@ sub processDestination ($) {
         }
     }
 
-    if (!$lostDest) {
+    if (!$lostDest and ($Opt{snapshot} or $Opt{delete})) {
         # Complete and store the metadata
         updateSnapshotSizes();
-        writeMetadata($dest) 
+        writeMetadata($dest);
+        # Clear the destination lock
+        rsyncUnlockDest($dest);
     }
     # Display the current situation after recompiling the specs to allow for changes
     @cSpecs = compileSpecs($now, $Opt{pspecs});  
@@ -4482,9 +4553,7 @@ sub testSuite {
     # FIXME change source and dest to use contexts
     ${$Opt{source}}[0]      = '~/tmp/bstestsource';
     ${$Opt{destination}}[0] = '~/tmp/bstestdest';
-    $Opt{lockfile} = '~/tmp/bstest.lock';
     $Opt{verbose}  = 3;
-    $Opt{stacktrace} = 1;
     state $template = $Opt{template};   # 'state' to avoid sharing warning
     state $dest = ${$Opt{destination}}[0];
     state $now = stamp2time('20110529-230000');
@@ -4496,7 +4565,7 @@ sub testSuite {
         return (stamp2time($stamp) => 
             {name=>'$template-$stamp', path=>$dest, 
                 fullname=>"$dest/$template-$stamp", 
-                partial=>0, size=>-1, remote=>0, daemon=>0});
+                unfinished=>0, size=>-1, remote=>0, daemon=>0});
     }
 
     given ($Opt{test}) {
@@ -4535,8 +4604,7 @@ sub testSuite {
         #  name     - name of the snapshot directory e.g. 'docs-20111130-320234'
         #  path     - directory path to name (NOT ending with '/')
         #  fullname - same as path/name   
-        #  partial  - true if it's a partial (incomplete) snapshot, 
-        #               with a name ending with the suffix
+        #  unfinished - true if it's an unfinished snapshot, 
         #  remote   - true if it's on a remote destination
         #  daemon   - true if it's remote and accessed via an rsync daemon
         # Which makes it all very tedious.
@@ -4723,7 +4791,7 @@ sub testSuite {
                         name => time2stamp($date), 
                         path => "${$Opt{destination}}[0]",
                         fullname => "${$Opt{destination}}[0]/" . time2stamp($date),
-                        partial => 0, 
+                        unfinished => 0, 
                         remote => remote("${$Opt{destination}}[0]"),
                         daemon => remoteDaemon("${$Opt{destination}}[0]"),
                     };  # make snapshot
@@ -4798,7 +4866,6 @@ sub testSuite {
 
         when (12) {
             # testing expirables  
-            $Opt{lockfile} = '/home/chris/Dropbox/perlwork/brandysnap/bs.lock';
             $Opt{source} = ['/home/chris/Dropbox/perlwork', '/library/pictures/Fujical.jpg'];
             $Opt{destination} = '/home/chris/tmp/bstest12/';
             $Opt{template} = 'test12';
@@ -4904,7 +4971,7 @@ sub testSuite {
             %S = getSnapshotList("/home/chris/tmp");
             print "%S: ";
             foreach my $s (rsort keys %S) {
-                print "$s: $S{$s}{partial} ";
+                print "$s: $S{$s}{unfinished} ";
             }
             print "\n";
             status('/home/chris/tmp');
@@ -5056,26 +5123,15 @@ if ($Opt{version}) {
     exit EXITOK;
 }
 
-# Turn off stacktrace if not required
-if ($Opt{stacktrace}) {
-    $SIG{__DIE__} = sub { Carp::confess( @_ ) };
-} else {
+# Turn off stacktrace unless we're debugging
+if (keys $Opt{debug} == 0) {
     $SIG{__DIE__} = 'DEFAULT';  
-}
+} 
 
 # Just run the test suite if required 
 if ($Opt{test}) {
     testSuite();
     exit;
-}
-
-# Create a lock to prevent overlapping runs
-unless (open(LOCKFILE, '>', $Opt{lockfile}) and
-        flock(LOCKFILE, LOCK_EX | LOCK_NB)      ) {
-    printlog "Can not open and lock lock-file '$Opt{lockfile}'.\n" .
-        "$Script is probably already running with that lock-file.\n" .
-        "If you're sure it isn't, delete the lock-file and try again.\n", 1;
-    exit EXITNOLOCK; 
 }
 
 displayOptions();
@@ -5109,9 +5165,8 @@ printlog "\n$Script stopping at " . (strftime "%H:%M:%S", localtime) .
     " with exit code $ExitCode\n", 1,1;
 logit '-' x 80, 1;
 
-# Free the lock
-close(LOCKFILE);    # closing the file automatically unlocks it
-unlink $Opt{lockfile};
+# Free the lock on the logfile
+close(LOGFILE);    # closing the file automatically unlocks it
 
 exit $ExitCode;
 # That's the end

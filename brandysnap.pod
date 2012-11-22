@@ -59,7 +59,6 @@ If you want to try it out without reading further, create a configuration file c
  destination = /path/to/writable/directory
  template    = brandysnap-test1
  spec        = 4h1,1h1,1d7
- lockfile    = ~/brandysnap-test1.lock
 
 and then run
 
@@ -257,7 +256,7 @@ Only certain options are valid within each context.  A destination context can c
  allow-restart ldcount
  all-failed some-failed
  min-interval
- verbose loglevel debug stacktrace
+ verbose loglevel debug 
 
 A source context can contain these options:
 
@@ -267,7 +266,7 @@ A source context can contain these options:
  compress restart
  allow-restart 
  min-interval
- verbose loglevel debug stacktrace
+ verbose loglevel debug
 
 =over
 
@@ -359,14 +358,6 @@ Example:
 =item B<spec I<string>> !   
 
 The snapshot-keeping specification.  See the Keeping Snapshots section for full details.
-
-=item B<lockfile I<file>> !
-
-To prevent separate runs of brandysnap using the same destinations at the same time, you need to give 
-the name of temporary file which will be created and locked while brandysnap is running.
-The user running brandysnap must have permission to create and delete this file.  For example:
-
- lockfile /tmp/brandysnap-docs.lock
 
 =item B<logfile I<file>>
 
@@ -562,10 +553,6 @@ These options are for use by developers only.
 
 Print and log debugging information. (default: B<(none)>)
 
-=item B<[no]stacktrace>
-
-Print a stack trace on error. (default: B<nostacktrace>)
-
 =item B<test I<n>>
 
 Run test case 'n'.
@@ -636,7 +623,7 @@ that there are no 'Permission denied' messages.  If there are, you may need to r
 
 =head1 KNOWN ISSUES
 
-As of 11 October 2012 and version 0.2.3, the following issues and bugs are known.
+As of 21 November 2012 and version 0.2.7, the following issues and bugs are known.
 
 =over
 
