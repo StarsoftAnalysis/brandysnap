@@ -74,7 +74,7 @@ local $SIG{QUIT} = \&killgroup;
 local $SIG{ABRT} = \&killgroup;
 local $SIG{TERM} = \&killgroup;
 
-# Turn off buffering on STDOUT to get full error messages
+# Turn off buffering on STDOUT to get instant messages
 $| = 1;
 
 # Globals and constants ============================================================================
@@ -82,7 +82,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-our $VERSION = '0.2.7';
+our $VERSION = '0.2.8-next';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -99,8 +99,8 @@ my $ExitCode = EXITOK;
 # Options -- need some options to start with
 our %Opt = ();   
 $Opt{debug}    = {}; #{'rc'=>1, 'cos'=>1}; # Set this when debugging processOptions(), or just {}
-$Opt{verbose}  = 1;
-$Opt{loglevel} = 1;
+$Opt{verbose}  = 0;
+$Opt{loglevel} = 0;
 
 # Template for snapshot directory names -- the date part:
 # (if you change this, existing snapshots will not be found!)
@@ -113,7 +113,10 @@ use constant STAMPFMT0 => '00000000-000000';
 #  path     - directory path to name (NOT ending with '/')
 #  fullname - same as path/name   
 #  unfinished - true if it's an unfinished snapshot
-#  size     - size of the snapshot in bytes
+#  totbytes - total size of the snapshot
+#  tfrbytes - size of data transferred for this snapshot from rsync stats
+#  totfiles - number of files in the snapshot - ditto
+#  tfrfiles - number of new files in the snapshot - ditto
 #  remote   - true if it's on a remote destination
 #  daemon   - true if it's remote and accessed via an rsync daemon
 my %S;
@@ -410,10 +413,10 @@ my @Suffix = ('B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB', 'EiB', 'ZiB', 'YiB');
         # see http://physics.nist.gov/cuu/Units/binary.html
 sub bytes ($) {
     # Simple routine for displaying a file size
-    # Return '' if size is zero or less
+    # Return '0 B' if size is zero or less
     # (it could be -1 for a new snapshot during a dry-run)
     my $n = shift;
-    return '' if $n <= 0;
+    return '0 B' if (!defined $n) or ($n <= 0);
     my $base = 1024;
     my $mult = 0;
     while ($n >= $base) { 
@@ -482,9 +485,8 @@ sub stripQuotes ($) {
 sub dumpSnapshot ($) {
     # Return a printable version of a %S entry
     my $s = shift;
-    return "$s (" . time2stamp($s) . ") => {name=>$S{$s}{name} path=>$S{$s}{path} " 
-        . "fullname=>$S{$s}{fullname} unfinished=>$S{$s}{unfinished} size=>$S{$s}{size} "
-        . "remote=>$S{$s}{remote} daemon=>$S{$s}{daemon}}";
+    return "$s (" . time2stamp($s) . ") => {" . 
+        join(' ', map {"$_=>$S{$s}{$_}"} sort keys $S{$s}) . "}";
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -644,6 +646,7 @@ sub aligned ($$) {
 sub stamp2time ($) {
     # convert filename-type timestamp to Unix time
     my $stamp = shift;
+    return 0 if $stamp eq STAMPFMT0; 
     if ($stamp =~ /(?<Y>\d\d\d\d)(?<M>\d\d)(?<D>\d\d)-(?<h>\d\d)(?<m>\d\d)(?<s>\d\d)/) {
         return timelocal($+{s},$+{m},$+{h},$+{D},$+{M}-1,$+{Y});
     }
@@ -805,14 +808,11 @@ sub updateSnapshotSizes () {
     # and gives return code 23 if the directory is not found
     #                       255 for wrong password, unknown host etc.
     # Note the lack of nlink information, so we can't calculate 'delete size'.
-    # Process in latest-first order so that we can always update the latest one
-    # which will be non-zero if we restarted it.
-    my $firstOne = 1;
-    foreach my $snapshot (rsort keys %S) {
-        debug "initial snapshot size is $S{$snapshot}{size}\n", 'uSS';
-        next if !$firstOne and $S{$snapshot}{size} >= 0;
-        $firstOne = 0;
-        my $totalSize = 0;
+    foreach my $snapshot (sort keys %S) {
+        next if ($S{$snapshot}{totbytes} > 0);  # info is already there 
+        debug "initial snapshot size is $S{$snapshot}{totbytes}\n", 'uSS';
+        my $totalBytes = 0;
+        #my $totalFiles = 0;  no, because file count indicates presence of rsync tfr info
         # Get rsync listing into an array
         my @items;
         my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'}, 
@@ -836,7 +836,8 @@ sub updateSnapshotSizes () {
                         # just counting the space of the link itself)
                         # (and we're counting the directory itself, not its contents)
                         debug "t=$+{t} size=$+{size} name=$+{name}\n", 'uSS';
-                        $totalSize += diskSpace($+{size});
+                        $totalBytes += diskSpace($+{size});
+                        #$totalFiles += 1;
                     } else {
                         # (ignore anything other than files and directories)
                         debug "ignoring non-file-or-dir $item\n", 'uSS'
@@ -846,8 +847,9 @@ sub updateSnapshotSizes () {
                     debug "ignoring non-matching $item\n", 'uSS'
                 }
             }
-            $S{$snapshot}{size} = $totalSize;
-            debug "adding size information for $S{$snapshot}{name}, size: $totalSize\n", 'uSS';
+            $S{$snapshot}{totbytes} = $totalBytes;
+            #$S{$snapshot}{totfiles} = $totalFiles;
+            debug "adding size information for $S{$snapshot}{name}, bytes=$totalBytes\n", 'uSS';
         }
     }
 }
@@ -1164,29 +1166,29 @@ sub parseSpecs ($) {
         $i += 1;
     }
 
-    if (!$errorcount) {
-        printlog "Validated specs: " . join(',', 
-            map {fmtFreq($_->{freqmin}, $_->{freqmax}) . $_->{period} . $_->{count}} @specs) . 
-            "\n", 3;
-        my $TotalSnapshotsMin = 0; 
-        my $TotalSnapshotsMax = 0; 
-        foreach my $spec (@specs) {
-            $TotalSnapshotsMin += $spec->{freqmin} * $spec->{count};
-            $TotalSnapshotsMax += $spec->{freqmax} * $spec->{count};
-        }
-        if ($specs[-1]->{count} == UNLIMITED) {
-            printlog "which will create an unlimited number of snapshots\n", 3;
-        } else {
-            if ($TotalSnapshotsMin == $TotalSnapshotsMax) {
-                printlog "which will create a total of $TotalSnapshotsMax snapshots\n", 3;
-            } else {
-                printlog "which will create a total of between $TotalSnapshotsMin and " . 
-                    "$TotalSnapshotsMax snapshots\n", 3;
-            }
-        }
-    }
-    debug "Frequencies: " . 
-        join(', ', map {$_->{freqmax} / $Hours[$_->{periodn}]} @specs) . "\n", 'pS';
+#    if (!$errorcount) {
+#        printlog "Validated specs: " . join(',', 
+#            map {fmtFreq($_->{freqmin}, $_->{freqmax}) . $_->{period} . $_->{count}} @specs) . 
+#            "\n", 3;
+#        my $TotalSnapshotsMin = 0; 
+#        my $TotalSnapshotsMax = 0; 
+#        foreach my $spec (@specs) {
+#            $TotalSnapshotsMin += $spec->{freqmin} * $spec->{count};
+#            $TotalSnapshotsMax += $spec->{freqmax} * $spec->{count};
+#        }
+#        if ($specs[-1]->{count} == UNLIMITED) {
+#            printlog "which will create an unlimited number of snapshots\n", 3;
+#        } else {
+#            if ($TotalSnapshotsMin == $TotalSnapshotsMax) {
+#                printlog "which will create a total of $TotalSnapshotsMax snapshots\n", 3;
+#            } else {
+#                printlog "which will create a total of between $TotalSnapshotsMin and " . 
+#                    "$TotalSnapshotsMax snapshots\n", 3;
+#            }
+#        }
+#    }
+#    debug "Frequencies: " . 
+#        join(', ', map {$_->{freqmax} / $Hours[$_->{periodn}]} @specs) . "\n", 'pS';
 
     return $warningcount, $errorcount, @specs;  
 }
@@ -1307,11 +1309,11 @@ sub checkOptionSingle ($$) {
                 $value = int($value);
                 $value = (($value-1) % 7) + 1;  # force it into range
             }
-            # Link-dest count -- positive integer
+            # Link-dest count -- max 20 says rsync
             when ('ldcount') {
                 $value = int($value);
-                if ($value < 0) {
-                    $msg .=  "ERROR: Invalid option: 'ldcount' must be a positive whole number, " .
+                if ($value < 0 or $value > 20) {
+                    $msg .=  "ERROR: Invalid option: 'ldcount' must be a number from 1 to 20, " .
                         "not '$value'\n";
                     $e += 1;
                 } elsif ($value == 0) {
@@ -2217,7 +2219,7 @@ Advanced options
 --[no]delete              d  delete no-longer-required snapshots (default: delete) 
 --[no]delete-cp           d  delete even in current period (default: delete-cp)
 --[no]expire-old          d  delete oldest snapshots when disk is full (default: no-expire-old)
---ldcount      n          d  number of --link-dest options to create (default: 1) 
+--ldcount      n          d  number of --link-dest options to create (default: 1, max: 20) 
 --[no]restart             ds continue snapshot(s) from previous run (default: norestart)
                               (implies --snapshot) 
 --[no]snapshot            d  create new snapshots (default: snapshot)
@@ -2258,6 +2260,23 @@ sub deleteSnapshot ($) {
         printlog "Not deleting snapshot '$S{$snapshot}{name}' because of option 'delete=no'\n", 1;
         return 0;
     }
+# WRONG!
+#    # Cleverness to transfer the deleted snapshot's quota of new files to
+#    # the next (in time) snapshot (if any), but not if values of deleted snaphot are -1, 
+#    # indicating no relevant data.
+#    my $nextS = snapshotAfter($snapshot);
+#    if ($nextS) {
+#        if ($S{$snapshot}{tfrbytes} > -1) {
+#            $S{$nextS}{tfrbytes} = 0 if $S{$nextS}{tfrbytes} == -1;   # FIXME as addStats
+#            $S{$nextS}{tfrbytes} += $S{$snapshot}{tfrbytes};
+#            debug "allocated $S{$snapshot}{tfrbytes} bytes to next snapshot $S{$nextS}{name}", 'dS';
+#        }
+#        if ($S{$snapshot}{tfrfiles} > -1) {
+#            $S{$nextS}{tfrfiles} = 0 if $S{$nextS}{tfrfiles} == -1;   # FIXME as addStats
+#            $S{$nextS}{tfrfiles} += $S{$snapshot}{tfrfiles}; 
+#            debug "allocated $S{$snapshot}{tfrfiles} files to next snapshot $S{$nextS}{name}", 'dS';
+#        }
+#    }
     # Use some rsync trickery to delete the snapshot
     # (gleaned from http://lists.samba.org/archive/rsync/2010-October/025723.html)
     # This involves copying an empty directory onto the snapshot, and
@@ -2301,8 +2320,10 @@ sub deleteSnapshots (\@\@$) {
             $ci += 1; 
         }; 
         if ($di == 0 and ($deleteNew)) {
-            # Don't need to delete the new snapshot because we avoided creating it
-            debug "not deleting newest snapshot because it was not created\n", 'dS';
+            ## Don't need to delete the new snapshot because we avoided creating it
+            ##debug "not deleting newest snapshot because it was not created\n", 'dS';
+            # Delete the empty directory of the uncreated snapshot (quietly)
+            deleteSnapshot($d);
         } else {
             my $unfinished = $S{$d}{unfinished} ? 'unfinished ' : '';
             if ($cSpecs[$ci]->{label} eq 'old') {
@@ -2388,11 +2409,16 @@ sub status ($;\@) {
     # Print a status report on existing snapshots for a single destination
     my $dest   = shift;
     my @cSpecs;
-    @cSpecs    = @{(shift)} if @_;
+    @cSpecs    = @{(shift)} if @_;    # FIXME is cSpecs always supplied? probs below else
 
     my $count  = 0; # complete
+    my $newcount = 0; # new-style totals (complete only)
     my $ucount = 0; # unfinished
     my $total  = 0;
+    #my $sumtotbytes = 0;
+    my $sumtfrbytes = 0;
+    my $sumtotfiles = 0;
+    my $sumtfrfiles = 0;
     my $ci = 0;     # index into @cSpecs
     my $pi = -1;    # index into $Opt{pspecs}
     debug "pspecs: " . Dumper($Opt{pspecs}), 'status';
@@ -2409,21 +2435,37 @@ sub status ($;\@) {
     if (!%S) {
         printlog "No snapshots found\n", $plevel,$llevel;
     } else {
-        my $nameLength = max(length($Opt{template}) + 18, 35);
-        printlog sprintf("%-*s   %15s   %s\n", $nameLength, 'Snapshot (most recent first)', 
-            'Size', @cSpecs ? 'Spec' : ''), $plevel,$llevel;
-        printlog sprintf("%-*s   %15s   %s\n", $nameLength, '-'x$nameLength, 
-            '-----------', '-------------', @cSpecs ? '--------' : ''), $plevel,$llevel;
+        # Report layout:
+        #                                    ------ Size ------   ----- Files ------
+        # Snapshots (most recent first)         Total       New      Total       New   Spec
+        # --------------------------------   ------------------   ------------------   ------------
+        # longtemplatename-20121024-123456   1.23 MiB  1023 MiB    9999999      9999   1-4h23:21
+        # --------------------------------   ------------------   ------------------
+        #   Total:  (+999 unfinished) 9999   28.0 MiB  28.0 GiB   12345678  12345678   
+        # Average:                            123 MiB       0 B     234234    234234 
+        # <-------- $nameLength -------->
+        my $nameLength = max(length($Opt{template}) + 16, 32);
+        printlog sprintf("%-*s   ------ Size ------   ----- Files ------", $nameLength, ''), 
+            $plevel,$llevel;
+        printlog sprintf("%-*s   %8s  %8s   %8s  %8s   %s\n", $nameLength, 
+            'Snapshots (most recent first)', 'Total', 'New', 'Total', 'New', 'Spec'), 
+            $plevel,$llevel;
+        printlog sprintf("%-*s   %8s--%8s   %8s--%8s   %s\n", $nameLength, '-'x$nameLength, 
+            '-'x8, '-'x8, '-'x8, '-'x8, '-'x12), 
+            $plevel,$llevel;
         foreach my $s (rsort keys %S) {
+            # Print period details if we've got to a new spec
+            while ($pi < 0 or ${$Opt{pspecs}}[$pi]->{beg} > $s) {
+                $pi += 1;
+                printlog "Period covered by spec ${$Opt{pspecs}}[$pi]->{rawspec} is " .
+                    pair2range(${$Opt{pspecs}}[$pi]->{beg}, ${$Opt{pspecs}}[$pi]->{end}) . "\n", 1;
+            }
             my $name = $S{$s}{name};
             $name .= ' (u)' if $S{$s}{unfinished};
-            my $size = $S{$s}{size};
-            next if $size < 0;  # skip no-snapshot snapshot
             my $label = '';
             if ($S{$s}{unfinished}) {
                 $ucount += 1;
             } else {
-                $count += 1;
                 if (@cSpecs) {
                     # Find which cSpec applies (complete snapshots only)
                     while ($cSpecs[$ci]->{beg} > $s) { 
@@ -2433,27 +2475,45 @@ sub status ($;\@) {
                     #$label = $cSpecs[$ci]->{rawspec};
                     #$label .= (' ' . $LevelName{$cSpecs[$ci]->{period}});
                 }
+                $count += 1;  # new + old style
+                $total       += $S{$s}{totbytes};
+                $sumtfrbytes += $S{$s}{tfrbytes};
+                $sumtotfiles += $S{$s}{totfiles};
+                $sumtfrfiles += $S{$s}{tfrfiles};
+                $newcount += 1 if $S{$s}{totfiles} > 0;  # new-style only
             }
-            # Print period details if we've got to a new spec
-            while ($pi < 0 or ${$Opt{pspecs}}[$pi]->{beg} > $s) {
-                $pi += 1;
-                printlog "Period covered by spec ${$Opt{pspecs}}[$pi]->{rawspec} is " .
-                    pair2range(${$Opt{pspecs}}[$pi]->{beg}, ${$Opt{pspecs}}[$pi]->{end}) . "\n", 1;
+            #printlog sprintf("%-*s   %15s   %s\n", $nameLength, $name, 
+            #    bytes($size) || 'empty', $label), $plevel,$llevel;
+#            printlog "snapshot: " . Dumper($S{$s});
+            if ($S{$s}{totfiles} > 0) {
+                printlog sprintf("%-*s   %8s  %8s   %8d  %8d   %s\n", $nameLength, $name, 
+                    bytes($S{$s}{totbytes}), bytes($S{$s}{tfrbytes}),
+                    $S{$s}{totfiles}, $S{$s}{tfrfiles}, $label), 
+                    $plevel, $llevel;
+            } else { # totfiles etc. not available
+                printlog sprintf("%-*s   %8s  %8s   %8s  %8s   %s\n", $nameLength, $name, 
+                    bytes($S{$s}{totbytes}), '', '', '', $label), 
+                    $plevel,$llevel;
             }
-            printlog sprintf("%-*s   %15s   %s\n", $nameLength, $name, 
-                bytes($size) || 'empty', $label), $plevel,$llevel;
-            $total += $size;
         }
-        printlog sprintf("%-*s   %15s\n", $nameLength, '-'x$nameLength, 
-            '-----------'), $plevel,$llevel;
+        # --------------------------------   ------------------   ------------------
+        #   Total:  (+999 unfinished) 9999   28.0 MiB  28.0 GiB   12345678  12345678   
+        # Average:                            123 MiB       0 B     234234    234234 
+        printlog sprintf("%-*s   %8s--%8s   %8s--%8s\n", $nameLength, '-'x$nameLength, 
+            '-'x8, '-'x8, '-'x8, '-'x8), 
+            $plevel,$llevel;
         my $unfinished = '';
         $unfinished = "(+$ucount unfinished)" if $ucount;
-        printlog sprintf("%8s %s %-16s %3d   %15s\n", 'Total:', ' 'x($nameLength-30), 
-            $unfinished, $count, bytes($total)), $plevel,$llevel;
+        printlog sprintf("%8s %s %17s %4d   %8s  %8s   %8s  %8s\n", 
+            'Total:', ' 'x($nameLength-32), $unfinished, $count, 
+            bytes($total), bytes($sumtfrbytes), $sumtotfiles, $sumtfrfiles), 
+            $plevel,$llevel;
         if ($count > 0) {
             my $average = floor($total/$count);
-            printlog sprintf("%-*s   %15s\n", $nameLength, 'Average:', 
-                bytes($average)), $plevel,$llevel;
+            printlog sprintf("%-*s   %8s  %8s   %8s  %8s\n", $nameLength, 'Average:', 
+            bytes($total/$count), bytes($sumtfrbytes/$newcount), 
+            floor($sumtotfiles/$newcount), floor($sumtfrfiles/$newcount)), 
+            $plevel,$llevel;
         }
     }
 }
@@ -2467,7 +2527,6 @@ sub displaySummary () {
     foreach my $dest (sort keys %Summary) {
         printlog "Destination $dest\n";
         foreach my $source (sort keys %{$Summary{$dest}}) {
-            #debug "source=$source DestResult=$DestResult\n", 'dS';
             next if $source eq $DestResult;
             printlog "\tSource $source\n", 1;
             printlog "\t\t$Summary{$dest}{$source}\n", 1;
@@ -2626,8 +2685,16 @@ sub writeMetadata ($) {
     # Create subset of %S to store
     my @S;
     foreach my $s (sort keys %S) {
-        push @S,{snapshot => time2stamp($s), unfinished => $S{$s}{unfinished}, size => $S{$s}{size}}
-            if $S{$s}{size} >= 0;   # skip no-snapshot snapshot
+        push @S, {
+            timestamp  => time2stamp($s), 
+            unfinished => $S{$s}{unfinished}, 
+            #size       => $S{$s}{size},
+            totbytes   => $S{$s}{totbytes}, 
+            tfrbytes   => $S{$s}{tfrbytes},
+            totfiles   => $S{$s}{totfiles},
+            tfrfiles   => $S{$s}{tfrfiles},
+        };
+        # obsolete?:    if $S{$s}{size} >= 0;   # skip --no-snapshot snapshot
     }
     my $json = to_json(\@S, {pretty => 1});
     debug "json is '$json'\n", 'wM';
@@ -2688,11 +2755,25 @@ sub readMetadata ($) {
         } 
         close MDF;
         $mdArrayRef = from_json($json, {relaxed => 1});
-        foreach my $s (@$mdArrayRef) { 
+        foreach my $md (@$mdArrayRef) { 
+            # 'timestamp' was previously 'snapshot' -- adjust for that
+            if (defined $md->{snapshot} and !defined $md->{timestamp}) {
+                $md->{timestamp} = $md->{snapshot};
+                delete $md->{snapshot};
+            }
+            # 'size' has been replaced by 'totbytes' etc. -- convert 
+            if (defined $md->{size} and !defined $md->{totbytes}) {
+                $md->{totbytes} = $md->{size};
+                $md->{tfrbytes} = 0;
+                $md->{totfiles} = 0;
+                $md->{tfrfiles} = 0;
+            }
+            delete $md->{size};
             # Check that all values are there
-            $s->{unfinished} =  0 if !defined $s->{unfinished};
-            $s->{size}       = -1 if !defined $s->{size};
-            debug "$s->{snapshot} / $s->{unfinished} / $s->{size}\n", 'rM'; 
+            foreach my $key ('totbytes', 'tfrbytes', 'totfiles', 'tfrfiles', 'unfinished') {
+                $md->{$key} = 0 if !defined $md->{$key};
+            }
+            debug "$md->{timestamp} / $md->{unfinished} / $md->{totbytes}\n", 'rM'; 
         } 
     } else { 
         debug "Unable to read temporary metadata file '$tempdir/$mdfile'\n", 'rM';
@@ -2743,7 +2824,7 @@ sub getSnapshotList ($) {
                 path     => $dest,
                 fullname => "$dest/$+{name}",
                 unfinished => 0,    # unless metadata says otherwise -- see below
-                size     => -1,     # no size information yet -- see below
+                #size     => -1,     # no size information yet -- see below
                 remote   => $remote,
                 daemon   => $daemon,
             };
@@ -2757,23 +2838,20 @@ sub getSnapshotList ($) {
         debug "mdArrayRef=$mdArrayRef\n", 'gSL';
         # And combine the two:
         # - warn about entries in metadata for which there is no snapshot
-        # - add any unfinished and size information for the existing snapshots
+        # - add any unfinished and size information for the existing snapshots  NO LONGER
         foreach my $md (@$mdArrayRef) {
-            debug "matching md: $md->{snapshot} / $md->{unfinished} / $md->{size}\n", 'gSL';
-            my $s = stamp2time($md->{snapshot});
+            debug "matching md: $md->{timestamp} / $md->{unfinished}\n", 'gSL';
+            my $s = stamp2time($md->{timestamp});
             if ($S{$s}) {
-                debug "updating metadata for snapshot $md->{snapshot}\n", 'gSL';
-                $S{$s}{unfinished} = $md->{unfinished};  
-                $S{$s}{size}       = $md->{size};
+                debug "updating metadata for snapshot $md->{timestamp}\n", 'gSL';
+                foreach my $key (keys %$md) {
+                    $S{$s}{$key} = $md->{$key};
+                }
+                #printlog "S in rM: " . Dumper($S{$s});
             } else {
-                printlog "WARNING: snapshot '$template-$md->{snapshot}' is missing\n", 1;
+                printlog "WARNING: snapshot '$template-$md->{timestamp}' is missing\n", 1;
             }
         }
-    }
-    # Set empty snapshots as unfinished (this shouldn't happen, but 
-    # we might as well encourage the system to prune empty snapshots)
-    foreach my $s (keys %S) {
-        $S{$s}{unfinished} = 1 if $S{$s}{size} == 0;
     }
 }
 
@@ -3921,19 +3999,37 @@ sub newSnapshot ($$) {
         $name = "$Opt{template}-" . time2stamp($snapshot);
         $fullname = "$dest/$name";
     }
-    my $rc = rsyncMkdir($fullname);
-    # if that didn't work, things will go wrong later...
+    my $rc = rsyncMkdir($fullname); # if that didn't work, things will go wrong later  FIXME
+
+    # Create the new entry in the hash
     $S{$snapshot} = {
         name     => $name,
         path     => $dest,
         fullname => $fullname,
         unfinished => 0,
-        size     => -1, # not known yet
+        #size     => -1, # not known yet
+        totbytes => 0,  # 0 means no information
+        tfrbytes => 0,
+        totfiles => 0,
+        tfrfiles => 0,
         remote   => remote($dest),
         daemon   => remoteDaemon($dest),
     };
 
     return $snapshot;
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub addStats ($$) {
+    # Add stats from one source into the totals for the destination
+    # (note that this automatically allows for restarts)
+    my $destStatsR = shift;
+    my $srcStatsR  = shift;
+    debug "adding stats: " . Dumper($srcStatsR), 'aS';
+    foreach my $key (keys %$srcStatsR) {
+        $$destStatsR{$key} += $$srcStatsR{$key};
+    }
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -3956,6 +4052,7 @@ sub runRsync ($\@$) {
     my $lostDest = 0;           # becomes true if we lose connection to destination
 
     my $deletionsAllSources = 0;
+    my %destStats;
 
     # Loop through sources one at a time
     SOURCE:
@@ -4006,10 +4103,11 @@ sub runRsync ($\@$) {
         # Loop to create as many link-dests as required.
         # Previous unfinished snapshots are linked in case they contain useful
         # files, but don't count towards the total.
-        my $ld = 0; # number of 'good' link-dests created
+        # Note that rsync limits the number of link-dests to 20.
+        my $ld    = 0; # number of 'good' link-dests created
         my $s = 1;  # start at snapshot 1 (i.e. skip the 0th one that we're creating now)
         my $linkdest = '';
-        while ($ld < $Opt{ldcount} and $s <= $#S) {
+        while ($ld < $Opt{ldcount} and $s <= min($#S, 20)) {
             debug "linking: s=$s S[s]=$S[$s] S{S[s]}{name}=$S{$S[$s]}{name}\n", 'rR';
             $linkdest .= "--link-dest='../../$S{$S[$s]}{name}/$subDir' ";
             $ld += 1 if !$S{$S[$s]}{unfinished};
@@ -4035,7 +4133,7 @@ sub runRsync ($\@$) {
         # Note that rsync-opts is put first -- 
         # our own required options will override the user's
         my $args = "$Opt{'rsync-opts'} $verbose $linkdest $incExcOpts $compression " . 
-            "$bwlimit --relative $rsyncPath '$location' '$destDir'";
+            "$bwlimit --relative --stats $rsyncPath '$location' '$destDir'";
 
         my $maxTries = @expirableSnapshots + 1; 
         my $keepTrying = $maxTries;  
@@ -4045,10 +4143,11 @@ sub runRsync ($\@$) {
         while ($keepTrying and !$Interrupted) {
             $tries += 1;
             printlog "Running rsync" . ($maxTries>1 ? " -- try $tries of $maxTries" : "") . "\n", 2;
-            my $rsyncInterrupted = '';     # only true of interrupted during the main rsync  
-            my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'}, $args, 2,2);
+            my $rsyncInterrupted = '';     # only true if interrupted during the main rsync  
+            my ($rc, $rc2, $statsR) = systemCall($Opt{'rsync-cmd'}, $args, 3,3);
             $rsyncInterrupted = $Interrupted;
-            debug "after rsync rc=$rc rc2='$rc2' rsyncInterrupted='$rsyncInterrupted'\n", 1;
+            debug "after rsync rc=$rc rc2='$rc2' rsyncInterrupted='$rsyncInterrupted'\n", 'rR';
+            #printlog "source stats: " . Dumper($statsR), 1;
             given ($rc) {
                 #* success
                 when (0) {
@@ -4057,6 +4156,7 @@ sub runRsync ($\@$) {
                     $keepTrying = 0;    # no need to try this source again
                     $sourcesSucceeded += 1;
                     $Summary{$dest}{$location} = 'succeeded';
+                    addStats($S{$snapshot}, $statsR);
                 }
                 #* source not found
                 when (($_ == 23) and ($rc2 eq 'nofileordir')) {
@@ -4074,6 +4174,7 @@ sub runRsync ($\@$) {
                     $keepTrying = 0;
                     $sourcesSucceeded += 1;
                     $Summary{$dest}{$location} = 'succeeded (minor errors ignored)';
+                    addStats($S{$snapshot}, $statsR);
                 }
                 #* interrupted
                 when ($rsyncInterrupted ne '' or $rc2 eq 'interrupted') {
@@ -4158,6 +4259,7 @@ sub runRsync ($\@$) {
 
     } # for each source
 
+    #printlog "dest stats: " . Dumper(\%destStats), 1;
     if ($succeeded) {
         printlog "\nrsync successfully created new snapshot '$S{$snapshot}{fullname}'\n", 1;  
         printlog "(dry run: no snapshot actually created)\n", 1 if $Opt{'dry-run'};
@@ -4267,6 +4369,8 @@ sub processDestination ($) {
         if ($deleteNew and $Opt{delete} and $Opt{'delete-cp'}) { #  and !$Opt{'allow-restart'}) {
             printlog "NOTE: The new snapshot would be immediately deleted,\n" . 
                      "      so rsync will NOT be run for this destination\n", 1;
+            # Tidy up the empty directory we created for it
+
         } else {
             my @expirableSnapshots = getExpirableSnapshots($Opt{pspecs}, @cSpecs, $now);
             # Run rsync to create the new snapshot
@@ -4315,8 +4419,10 @@ sub systemCall ($$$$;$$) {
     my $stdoutRef   = shift;    # if specified, it's an array reference that will receive lines 
                                 # from stdout OR a file handle to store stdout lines in
     my $stderrRef   = shift;    # ditto for stderr
+    # FIXME ?? combine levels and refs?
     my $rc = 0;
     my $rc2 = '';
+    my %stats;
     if ($Opt{'dry-run'}) {
         if ($cmd eq $Opt{'rsync-cmd'}) {
             # Special case: if cmd is 'rsync', pass dry-run to rsync and really run it
@@ -4339,11 +4445,24 @@ sub systemCall ($$$$;$$) {
                 printlog "------- $cmd output starts\n", $stdoutLevel unless $stdoutRef;
                 $outputStarted = 1;
             }
+            # intercept rsync's stats
+            # (Is there a better way?  I don't want to put all of a possibly
+            # huge rsync output into an array.  But this is becoming a bit hacky  FIXME)
+            if (/Number of files: (\d+)/) {
+                $stats{totfiles} = $1;
+            } elsif (/Number of files transferred: (\d+)/) {
+                $stats{tfrfiles} = $1;
+            } elsif (/Total file size: (\d+)/) {
+                $stats{totbytes} = $1;
+            } elsif (/Total transferred file size: (\d+)/) {
+                $stats{tfrbytes} = $1;
+            }
             if (ref($stdoutRef) eq 'ARRAY') {
                 push @$stdoutRef, $_; 
             } elsif (ref($stdoutRef) eq 'GLOB') {
                 print $stdoutRef $_;
             } else {
+                # FIXME do I ever need to write to stdout AND array/file?
                 printlog $_, $stdoutLevel;
             }
         }
@@ -4374,6 +4493,7 @@ sub systemCall ($$$$;$$) {
             } elsif (ref($stderrRef) eq 'GLOB') {
                 print $stderrRef $_;
             } else {
+                # FIXME do I ever need to write to stderr AND array/file?
                 printlog $_, $stderrLevel;
             }
         }
@@ -4392,7 +4512,7 @@ sub systemCall ($$$$;$$) {
         $rc = $rc >> 8;
         debug "Command '$cmd $args' exited with value $rc\n", 'sC' if $rc;
     }
-    return ($rc, $rc2);
+    return ($rc, $rc2, \%stats);
 }
 
 #===================================================================================================
@@ -4950,7 +5070,7 @@ sub testSuite {
 # Mainline is here
 
 # Display basic info -- logging will happen later
-my $intro = "$Script version $VERSION starting at " . (strftime "%H:%M:%S", localtime), 1;
+my $intro = "$Script version $VERSION starting at " . (strftime "%H:%M:%S", localtime);
 printit under2("\n$intro\n"), 1;
 printit "Command line: $0 @ARGV\n", 3;
 
