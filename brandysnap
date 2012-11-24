@@ -99,8 +99,8 @@ my $ExitCode = EXITOK;
 # Options -- need some options to start with
 our %Opt = ();   
 $Opt{debug}    = {}; #{'rc'=>1, 'cos'=>1}; # Set this when debugging processOptions(), or just {}
-$Opt{verbose}  = 0;
-$Opt{loglevel} = 0;
+$Opt{verbose}  = 1;
+$Opt{loglevel} = 1;
 
 # Template for snapshot directory names -- the date part:
 # (if you change this, existing snapshots will not be found!)
@@ -388,6 +388,21 @@ sub debug ($;$) {
     if ($Opt{debug}->{lc($level)}) {
         (my $leadingnl, $text) = ($text =~ m/^(\n?)(.*)$/s); 
         printlog "${leadingnl}dbg: $prefix$text", 0,0;
+    }
+}
+
+# --------------------------------------------------------------------------------------------------
+
+sub intro () {
+    # To avoid printing the introductory lines of output before we know if the user
+    # wants any output, intro() is called before printing any error messages up until
+    # the point in processOptions() when the --verbose and --loglevel options have
+    # been processed, and any logfile has been opened.
+    state $introPrinted = 0;
+    if (!$introPrinted) {
+        $introPrinted = 1;
+        printlog under2("\n$Script version $VERSION starting at " . 
+            (strftime "%H:%M:%S", localtime) . "\n\n"), 1,1;
     }
 }
 
@@ -1730,11 +1745,13 @@ sub processOptions () {
         my $GOok = GetOptions(\%cmdopt, @GOarray);
         if (!$GOok) {
             foreach my $error (@GOerrors) {
+                intro();
                 printlog "ERROR: $error", 1;
             }
             $errorcount += @GOerrors;
         }
         if (@ARGV) {
+            intro();
             printlog "ERROR: Unexpected word(s) on the command line: " .
                 join(', ', map {"'$_'"} @ARGV) . "\n", 1;
             $errorcount += @ARGV;
@@ -1749,7 +1766,10 @@ sub processOptions () {
         $errorcount += $e;
         $warningcount += $w;
         $cmdopt{$option} = $value;
-        printlog "$msg (on command line)\n", 1 if $msg;
+        if ($msg) {
+            intro();
+            printlog "$msg (on command line)\n", 1;
+        }
     }
     return $errorcount if $errorcount;
 
@@ -1771,10 +1791,10 @@ sub processOptions () {
             (my $rc, %confopt) = readConfig($cmdopt{config}, \@GOarray);    
             return $rc if $rc;
         } else {
+            intro();
             printlog "ERROR: Configuration file '$cmdopt{config}' can not be read\n", 1,1;
             return 1;
         }
-        printlog "\nConfiguration file is '" . hostname . ":$cmdopt{config}'\n\n", 1,1;
     }
 
     debug "def  options: " . join(' ', 
@@ -1803,6 +1823,7 @@ sub processOptions () {
     # Check for missing options at general level
     foreach my $ropt (@ReqOpt) {
         unless ($Opt{$ropt}) {
+            intro();
             printlog "ERROR: Required option '$ropt' is missing\n", 1;
             $errorcount += 1;
         }
@@ -1826,6 +1847,7 @@ sub processOptions () {
                 $| = 1;
                 select $oldfh;
             } else {
+                intro();
                 printit "\nCan not lock logfile '$Opt{logfile}'.\n" .
                     "$Script is probably already running with that logfile.\n\n", 1;
                     #"If you're sure it isn't, delete the lock-file and try again.\n", 1;
@@ -1833,6 +1855,7 @@ sub processOptions () {
                 exit EXITNOLOCK;
             } 
         } else {
+            intro();
             printit "ERROR: Logfile '$Opt{logfile}' (option 'logfile') can not be written\n", 1;
             $Opt{loglevel} = 0;
             $errorcount += 1;
@@ -1841,10 +1864,11 @@ sub processOptions () {
 
     return $errorcount if $errorcount;
 
-    # Add basic info to logfile (which couldn't be done before we had a valid logfile)
-    my $intro = "$Script version $VERSION starting at " . (strftime "%H:%M:%S", localtime);
-    logit under2("\n\n$intro\n\n"), 1;
-    logit "Command line: $0 @ARGVcopy\n", 3;
+    # Now that we know the verbosity and logging options, 
+    # we can output the intro appropriately.
+    intro();
+    logit "\nCommand line: $0 @ARGVcopy\n", 3;
+
     # TODO code for checking readable sources should be factorised
     #      because it's used here and per-destination
     #      especially if it is extended to have required options
@@ -2113,6 +2137,7 @@ sub displayContext ($$$) {
 
 sub displayOptions () {
     # Display the options nicely formatted
+    printlog "\nConfiguration file is '" . hostname . ":$Opt{config}'\n\n", 1,1;
     my $optSummary = "\nOptions Summary:\n";
     foreach my $opt (sort keys %Opt) {
         next if $opt eq 'validLogfile'; # for internal use only
@@ -5069,13 +5094,9 @@ sub testSuite {
 
 # Mainline is here
 
-# Display basic info -- logging will happen later
-my $intro = "$Script version $VERSION starting at " . (strftime "%H:%M:%S", localtime);
-printit under2("\n$intro\n"), 1;
-printit "Command line: $0 @ARGV\n", 3;
-
 # No options supplied -- display help and exit
 if (@ARGV == 0) {
+    intro();
     printit "ERROR: No options given\n"; 
     showHelp;
     exit EXITCONFIG;
@@ -5083,6 +5104,7 @@ if (@ARGV == 0) {
 
 # Get and validate options
 if (processOptions() > 0) {
+    intro();
     printlog "ERROR: Problems found in configuration -- stopping\n", 1;
     printlog "Try '$Script --help' or 'man $Script' for help.\n", 1;
     logit '-'x80 . "\n", 1;
