@@ -82,7 +82,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-our $VERSION = '0.2.8-next';
+our $VERSION = '0.2.8';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -501,7 +501,7 @@ sub dumpSnapshot ($) {
     # Return a printable version of a %S entry
     my $s = shift;
     return "$s (" . time2stamp($s) . ") => {" . 
-        join(' ', map {"$_=>$S{$s}{$_}"} sort keys $S{$s}) . "}";
+        join(' ', map {"$_=>" . (defined $S{$s}{$_} ? $S{$s}{$_} : 'null')} sort keys $S{$s}) . "}";
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -824,10 +824,10 @@ sub updateSnapshotSizes () {
     #                       255 for wrong password, unknown host etc.
     # Note the lack of nlink information, so we can't calculate 'delete size'.
     foreach my $snapshot (sort keys %S) {
-        next if ($S{$snapshot}{totbytes} > 0);  # info is already there 
+        next if (defined $S{$snapshot}{totbytes});  # info is already there 
         debug "initial snapshot size is $S{$snapshot}{totbytes}\n", 'uSS';
         my $totalBytes = 0;
-        #my $totalFiles = 0;  no, because file count indicates presence of rsync tfr info
+        my $totalFiles = 0;
         # Get rsync listing into an array
         my @items;
         my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'}, 
@@ -852,7 +852,7 @@ sub updateSnapshotSizes () {
                         # (and we're counting the directory itself, not its contents)
                         debug "t=$+{t} size=$+{size} name=$+{name}\n", 'uSS';
                         $totalBytes += diskSpace($+{size});
-                        #$totalFiles += 1;
+                        $totalFiles += 1;
                     } else {
                         # (ignore anything other than files and directories)
                         debug "ignoring non-file-or-dir $item\n", 'uSS'
@@ -2285,23 +2285,6 @@ sub deleteSnapshot ($) {
         printlog "Not deleting snapshot '$S{$snapshot}{name}' because of option 'delete=no'\n", 1;
         return 0;
     }
-# WRONG!
-#    # Cleverness to transfer the deleted snapshot's quota of new files to
-#    # the next (in time) snapshot (if any), but not if values of deleted snaphot are -1, 
-#    # indicating no relevant data.
-#    my $nextS = snapshotAfter($snapshot);
-#    if ($nextS) {
-#        if ($S{$snapshot}{tfrbytes} > -1) {
-#            $S{$nextS}{tfrbytes} = 0 if $S{$nextS}{tfrbytes} == -1;   # FIXME as addStats
-#            $S{$nextS}{tfrbytes} += $S{$snapshot}{tfrbytes};
-#            debug "allocated $S{$snapshot}{tfrbytes} bytes to next snapshot $S{$nextS}{name}", 'dS';
-#        }
-#        if ($S{$snapshot}{tfrfiles} > -1) {
-#            $S{$nextS}{tfrfiles} = 0 if $S{$nextS}{tfrfiles} == -1;   # FIXME as addStats
-#            $S{$nextS}{tfrfiles} += $S{$snapshot}{tfrfiles}; 
-#            debug "allocated $S{$snapshot}{tfrfiles} files to next snapshot $S{$nextS}{name}", 'dS';
-#        }
-#    }
     # Use some rsync trickery to delete the snapshot
     # (gleaned from http://lists.samba.org/archive/rsync/2010-October/025723.html)
     # This involves copying an empty directory onto the snapshot, and
@@ -2501,16 +2484,16 @@ sub status ($;\@) {
                     #$label .= (' ' . $LevelName{$cSpecs[$ci]->{period}});
                 }
                 $count += 1;  # new + old style
-                $total       += $S{$s}{totbytes};
-                $sumtfrbytes += $S{$s}{tfrbytes};
-                $sumtotfiles += $S{$s}{totfiles};
-                $sumtfrfiles += $S{$s}{tfrfiles};
-                $newcount += 1 if $S{$s}{totfiles} > 0;  # new-style only
+                $total       += $S{$s}{totbytes} if defined $S{$s}{totbytes};
+                $sumtfrbytes += $S{$s}{tfrbytes} if defined $S{$s}{tfrbytes};
+                $sumtotfiles += $S{$s}{totfiles} if defined $S{$s}{totfiles};
+                $sumtfrfiles += $S{$s}{tfrfiles} if defined $S{$s}{tfrfiles};
+                $newcount += 1 if defined $S{$s}{totfiles} and $S{$s}{totfiles} > 0;# new-style only
             }
             #printlog sprintf("%-*s   %15s   %s\n", $nameLength, $name, 
             #    bytes($size) || 'empty', $label), $plevel,$llevel;
-#            printlog "snapshot: " . Dumper($S{$s});
-            if ($S{$s}{totfiles} > 0) {
+            #printlog "snapshot: " . Dumper($S{$s});
+            if (defined $S{$s}{tfrfiles}) {
                 printlog sprintf("%-*s   %8s  %8s   %8d  %8d   %s\n", $nameLength, $name, 
                     bytes($S{$s}{totbytes}), bytes($S{$s}{tfrbytes}),
                     $S{$s}{totfiles}, $S{$s}{tfrfiles}, $label), 
@@ -2533,12 +2516,17 @@ sub status ($;\@) {
             'Total:', ' 'x($nameLength-32), $unfinished, $count, 
             bytes($total), bytes($sumtfrbytes), $sumtotfiles, $sumtfrfiles), 
             $plevel,$llevel;
-        if ($count > 0) {
+        if ($newcount > 0) {
             my $average = floor($total/$count);
             printlog sprintf("%-*s   %8s  %8s   %8s  %8s\n", $nameLength, 'Average:', 
-            bytes($total/$count), bytes($sumtfrbytes/$newcount), 
-            floor($sumtotfiles/$newcount), floor($sumtfrfiles/$newcount)), 
-            $plevel,$llevel;
+                bytes($total/$count), bytes($sumtfrbytes/$newcount), 
+                floor($sumtotfiles/$newcount), floor($sumtfrfiles/$newcount)), 
+                $plevel,$llevel;
+        } elsif ($count > 0) {
+            my $average = floor($total/$count);
+            printlog sprintf("%-*s   %8s  %8s   %8s  %8s\n", $nameLength, 'Average:', 
+                bytes($total/$count), '', '', ''), 
+                $plevel,$llevel;
         }
     }
 }
@@ -2691,7 +2679,6 @@ sub countPeriods ($$$) {
     my $beg     = shift;
     my $end     = shift;
     my $periodn = shift;
-    # TODO  Won't return the expected integer result for DST/Leap year cases
     my $delta = DateCalc(time2date($beg), time2date($end));
     my $count = Delta_Format($delta, "%$DMperiod[$periodn]ys");
     return sprintf(($count == floor($count)) ? "%d" : "%.1f", $count);  # 1dp if not an integer
@@ -2708,20 +2695,18 @@ sub writeMetadata ($) {
     my $mdfile = "$Opt{template}.status";
 
     # Create subset of %S to store
-    my @S;
+    my @metadata;
     foreach my $s (sort keys %S) {
-        push @S, {
+        push @metadata, {
             timestamp  => time2stamp($s), 
             unfinished => $S{$s}{unfinished}, 
-            #size       => $S{$s}{size},
             totbytes   => $S{$s}{totbytes}, 
             tfrbytes   => $S{$s}{tfrbytes},
             totfiles   => $S{$s}{totfiles},
             tfrfiles   => $S{$s}{tfrfiles},
         };
-        # obsolete?:    if $S{$s}{size} >= 0;   # skip --no-snapshot snapshot
     }
-    my $json = to_json(\@S, {pretty => 1});
+    my $json = to_json(\@metadata, {pretty => 1});
     debug "json is '$json'\n", 'wM';
 
     # Write to a temporary local file
@@ -2789,15 +2774,23 @@ sub readMetadata ($) {
             # 'size' has been replaced by 'totbytes' etc. -- convert 
             if (defined $md->{size} and !defined $md->{totbytes}) {
                 $md->{totbytes} = $md->{size};
-                $md->{tfrbytes} = 0;
-                $md->{totfiles} = 0;
-                $md->{tfrfiles} = 0;
+                $md->{tfrbytes} = undef;
+                $md->{totfiles} = undef;
+                $md->{tfrfiles} = undef;
             }
+            # Temporary hack for metadata files that have 0 
+            # where they should have null
+            if (defined $md->{totfiles} and
+                $md->{tfrbytes} == 0 and
+                $md->{totfiles} == 0 and
+                $md->{tfrfiles} == 0     ) {
+                $md->{tfrbytes} = undef;
+                $md->{totfiles} = undef;
+                $md->{tfrfiles} = undef;
+            }
+            #
             delete $md->{size};
-            # Check that all values are there
-            foreach my $key ('totbytes', 'tfrbytes', 'totfiles', 'tfrfiles', 'unfinished') {
-                $md->{$key} = 0 if !defined $md->{$key};
-            }
+            $md->{unfinished} = 0 if !defined $md->{unfinished};
             debug "$md->{timestamp} / $md->{unfinished} / $md->{totbytes}\n", 'rM'; 
         } 
     } else { 
@@ -3492,19 +3485,12 @@ sub findGoodPeriodsNoCal ($$$\@) {
         " freqmin=$spec->{freqmin} periodn=$spec->{periodn} " . 
         "count=$spec->{count} oldestS=" . time2stamp($oldestS) . "\n", 'fGPNC';
 
-    # Special case:  WHY???   -- I've removed this test now
-    # if this is an 'unlimited' spec, then its count will be (effectively) infinite
-    # -- we need to keep filling periods until there are no more snapshots
-    # -- if any periods have less than freqmin, then relax, just treat them as full
-    # This is all dealt with simply by the condition count==UNLIMITED below.
-
     while (($end > $oldestS) and
         ($gpCount < $spec->{count})   ) {
         debug "looking for $spec->{freqmin} snapshots in one $spec->{period}\n", 'fGPNC';
         my $sip = snapshotsInPeriod(@S, $beg, $end);
         # Look for a contiguous period first
-        if (# FIXME why?! ($spec->{count} == UNLIMITED) or 
-            ($sip >= $spec->{freqmin}   )    ) {
+        if ($sip >= $spec->{freqmin}) {
             push @good, [$beg, $end, 1, $sip, 1];
             $gpCount += 1;    # count it as good
             debug "good one: range=" . pair2range($beg, $end) . " sip=$sip pc=1\n", 'fGPNC';
@@ -3641,7 +3627,7 @@ sub compileSpecs ($$) {
                         # by setting freqmax to UNLIMITED so that none will be deleted
                         freqmax => ($firstSpec and !$Opt{'delete-cp'}) ? 
                                         UNLIMITED : $spec->{freqmax},
-                        count   => '', # FIXME $spec->{count},
+                        count   => '',
                         period  => $spec->{period},
                         # limit best to partial period:
                         best    => min(bestOffset($spec->{period}, $beg), $end-$beg-1),  
@@ -3713,7 +3699,7 @@ sub compileSpecs ($$) {
                     freqmax => (($end == $now+1) and !$Opt{'delete-cp'}) ? 
                                     UNLIMITED : $spec->{freqmax}, 
                     period  => $spec->{period},
-                    count   => '', # FIXME $spec->{count},
+                    count   => '',
                     best    => bestOffset($spec->{period}, $beg),
                     rawspec => $spec->{rawspec}, 
                     label   => $spec->{rawspec} . ":$p",
@@ -3798,7 +3784,7 @@ sub compileSpecs ($$) {
             freqmin => 0,
             freqmax => 0,     # keep none of them
             period  => '',    # not a proper period -- maps to '' in %LevelName
-            count   => '', # FIXME 1,     # there is only 1 of these 'old' specs
+            count   => '',
             best    => 0,
             rawspec => '',
             label   => 'old',
@@ -3925,7 +3911,6 @@ sub getExpirableSnapshots ($\@$) {
     foreach my $s (@S) {
         if ($S{$s}{unfinished}) {
             unshift @expirable, $s;
-            #delete $S{$s};  FIXME why was that there?
         }
     }
     debug "expiring unfinisheds: " . join(' ', map {time2stamp($_)} @expirable) . "\n", 'gES';
@@ -4024,7 +4009,7 @@ sub newSnapshot ($$) {
         $name = "$Opt{template}-" . time2stamp($snapshot);
         $fullname = "$dest/$name";
     }
-    my $rc = rsyncMkdir($fullname); # if that didn't work, things will go wrong later  FIXME
+    my $rc = rsyncMkdir($fullname);
 
     # Create the new entry in the hash
     $S{$snapshot} = {
@@ -4032,11 +4017,10 @@ sub newSnapshot ($$) {
         path     => $dest,
         fullname => $fullname,
         unfinished => 0,
-        #size     => -1, # not known yet
-        totbytes => 0,  # 0 means no information
-        tfrbytes => 0,
-        totfiles => 0,
-        tfrfiles => 0,
+        totbytes => undef,  
+        tfrbytes => undef,
+        totfiles => undef,
+        tfrfiles => undef,
         remote   => remote($dest),
         daemon   => remoteDaemon($dest),
     };
@@ -4047,8 +4031,7 @@ sub newSnapshot ($$) {
 #---------------------------------------------------------------------------------------------------
 
 sub addStats ($$) {
-    # Add stats from one source into the totals for the destination
-    # (note that this automatically allows for restarts)
+    # Add statistics from one source into the totals for the destination
     my $destStatsR = shift;
     my $srcStatsR  = shift;
     debug "adding stats: " . Dumper($srcStatsR), 'aS';
@@ -4062,7 +4045,8 @@ sub addStats ($$) {
 sub runRsync ($\@$) {
     # Run rsync to create the snapshot.
     # If it fails for lack of disk space, delete expirable snapshots and try again.
-    # Returns 1 for successful creation of a new snapshot.
+    # Returns 1 for successful creation of a new snapshot, and a flag indicating
+    # whether the connection to the destination was lost.
     my $dest               = shift; 
     my @expirableSnapshots = @{(shift)};
     my $snapshot           = shift;
@@ -4167,7 +4151,7 @@ sub runRsync ($\@$) {
         # Run rsync, dealing with various types of error
         while ($keepTrying and !$Interrupted) {
             $tries += 1;
-            printlog "Running rsync" . ($maxTries>1 ? " -- try $tries of $maxTries" : "") . "\n", 2;
+            printlog "Running rsync" . ($maxTries>1 ? " -- try $tries of $maxTries" : "") . "\n", 3;
             my $rsyncInterrupted = '';     # only true if interrupted during the main rsync  
             my ($rc, $rc2, $statsR) = systemCall($Opt{'rsync-cmd'}, $args, 3,3);
             $rsyncInterrupted = $Interrupted;
@@ -4362,6 +4346,16 @@ sub processDestination ($) {
             debug "restarting with now=$now: " . dumpSnapshot($now) . "\n", 'pD';
             # remove the unfinished flag -- hopefully, we'll complete it
             $S{$now}{unfinished} = 0;
+            # and clear the statistics -- rsync will supply the totals
+            debug sprintf("clearing stats: %s / %s / %s / %s\n",
+                $S{$now}{totbytes} // 'null',
+                $S{$now}{tfrbytes} // 'null',
+                $S{$now}{totfiles} // 'null',
+                $S{$now}{tfrfiles} // 'null'), 'pD';
+            $S{$now}{totbytes} = undef;
+            $S{$now}{tfrbytes} = undef;
+            $S{$now}{totfiles} = undef;
+            $S{$now}{tfrfiles} = undef;
             printlog under1("\nRestarting snapshot $S{$now}{name}\n"), 1;
         } else {
             # Normal run, creating a new snapshot.
@@ -4389,13 +4383,14 @@ sub processDestination ($) {
         # Set the destination lock, and give up if that failed
         return if !rsyncLockDest($dest);
     }
+
     my $lostDest = 0;
-    if ($Opt{snapshot}) {                                         # FIXME why? -v
-        if ($deleteNew and $Opt{delete} and $Opt{'delete-cp'}) { #  and !$Opt{'allow-restart'}) {
+    if ($Opt{snapshot}) {
+        if ($deleteNew and $Opt{delete} and $Opt{'delete-cp'}) {
             printlog "NOTE: The new snapshot would be immediately deleted,\n" . 
                      "      so rsync will NOT be run for this destination\n", 1;
             # Tidy up the empty directory we created for it
-
+            deleteSnapshot($S[0]);
         } else {
             my @expirableSnapshots = getExpirableSnapshots($Opt{pspecs}, @cSpecs, $now);
             # Run rsync to create the new snapshot
@@ -4479,7 +4474,9 @@ sub systemCall ($$$$;$$) {
                 $stats{tfrfiles} = $1;
             } elsif (/Total file size: (\d+)/) {
                 $stats{totbytes} = $1;
-            } elsif (/Total transferred file size: (\d+)/) {
+            # 'Literal data' is apparently how much is actually sent
+            #} elsif (/Total transferred file size: (\d+)/) {
+            } elsif (/Literal data: (\d+)/) {
                 $stats{tfrbytes} = $1;
             }
             if (ref($stdoutRef) eq 'ARRAY') {
@@ -5157,7 +5154,7 @@ foreach my $dest (@{$Opt{destination}}) {
 
 displaySummary();
 
-if ($Interrupted) { # FIXME is this useful?
+if ($Interrupted) {
     printlog "\n(Interrupted with signal '$Interrupted')\n", 1;
     $ExitCode = EXITINT if $ExitCode != EXITOK;
 }

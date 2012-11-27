@@ -1,6 +1,11 @@
 Changelog for brandysnap
 ========================
 
+0.2.8
+* Better 'status' listing, including the size and number of files transferred
+  by rsync, gleaned from rsync's --stats option 
+* '--verbose 0' is now completely silent.
+
 0.2.7
 * Changes:
   - Remove 'stacktrace' option: just print a stacktrace when debugging.
