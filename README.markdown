@@ -44,6 +44,10 @@ can have 'sections' to ensure that, for example, exclusions are applied to the c
 source, and options for tweaking remote rsync access can be tailored to 
 each site.
 
+* The things it doesn't do are compression and deduplication on the destination.
+There are no plans to include those features: they belong in the filing system.
+btrfs, for example, already includes compression, and may do deduplication one day.
+
 Requirements
 ------------
 

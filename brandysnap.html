@@ -103,8 +103,7 @@
 <pre><code> source      = /path/to/something/to/backup
  destination = /path/to/writable/directory
  template    = brandysnap-test1
- spec        = 4h1,1h1,1d7
- lockfile    = ~/brandysnap-test1.lock</code></pre>
+ spec        = 4h1,1h1,1d7</code></pre>
 
 <p>and then run</p>
 
@@ -201,6 +200,8 @@
 
 <li><p><b>1d</b> - just keep 1 backup every day, with no limit to the number of backups.</p>
 
+<p>* Email notifications, e.g. if new snapshot can not be created e.g. disk full</p>
+
 </li>
 <li><p><b>1h24,4d6,3w3,4m11</b> - one an hour for the first day, then 4 a day for the rest of the week then 3 a week for the rest of the month, then 4 a month to give a whole year of snapshots.</p>
 
@@ -267,24 +268,24 @@
  source template spec
  snapshot delete delete-cp
  weekstart
- rsync-cmd rsync-opts remote-rsync-cmd
+ rsync-cmd rsync-opts rsync-xopts remote-rsync-cmd
  expire-old
  bwlimit-in bwlimit-out
  compress restart
  allow-restart ldcount
  all-failed some-failed
  min-interval
- verbose loglevel debug stacktrace</code></pre>
+ verbose loglevel debug </code></pre>
 
 <p>A source context can contain these options:</p>
 
-<pre><code> rsync-cmd rsync-opts remote-rsync-cmd
+<pre><code> rsync-cmd rsync-opts rsync-xopts remote-rsync-cmd
  include include-from exclude exclude-from
  bwlimit-in bwlimit-out
  compress restart
  allow-restart 
  min-interval
- verbose loglevel debug stacktrace</code></pre>
+ verbose loglevel debug</code></pre>
 
 <ul>
 
@@ -333,7 +334,7 @@
 
 <p>See the section on remote authorisation.</p>
 
-<p>By default, brandysnap uses the rsync options <b>--hard-links --numeric-ids --archive --one-file-system --timeout=300</b>, so the whole of each source will be copied recursively without following symbolic links. See the <b>rsync-opts</b> option for ways to change this.</p>
+<p>By default, brandysnap uses the rsync options <b>--hard-links --numeric-ids --archive --one-file-system --timeout=300</b>, so the whole of each source will be copied recursively without following symbolic links. See the <b>rsync-opts</b> and <b>rsync-xopts</b> options for ways to change this.</p>
 
 </dd>
 <dt id="destination-dir-"><b>destination <i>dir</i></b> *!</dt>
@@ -370,18 +371,10 @@
 <pre><code> template docs</code></pre>
 
 </dd>
-<dt id="spec-string-"><b>spec <i>string</i></b> !</dt>
+<dt id="specs-string-"><b>specs <i>string</i></b> !</dt>
 <dd>
 
-<p>The snapshot-keeping specification. See the Keeping Snapshots section for full details.</p>
-
-</dd>
-<dt id="lockfile-file-"><b>lockfile <i>file</i></b> !</dt>
-<dd>
-
-<p>To prevent separate runs of brandysnap using the same destinations at the same time, you need to give the name of temporary file which will be created and locked while brandysnap is running. The user running brandysnap must have permission to create and delete this file. For example:</p>
-
-<pre><code> lockfile /tmp/brandysnap-docs.lock</code></pre>
+<p>The snapshot-keeping specifications. See the Keeping Snapshots section for full details.</p>
 
 </dd>
 <dt id="logfile-file"><b>logfile <i>file</i></b></dt>
@@ -478,7 +471,7 @@
 <dt id="verbose-0..3"><b>verbose <i>0..3</i></b></dt>
 <dd>
 
-<p>This options sets the verbosity of the printed output, on a scale from <b>0</b> to <b>3</b>. Use higher values to see more about what brandysnap and rsync are doing. (default: <b>1</b>)</p>
+<p>This options sets the verbosity of the printed output, on a scale from <b>0</b> to <b>3</b>. Use higher values to see more about what brandysnap and rsync are doing. <b>verbose</b> can also be spelled <b>verbosity</b> (default: <b>1</b>)</p>
 
 </dd>
 <dt id="loglevel-0..3"><b>loglevel <i>0..3</i></b></dt>
@@ -490,7 +483,7 @@
 <dt id="no-dry-run"><b>[no]dry-run</b></dt>
 <dd>
 
-<p>In <b>dry-run</b> mode, brandysnap goes through the motions, but doesn&#39;t actually create or delete any snapshots. The <b>dry-run</b> option is also passed through to rsync. (default: <b>nodry-run</b>)</p>
+<p>In <b>dry-run</b> mode, brandysnap goes through the motions, including checking options, sources, and destinations, as well as calling rsync with its --dry-run option, but doesn&#39;t actually create or delete any snapshots. The <b>dry-run</b> option is also passed through to rsync. <b>dry-run</b> can also be spelled <b>dryrun</b>. (default: <b>nodry-run</b>)</p>
 
 </dd>
 </dl>
@@ -502,7 +495,7 @@
 <dt id="rsync-cmd-path"><b>rsync-cmd <i>path</i></b></dt>
 <dd>
 
-<p>The location of the rsync programme on your system. The default is just <b>rsync</b> which means brandysnap looks for rsync in you normal path. On some systems, you might need to set it to something else such as</p>
+<p>The location of the rsync programme on your system. The default is just <b>rsync</b> which means brandysnap looks for rsync in your normal path. On some systems, you might need to set it to something else such as</p>
 
 <pre><code> rsync-cmd /usr/bin/rsync</code></pre>
 
@@ -541,6 +534,12 @@
 <dd>
 
 <p>Options to pass to rsync, in addition to those that brandysnap will always use (i.e. --relative and --link-dest). Use this only if you know what you are doing. (default: -aHx --numeric-ids)</p>
+
+</dd>
+<dt id="rsync-xopts-options"><b>rsync-xopts <i>options</i></b></dt>
+<dd>
+
+<p>Extra options to pass to rsync. This is a convenience option to all you to add to or override the standard options without having to remember what the standard options are. (default: none)</p>
 
 </dd>
 </dl>
@@ -623,12 +622,6 @@
 <p>Print and log debugging information. (default: <b>(none)</b>)</p>
 
 </dd>
-<dt id="no-stacktrace"><b>[no]stacktrace</b></dt>
-<dd>
-
-<p>Print a stack trace on error. (default: <b>nostacktrace</b>)</p>
-
-</dd>
 <dt id="test-n"><b>test <i>n</i></b></dt>
 <dd>
 
@@ -690,7 +683,7 @@
 
 <h1 id="KNOWN-ISSUES">KNOWN ISSUES</h1>
 
-<p>As of 11 October 2012 and version 0.2.3, the following issues and bugs are known.</p>
+<p>As of 28 November 2012 and version 0.2.9, the following issues and bugs are known.</p>
 
 <ul>
 

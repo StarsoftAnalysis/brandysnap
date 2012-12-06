@@ -40,12 +40,16 @@ and soft links. </p></li>
 can have 'sections' to ensure that, for example, exclusions are applied to the correct
 source, and options for tweaking remote rsync access can be tailored to 
 each site.</p></li>
+<li><p>The things it doesn't do are compression and deduplication on the destination.
+There are no plans to include those features: they belong in the filing system.
+btrfs, for example, already includes compression, and may do deduplication one day.</p></li>
 </ul>
 
 <h2>Requirements</h2>
 
 <p>Brandysnap has been developed on and runs on Linux.
-I have heard that it also runs on Mac OS X.</p>
+I have heard that it also runs on Mac OS X (at least a previous version did).  Work to let 
+it run on Windows in the Cygwin environment is under way.</p>
 
 <p>It requires Perl 5 version 5.10.1 or later, and the following non-core modules:</p>
 

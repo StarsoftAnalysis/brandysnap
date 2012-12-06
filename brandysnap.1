@@ -124,7 +124,7 @@
 .\" ========================================================================
 .\"
 .IX Title "BRANDYSNAP 1"
-.TH BRANDYSNAP 1 "2012-10-28" "perl v5.16.1" "User Contributed Perl Documentation"
+.TH BRANDYSNAP 1 "2012-12-06" "perl v5.16.2" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -158,35 +158,56 @@ snapshots are not created as regularly as they should be.
 This can be for a variety of reasons \*(-- hardware failure, operator failure, 
 weekends, holidays, someone forgot to plug in the external \s-1USB\s0 drive...
 .PP
-Rather than assigning 'importance' to snapshots according to when they were made (for example, keeping Friday afternoon backups for longer than Tuesday morning ones), it looks at what snapshots exist and decides if any can be deleted.  If the Friday afternoon backup is missing, it will keep the nearest one it can find.
+Rather than assigning 'importance' to snapshots according to when they were made 
+(for example, keeping Friday afternoon backups for longer than Tuesday morning ones), 
+it looks at what snapshots exist and decides if any can be deleted.  
+If the Friday afternoon backup is missing, it will keep the nearest one it can find.
 .PP
-The basic rule is 'backup first, ask questions later'.  Brandysnap assumes that snapshots are cheap \*(-- in both time and space.  In other words, making a snapshot is quick, and uses relatively little disk space because of the use of hard links.  (Of course the first snapshot is not cheap.  And snapshots over a network are never particularly quick.)
+The basic rule is 'backup first, ask questions later'.  Brandysnap assumes that snapshots 
+are cheap \*(-- in both time and space.  In other words, making a snapshot is quick, and uses 
+relatively little disk space because of the use of hard links.  (Of course the first 
+snapshot is not cheap.  And snapshots over a network are never particularly quick.)
 .PP
-It therefore creates a new snapshot every time it is run, and then thinks about which snapshots, if any, are no longer required.
+It therefore creates a new snapshot every time it is run, and then thinks about 
+which snapshots, if any, are no longer required.
 .PP
-Brandysnap tries to cope with any situation.  Either the source or the destination can be on a remote computer (but not both at the same time).
+Brandysnap tries to cope with any situation.  Either the source or the destination can 
+be on a remote computer (but not both at the same time).
 .PP
-Brandysnap is designed to be run regularly from cron (or similar automation system).  It can also be run manually if required without upsetting things.
+Brandysnap is designed to be run regularly from cron (or similar automation system).  
+It can also be run manually if required without upsetting things.
 .PP
-One of the features of brandysnap is that it uses rsync to do all the work, even for deleting old snapshots locally etc.  That means
-that, if you need root access to create the snapshot maintaining ownership and permissions, the script only needs sudo access 
-for rsync, not for any other command nor for the script itself.  (e.g. use \fB\-\-rsync\-cmd = 'sudo rsync'\fR and \fB\-\-remote\-rsync\-cmd = 'sudo rsync'\fR to avoid the need for passwords [need more explanation here])
+One of the features of brandysnap is that it uses rsync to do all the work, 
+even for deleting old snapshots locally etc.  That means
+that, if you need root access to create the snapshot maintaining 
+ownership and permissions, the script only needs sudo access 
+for rsync, not for any other command nor for the script itself.  
+(e.g. use \fB\-\-rsync\-cmd = 'sudo rsync'\fR and \fB\-\-remote\-rsync\-cmd = 'sudo rsync'\fR to 
+avoid the need for passwords [need more explanation here])
 .PP
-Brandysnap has been developed on Linux.  It is written in Perl and uses a selection of fairly standard modules (all available in Ubuntu repositories, and no doubt elsewhere too).  It relies on hard links [see ...] and will only work properly when creating snapshots on a filing system that can handle hard links, such as ext3 or ext4 [and others...].
+Brandysnap has been developed on Linux.  It is written in Perl and uses a selection of 
+fairly standard modules (all available in Ubuntu repositories, and no doubt elsewhere too).  
+It relies on hard links [see ...] and will only work properly when creating snapshots 
+on a filing system that can handle hard links, such as ext3 or ext4 [and others...].
 .PP
-Lots of snapshots don't make a file more secure: if the file hasn't changed, and is the same in all snapshots, then it is only stored once on the disk.  If it gets corrupted for any reason, then it will be corrupted in all snapshots.  (If the file is \s-1DELETED\s0 from one snapshot, it will still exist in the others, because of the way hard links work.) Think of the whole set of snapshots as one backup, with multiple versions of files that have changed.
+Lots of snapshots don't make a file more secure: if the file hasn't changed, and is the 
+same in all snapshots, then it is only stored once on the disk.  If it gets corrupted 
+for any reason, then it will be corrupted in all snapshots.  
+(If the file is \s-1DELETED\s0 from one snapshot, it will still exist in the others, 
+because of the way hard links work.) 
+Think of the whole set of snapshots as one backup, with multiple versions of files that have changed.
 .SS "Very Quick Start"
 .IX Subsection "Very Quick Start"
 See the \s-1README\s0 file for brief installation instructions.
 .PP
-If you want to try it out without reading further, create a configuration file called brandysnap\-test1.conf containing something like this:
+If you want to try it out without reading further, create a configuration file 
+called brandysnap\-test1.conf containing something like this:
 .PP
-.Vb 5
+.Vb 4
 \& source      = /path/to/something/to/backup
 \& destination = /path/to/writable/directory
 \& template    = brandysnap\-test1
 \& spec        = 4h1,1h1,1d7
-\& lockfile    = ~/brandysnap\-test1.lock
 .Ve
 .PP
 and then run
@@ -195,7 +216,8 @@ and then run
 \& brandysnap \-\-dry\-run \-\-conf brandysnap\-test1.conf
 .Ve
 .PP
-The \fBdry-run\fR option will mean that nothing will actually be done.  Once you're happy than the script won't break anything, try it without the \fBdry-run\fR.
+The \fBdry-run\fR option will mean that nothing will actually be done.  
+Once you're happy than the script won't break anything, try it without the \fBdry-run\fR.
 .PP
 For more options, run \fBbrandysnap \-\-help\fR.
 .SS "Remote Sources and Destinations"
@@ -226,14 +248,18 @@ In order to preserver ownership of files, brandysnap needs to be run as root or 
 [More detail needed here re use of sudo and \fBremote-rsync-cmd = 'sudo rsync'\fR]
 .SS "Keeping Snapshots"
 .IX Subsection "Keeping Snapshots"
-The number of snapshots that are made depends on how often brandysnap is run.  It creates a new snapshot every time.  What is more interesting is how many snapshots are \s-1KEPT\s0.  This is 
-determined by a series of specifications, or 'specs', such as
+The number of snapshots that are made depends on how often brandysnap is run.  
+It creates a new snapshot every time.  What is more interesting is how many snapshots are \s-1KEPT\s0.  
+This is determined by a series of specifications, or 'specs', such as
 .PP
 .Vb 1
 \& 4d5,3w3,1d11
 .Ve
 .PP
-which is a concise way of saying 'keep four snapshots a day from the last five days, then three a week for three weeks, then one a month for eleven months.  If brandysnap has run successfully for the last year, then there will be at least 4x5 + 3x3 + 1x11 = 40 snapshots.
+which is a concise way of saying 'keep four snapshots a day from the last five days, 
+then three a week for three weeks, then one a month for eleven months.  
+If brandysnap has run successfully for the last year, then there will be at least 
+4x5 + 3x3 + 1x11 = 40 snapshots.
 .PP
 Most of the tricky stuff in brandysnap is in deciding which snapshots to keep.
 .PP
@@ -283,6 +309,8 @@ If the last spec has no count, it will be padded 'forever'.  The number of snaps
 More spec examples:
 .IP "\(bu" 4
 \&\fB1d\fR \- just keep 1 backup every day, with no limit to the number of backups.
+.Sp
+* Email notifications, e.g. if new snapshot can not be created e.g. disk full
 .IP "\(bu" 4
 \&\fB1h24,4d6,3w3,4m11\fR \- one an hour for the first day, then 4 a day for the rest of the week then 3 a week for the rest of the month, then 4 a month to give a whole year of snapshots.
 .IP "\(bu" 4
@@ -364,26 +392,26 @@ Only certain options are valid within each context.  A destination context can c
 \& source template spec
 \& snapshot delete delete\-cp
 \& weekstart
-\& rsync\-cmd rsync\-opts remote\-rsync\-cmd
+\& rsync\-cmd rsync\-opts rsync\-xopts remote\-rsync\-cmd
 \& expire\-old
 \& bwlimit\-in bwlimit\-out
 \& compress restart
 \& allow\-restart ldcount
 \& all\-failed some\-failed
 \& min\-interval
-\& verbose loglevel debug stacktrace
+\& verbose loglevel debug
 .Ve
 .PP
 A source context can contain these options:
 .PP
 .Vb 7
-\& rsync\-cmd rsync\-opts remote\-rsync\-cmd
+\& rsync\-cmd rsync\-opts rsync\-xopts remote\-rsync\-cmd
 \& include include\-from exclude exclude\-from
 \& bwlimit\-in bwlimit\-out
 \& compress restart
 \& allow\-restart 
 \& min\-interval
-\& verbose loglevel debug stacktrace
+\& verbose loglevel debug
 .Ve
 .IP "\(bu" 4
 Options marked with '!' in the following list are required.
@@ -431,7 +459,7 @@ See the section on remote authorisation.
 By default, brandysnap uses the rsync options 
 \&\fB\-\-hard\-links \-\-numeric\-ids \-\-archive \-\-one\-file\-system \-\-timeout=300\fR, 
 so the whole of each source will be copied recursively without following symbolic links.  
-See the \fBrsync-opts\fR option for ways to change this.
+See the \fBrsync-opts\fR and \fBrsync-xopts\fR options for ways to change this.
 .IP "\fBdestination \f(BIdir\fB\fR *!" 4
 .IX Item "destination dir *!"
 A local or remote directory for use as the snapshot destination.  Examples:
@@ -469,18 +497,9 @@ Example:
 .Vb 1
 \& template docs
 .Ve
-.IP "\fBspec \f(BIstring\fB\fR !" 4
-.IX Item "spec string !"
-The snapshot-keeping specification.  See the Keeping Snapshots section for full details.
-.IP "\fBlockfile \f(BIfile\fB\fR !" 4
-.IX Item "lockfile file !"
-To prevent separate runs of brandysnap using the same destinations at the same time, you need to give 
-the name of temporary file which will be created and locked while brandysnap is running.
-The user running brandysnap must have permission to create and delete this file.  For example:
-.Sp
-.Vb 1
-\& lockfile /tmp/brandysnap\-docs.lock
-.Ve
+.IP "\fBspecs \f(BIstring\fB\fR !" 4
+.IX Item "specs string !"
+The snapshot-keeping specifications.  See the Keeping Snapshots section for full details.
 .IP "\fBlogfile \f(BIfile\fB\fR" 4
 .IX Item "logfile file"
 The name of a file which will be used to log the output from brandysnap.  Examples:
@@ -539,18 +558,25 @@ Prints out a brief summary of options, and then stops.
 Prints out the brandysnap version number only and then stops.
 .IP "\fBverbose \f(BI0..3\fB\fR" 4
 .IX Item "verbose 0..3"
-This options sets the verbosity of the printed output, on a scale from \fB0\fR to \fB3\fR.  Use higher values to see more about what brandysnap and rsync are doing.  (default: \fB1\fR)
+This options sets the verbosity of the printed output, on a scale from \fB0\fR to \fB3\fR.  Use higher values to see more about what brandysnap and rsync are doing.  \fBverbose\fR can also be spelled \fBverbosity\fR (default: \fB1\fR)
 .IP "\fBloglevel \f(BI0..3\fB\fR" 4
 .IX Item "loglevel 0..3"
 Sets the verbosity level of output in the log file, on a scale from \fB0\fR to \fB3\fR.  If no \fBlogfile\fR is defined, this option is effectively set to \fB0\fR.  (default: \fB1\fR)
 .IP "\fB[no]dry\-run\fR" 4
 .IX Item "[no]dry-run"
-In \fBdry-run\fR mode, brandysnap goes through the motions, but doesn't actually create or delete any snapshots.  The \fBdry-run\fR option is also passed through to rsync. (default: \fBnodry-run\fR)
+In \fBdry-run\fR mode, brandysnap goes through the motions, 
+including checking options, sources, and destinations, as well as calling
+rsync with its \-\-dry\-run option,
+but doesn't actually create or delete any snapshots.  
+The \fBdry-run\fR option is also passed through to rsync. \fBdry-run\fR can also be spelled \fBdryrun\fR.  
+(default: \fBnodry-run\fR)
 .SS "Rsync options"
 .IX Subsection "Rsync options"
 .IP "\fBrsync-cmd \f(BIpath\fB\fR" 4
 .IX Item "rsync-cmd path"
-The location of the rsync programme on your system.  The default is just \fBrsync\fR which means brandysnap looks for rsync in you normal path. On some systems, you might need to set it to something else such as
+The location of the rsync programme on your system.  The default is just \fBrsync\fR which 
+means brandysnap looks for rsync in your normal path. 
+On some systems, you might need to set it to something else such as
 .Sp
 .Vb 1
 \& rsync\-cmd /usr/bin/rsync
@@ -576,6 +602,10 @@ Tip: keep the value low (e.g. 200) if connecting over wifi to avoid swamping the
 .IP "\fBrsync-opts \f(BIoptions\fB\fR" 4
 .IX Item "rsync-opts options"
 Options to pass to rsync, in addition to those that brandysnap will always use (i.e. \-\-relative and \-\-link\-dest). Use this only if you know what you are doing.  (default: \-aHx \-\-numeric\-ids)
+.IP "\fBrsync-xopts \f(BIoptions\fB\fR" 4
+.IX Item "rsync-xopts options"
+Extra options to pass to rsync.  This is a convenience option to all you to add to or override
+the standard options without having to remember what the standard options are.  (default: none)
 .SS "Advanced options"
 .IX Subsection "Advanced options"
 .IP "\fBall-failed \f(BIkeep/delete\fB\fR" 4
@@ -596,10 +626,12 @@ Delete no-longer-required snapshots.  If this option is turned off, brandysnap w
 Include the 'current period' when considering which snapshots to delete.  See the description of [current period](#currentPeriod) below. (default: \fBdelete-cp\fR)
 .IP "\fB[no]expire\-old\fR" 4
 .IX Item "[no]expire-old"
-Consider _all_ snapshots (oldest first) as expirable to make room when the destination is full. (default: \fBnoexpire-old\fR)
+Consider _all_ snapshots (oldest first) as expirable to make room when the destination is full. 
+(default: \fBnoexpire-old\fR)
 .IP "\fBldcount \f(BIn\fB\fR" 4
 .IX Item "ldcount n"
-Specify the number of previous snapshots that rsync will search looking for identical files to hard-link to.  
+Specify the number of previous snapshots that rsync will search looking for identical 
+files to hard-link to.  
 Normally the default value of \fB1\fR is ideal.  Set this value to \fB0\fR to turn off rsync's \fB\-\-link\-dest\fR option
 completely, but be aware that this will greatly increase the size of the new snapshot, and the time
 taken to create it (especially over the network).  Values greater than \fB1\fR can be used in conjunction
@@ -626,9 +658,6 @@ These options are for use by developers only.
 .IP "\fBdebug \f(BIsection,section\fB\fR" 4
 .IX Item "debug section,section"
 Print and log debugging information. (default: \fB(none)\fR)
-.IP "\fB[no]stacktrace\fR" 4
-.IX Item "[no]stacktrace"
-Print a stack trace on error. (default: \fBnostacktrace\fR)
 .IP "\fBtest \f(BIn\fB\fR" 4
 .IX Item "test n"
 Run test case 'n'.
@@ -690,7 +719,7 @@ Brandysnap ignores 'minor' errors from rsync, which includes errors regarding pe
 that there are no 'Permission denied' messages.  If there are, you may need to run brandysnap as root \*(-- see xxx.
 .SH "KNOWN ISSUES"
 .IX Header "KNOWN ISSUES"
-As of 11 October 2012 and version 0.2.3, the following issues and bugs are known.
+As of 28 November 2012 and version 0.2.9, the following issues and bugs are known.
 .IP "\(bu" 4
 Under certain circumstances, rsync can fail if the source 
 contains files that are hard-linked together

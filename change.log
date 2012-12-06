@@ -1,6 +1,17 @@
 Changelog for brandysnap
 ========================
 
+0.2.9
+* Added option --rsync-xopts.
+* Print the getDeleteList summary only when debugging.
+* Display the 'padded' specs in the options summary and status listing.
+* Simplified the output from displayCSpecs.
+* Moved the test suite to a separate file.
+* Print timings for each source, destination, and whole run.
+* Bugs fixed:
+  - use $timesofar properly in parseSpecs().
+  - new version of fmtHours() that works.
+
 0.2.8
 * Better 'status' listing, including the size and number of files transferred
   by rsync, gleaned from rsync's --stats option 
