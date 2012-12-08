@@ -82,7 +82,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-our $VERSION = '0.2.9';
+our $VERSION = '0.2.10-wip';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -2588,8 +2588,9 @@ sub displaySummary () {
     printlog     "===============\n", 1;
     foreach my $dest (sort keys %Summary) {
         printlog "Destination $dest\n";
-        foreach my $source (sort keys %{$Summary{$dest}{source}}) {
-            my $srcInfo = $Summary{$dest}{source}{$source};
+        my $destInfo = $Summary{$dest};
+        foreach my $source (sort keys %{$destInfo->{source}}) {
+            my $srcInfo = $destInfo->{source}{$source};
             printlog "\tSource $source\n", 1;
             my $timing = '';
             if (defined $srcInfo->{stop}) {
@@ -2597,8 +2598,11 @@ sub displaySummary () {
             }
             printlog "\t\t$srcInfo->{result}$timing\n", 1;
         }
-        printlog "\t$Summary{$dest}{result}, time taken: " .
-            elapsed($Summary{$dest}{start}, $Summary{$dest}{stop}) . "\n", 1;
+        my $timing = '';
+        if (defined $destInfo->{stop}) {
+            $timing = ", time taken: " . elapsed($destInfo->{start}, $destInfo->{stop});
+        }
+        printlog "\t$destInfo->{result}$timing\n", 1;
     }
 }
 
@@ -4678,7 +4682,7 @@ foreach my $dest (@{$Opt{destination}}) {
     }
 }
 
-displaySummary();
+displaySummary() if !$Opt{status};
 
 if ($Interrupted) {
     printlog "\n(Interrupted with signal '$Interrupted')\n", 1;
