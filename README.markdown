@@ -47,6 +47,7 @@ each site.
 * The things it doesn't do are compression and deduplication on the destination.
 There are no plans to include those features: they belong in the filing system.
 btrfs, for example, already includes compression, and may do deduplication one day.
+Nor does it do encryption.
 
 Requirements
 ------------

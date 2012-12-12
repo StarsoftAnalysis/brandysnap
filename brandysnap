@@ -82,7 +82,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-our $VERSION = '0.2.10-wip';
+our $VERSION = '0.2.10-next';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -181,6 +181,10 @@ my $specRegex =
 # (yes, I know, this is a bit of a kludge)
 my $EmptyDir = tempdir(CLEANUP => 1);
 
+# Flags for use in displaySummary()
+my $AllDestsFailed = 1;
+my $AnyDestFailed  = 0;
+
 # Summary of results for each destination/source
 # (initialised in processOptions())
 my %Summary;
@@ -204,6 +208,7 @@ my @AllOpt = qw(
     allow-restart ldcount
     all-failed some-failed
     min-interval
+    email-prog email-to email-from email-if email-test
     );
 my %AllOpt = (map {$_ => 1} @AllOpt);
 # Required options (not including those that have a default value)
@@ -212,15 +217,17 @@ my @ReqOpt = qw(destination);
 my %ReqOpt = (map {$_ => 1} @ReqOpt);
 # Multi-value options (are also all string options)
 my %MultiOpt = (map {$_ => 1} qw(source include include-from
-    exclude exclude-from destination debug));
+    exclude exclude-from destination debug email-to));
 # Boolean options
 my @BoolOpt  = qw(safe calendar snapshot delete delete-cp dry-run help strict 
-    version expire-old status compress restart allow-restart);
+    version expire-old status compress restart allow-restart
+    email-test);
 my %BoolOpt = (map {$_ => 1} @BoolOpt);
 # String options (NOT the multi-value ones, which are dealt with separately)
 my @StringOpt = qw(config lockfile logfile template
     rsync-cmd rsync-opts rsync-xopts remote-rsync-cmd
-    all-failed some-failed);
+    all-failed some-failed
+    email-from);
 my %StringOpt = (map {$_ => 1} @StringOpt);
 # Numeric options
 my @NumericOpt = qw(verbose loglevel test
@@ -314,7 +321,7 @@ sub under2 ($) {
 # --------------------------------------------------------------------------------------------------
 
 sub chomps ($) {
-    # A bit like chomp, but removes all new-lines from beginning of the line
+    # A bit like chomp, but removes all new-lines from end of the line
     # and returns the number removed.
     my $textR = shift;
     $$textR =~ s/(\n*)$//;
@@ -360,12 +367,7 @@ sub logit ($;$) {
     my $tnl = chomps(\$text);
     $text =~ s/\n/\n                  /gs;
     my $now  = strftime "%y/%m/%d %H:%M:%S ", localtime;
-#   my $oldfh = select LOGFILE;
-#   $| = 1;
-#   open  LOGFILE,'>>', "$Opt{validLogfile}" or die "Unable to write to logfile $Opt{validLogfile}";
     print LOGFILE "\n"x$lnl . "${now}${text}" . "\n"x$tnl;
-#   close LOGFILE;
-#   select $oldfh;
     $blanks = $tnl - 1;
 }
 
@@ -501,16 +503,17 @@ sub stripQuotes ($) {
 #---------------------------------------------------------------------------------------------------
 
 sub dumpSnapshot ($) {
-    # Return a printable version of a %S entry
+    # Return a printable version of a %S entry.
     my $s = shift;
     return "$s (" . time2stamp($s) . ") => {" . 
-        join(' ', map {"$_=>" . (defined $S{$s}{$_} ? $S{$s}{$_} : 'null')} sort keys $S{$s}) . "}";
+        join(' ', 
+            map {"$_=>" . (defined $S{$s}{$_} ? $S{$s}{$_} : 'null')} sort keys %{$S{$s}}) . "}";
 }
 
 #---------------------------------------------------------------------------------------------------
 
 sub dumpSnapshots (@) {
-    # Return a list of snapshots as a string for printing
+    # Return a list of snapshots' timestamps as a string for printing.
     my @S = @_; 
     return join(', ', map {time2stamp($_)} @S);
 }
@@ -518,8 +521,8 @@ sub dumpSnapshots (@) {
 #---------------------------------------------------------------------------------------------------
 
 sub dumpSnapshots2 (\@) {
-    # Return a list of snapshots as a string for printing
-    # This version also uses %S to mark snapshots as good or bad
+    # Return a list of snapshots's timestamps as a string for printing.
+    # This version also uses %S to mark snapshots as good or bad.
     my @S = @{(shift)};
     return join(', ', map {time2stamp($_) . ($S{$_}{unfinished} ? '-b' : '-g')} @S);
 }
@@ -755,6 +758,44 @@ sub fullName ($) {
 }
 
 #===================================================================================================
+# Email stuff
+
+sub emailSend ($$) {
+    # Minimal email sending process: all the modules I could find are either
+    # broken or too complex.    
+    my $subject = shift;
+    my $body    = shift;
+    return 0 if !$Opt{'email-to'};
+    debug "email-to=@{$Opt{'email-to'}} body=$body\n", 'eS';
+    my $rc = 0;
+    if (open MAIL, '|-', $Opt{'email-prog'}) {
+        print MAIL "From: $Opt{'email-from'}\n";
+        print MAIL "To: " . join(',', @{$Opt{'email-to'}}) . "\n";
+        print MAIL "Subject: $subject\n";
+        print MAIL "\n$body\n";
+        close(MAIL);
+    } else {
+        printlog "ERROR: failed to run '$Opt{'email-prog'}' to send email\n", 1;
+        $rc = 1;
+    }
+    return $rc;
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub emailTest () {
+    # Send a test email
+    my $msg = "This is a test message from $Script, running on " . hostname . ".\n\n";
+    $msg   .= "The command-line options specified were: \n";
+    $msg   .= "    @ARGVcopy";
+    if (emailSend("$Script test message", $msg)) {
+        printlog "ERROR: Unable to send the test message: please check the 'email-xxx' options\n",1;
+    } else {
+        printlog "NOTE: Email test message has been sent\n", 1;
+    }
+}
+
+#===================================================================================================
 # Filing system stuff
 
 sub remote ($) {
@@ -978,7 +1019,6 @@ sub rsyncWritable ($) {
     my $tempdir = 'brandysnap-temp-dir';    # is this ok?
     my @output;
     my @errors;
-    #my $rc = rsyncMkdir("$dest/$tempdir");
     if ($Opt{'dry-run'} or $Opt{status}) {
         # --dry-run: can't write to dest: just see if it's readable
         # --status : don't need to write to dest: ditto
@@ -992,10 +1032,6 @@ sub rsyncWritable ($) {
     return 0 if $rc;  # non-zero - it's not writable, return false
     # temp dir was created, so delete it
     rsyncRmdir($dest, $tempdir);
-#    ($rc, $rc2) = systemCall($Opt{'rsync-cmd'},
-#        stdArgs(1) . "--dirs -f '-!r $tempdir' --delete $EmptyDir/ $dest",
-#        9,9, \@output, \@errors);
-#    debug "delete rc=$rc\n", 'rW';
     return 1;
 }
 
@@ -1420,6 +1456,15 @@ sub checkOptionSingle ($$) {
                     $e += 1;
                 }
             }
+            # Email condition -- failure of any or all destinations
+            when ('email-if') {
+                $value = lc($value);
+                if ($value ne 'any' and $value ne 'all') {
+                    $msg .=  "ERROR: Invalid option: '$option' must be either 'any' or" . 
+                        " 'all', not '$value'\n";
+                    $e += 1;
+                }
+            }
 
             # Source and destination are done later
 
@@ -1730,6 +1775,7 @@ sub processOptions () {
     #   template   source  logfile   config  destination  specs
     #   include include-from exclude exclude-from
     #   remote-rsync-cmd
+    # Nor do any of the email- options.
 
     my %confopt = ();   # config file options
     my %cmdopt = ();    # command line options
@@ -1780,6 +1826,11 @@ sub processOptions () {
             'wbest=i',
             'weekstart=i',
             'ybest=i',
+            'email-prog=s',
+            'email-to=s@',
+            'email-from=s',
+            'email-if=s',
+            'email-test!',
     );
 
     my $errorcount = 0;
@@ -1960,6 +2011,24 @@ sub processOptions () {
         }
     }
     return $errorcount if $errorcount;
+    
+    # Email options
+    if ($Opt{'email-to'}) {
+        # Set up emailing -- some options have defaults.
+        # Note that we don't attempt to validate any of the email settings --
+        # that's what the email-test option is for.
+        $Opt{'email-from'}     = (getpwuid($<))[0]           if !$Opt{'email-from'};
+        $Opt{'email-prog'}     = '/usr/sbin/sendmail -t -oi' if !$Opt{'email-prog'};
+        $Opt{'email-if'}       = 'any'                       if !$Opt{'email-if'};
+        $Opt{'email-test'}     = 0                           if !exists $Opt{'email-test'};
+    } elsif ($Opt{'email-test'}) {
+        printlog "ERROR: Option 'email-to' (and possibly other 'email-xxx' options) " .
+            "must be given when using 'email-test'\n";
+        $errorcount += 1;
+    } elsif ($Opt{'email-prog'} or $Opt{'email-from'} or $Opt{'email-if'}) {
+        printlog "WARNING: No 'email-to' option -- " . 
+                 "all other email options will be ignored\n", 1,1;
+    }
 
     # Parse general-level specs
     if ($Opt{specs}) {
@@ -2098,7 +2167,7 @@ sub processOptions () {
     # Options 'include', 'include-from', 'exclude', 'exclude-from'
     # - these are not checked at all, just passed to rsync
 
-    # specsis checked later
+    # $Opt{specs} is checked later
 
     return $errorcount if $errorcount;
 
@@ -2268,7 +2337,7 @@ Helpful options
 --[no]dry-run                make no actual changes (default: nodry-run) 
 Rsync options
 --rsync-cmd    file       ds location of the rsync programme (default: rsync) 
---[no]compress yes/no     ds enable rsync compression for remote transfers 
+--[no]compress            ds enable rsync compression for remote transfers 
                               (default: compress) 
 --include      pattern   *ds rsync inclusion (see rsync documentation)
 --include-from file      *ds rsync inclusions 
@@ -2284,6 +2353,13 @@ Rsync options
                               (default: none)
 --remote-rsync-cmd file   ds location of the rsync programme on the remote
                                computer (optional, no default) 
+Email options.  --email-to is required for any emails to be sent
+--email-to     address   *   email recipient for error messages (no default)
+--email-from   address       email address for From: header of email (default: current user)
+--email-prog   progname      email sending program and options 
+                              (default: /usr/sbin/sendmail -t -oi)
+--email-if     all|any       send email if all or any destinations failed (default: all)
+--[no]email-test             send a message to test the other email settings (default: no)
 Advanced options
 --all-failed  keep|delete d  (default: delete) 
 --some-failed keep|delete d  (default: keep) 
@@ -2584,25 +2660,47 @@ sub status ($;\@) {
 
 sub displaySummary () {
     # Print out the results summary
-    printlog "\n\nResults Summary\n", 1;
-    printlog     "===============\n", 1;
+    # and send email if there were problems.
+    my $text = '';
+#    my $allFailed = 1;
+#    my $anyFailed = 0;
+    $text .= "\n\nResults Summary\n";
+    $text .=     "===============\n";
     foreach my $dest (sort keys %Summary) {
-        printlog "Destination $dest\n";
+        $text .= "Destination $dest\n";
         my $destInfo = $Summary{$dest};
         foreach my $source (sort keys %{$destInfo->{source}}) {
             my $srcInfo = $destInfo->{source}{$source};
-            printlog "\tSource $source\n", 1;
+            $text .= "\tSource $source\n";
             my $timing = '';
             if (defined $srcInfo->{stop}) {
                 $timing = ", time taken: " . elapsed($srcInfo->{start}, $srcInfo->{stop});
             }
-            printlog "\t\t$srcInfo->{result}$timing\n", 1;
+            $text .= "\t\t$srcInfo->{result}$timing\n";
         }
         my $timing = '';
         if (defined $destInfo->{stop}) {
             $timing = ", time taken: " . elapsed($destInfo->{start}, $destInfo->{stop});
         }
-        printlog "\t$destInfo->{result}$timing\n", 1;
+        $text .= "\t$destInfo->{result}$timing\n";
+#        if ($destInfo->{result} eq 'succeeded') { 
+#            $allFailed = 0;
+#        } else {
+#            $anyFailed = 1;
+#        }
+    }
+    printlog $text, 1;
+    # Send email if any or all destinations failed.
+    if ($AllDestsFailed or ($Opt{'email-if'} eq 'any' and $AnyDestFailed)) {
+        my $rc = emailSend("$Script error", 
+            "This is an error message from $Script running on " . hostname . "." .
+            $text .
+            ($Opt{validLogfile} ? 
+                "\nFor more details see the logfile ($Opt{validLogfile}).\n" : "\n")
+        );
+        if ($rc) {
+           printlog "\nWARNING: Could not send email to @{$Opt{'email-to'}}.\n", 1;
+        }
     }
 }
 
@@ -4456,6 +4554,11 @@ sub processDestination ($) {
             my @expirableSnapshots = getExpirableSnapshots($Opt{pspecs}, @cSpecs, $now);
             # Run rsync to create the new snapshot
             (my $rsyncOK, $lostDest) = runRsync($dest, @expirableSnapshots, $now);  
+            if ($rsyncOK) { 
+                $AllDestsFailed = 0;
+            } else {
+                $AnyDestFailed = 1;
+            }
         }
     } else {
         printlog "NOTE: Option 'no-snapshot' given, so no new snapshot will be created\n", 2;
@@ -4634,9 +4737,15 @@ if (processOptions() > 0) {
     intro();
     printlog "ERROR: Problems found in configuration -- stopping\n", 1;
     printlog "Try '$Script --help' or 'man $Script' for help.\n", 1;
+    emailSend("brandysnap error", "Problems in config..."); # FIXME need to send more details
     logit '-'x80 . "\n", 1;
     exit EXITCONFIG;
 }
+
+# Turn off stacktrace unless we're debugging
+if (keys $Opt{debug} == 0) {
+    $SIG{__DIE__} = 'DEFAULT';  
+} 
 
 # Help requested - display and exit
 if ($Opt{help}) {
@@ -4656,10 +4765,11 @@ if ($Opt{test}) {
     exit;
 }
 
-# Turn off stacktrace unless we're debugging
-if (keys $Opt{debug} == 0) {
-    $SIG{__DIE__} = 'DEFAULT';  
-} 
+# Just send a test email if required
+if ($Opt{'email-test'}) {
+    emailTest();
+    exit;
+}
 
 displayOptions();
 

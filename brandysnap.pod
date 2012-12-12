@@ -223,6 +223,13 @@ of the way hard links work.)
 
 Think of the whole set of snapshots as one backup, with multiple versions of files that have changed.
 
+=head2 Email Notifications
+
+Email messages can be sent if brandysnap fails.  This feature is available if the Perl
+module Mail::SendEasy is installed.  The email implementation is very simple: it can do
+SMTP authentication, but not SSL or any other form of security.  If security is important
+for you, the best solution is for brandysnap to send its emails to a proper SMTP
+server running on the same computer (i.e. 'localhost').
 
 =head2 Options
 
@@ -527,7 +534,39 @@ the standard options without having to remember what the standard options are.  
 
 =back
 
-=head2 Advanced options
+=head2 Email Options
+
+=item B<email-to I<address>>
+Email recipient for error messages (no default).  Multiple B<email-to> options
+can be given, or a comma-separated list of email addresses can be specified on 
+a single option.
+B<email-to> is required for any emails to be sent.
+
+=item B<email-prog I<server>>
+
+The email program to run.  The default is '/usr/sbin/sendmail -t -oi', which 
+is installed on many Linux-based systems, and can be set up to run under Cygwin on Windows.
+
+=item B<email-from I<address>>
+ 
+Email address for From: header of email error messages.  (default: current user)
+
+=item B<email-if I<all|any>>
+ 
+Send email if all or any destinations failed. (default: all)
+
+=item B<[no]email-test>>
+
+Just send a message to test the other email settings. Brandsysnap will not
+do any other processing.  (default: no)
+
+=over
+
+=item
+
+=back
+
+=head2 Advanced Options
 
 =over
 
