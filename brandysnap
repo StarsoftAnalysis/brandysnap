@@ -82,7 +82,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-our $VERSION = '0.2.10-next';
+our $VERSION = '0.2.10-wip';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -259,8 +259,8 @@ my %AllowedContext = (
 );
 # Matrix defining which contexts each option is allowed in
 my %Matrix = (
-	general => {map {$_ => 1} @AllOpt},      # all allowed
-	destination => {map {$_ => 1} qw(
+    general => {map {$_ => 1} @AllOpt},      # all allowed
+    destination => {map {$_ => 1} qw(
         hbest dbest wbest mbest ybest
         safe calendar strict
         source template specs
@@ -278,7 +278,7 @@ my %Matrix = (
     )},
     # some dest-related options can be specified per-source
     # so that each dest-source combination can be different
-	source => {map {$_ => 1} qw(
+    source => {map {$_ => 1} qw(
         rsync-cmd rsync-opts rsync-xopts remote-rsync-cmd
         include include-from exclude exclude-from
         bwlimit-in bwlimit-out
@@ -1968,30 +1968,6 @@ sub processOptions () {
     intro();
     logit "\nCommand line: $0 @ARGVcopy\n", 3;
 
-    # TODO code for checking readable sources should be factorised
-    #      because it's used here and per-destination
-    #      especially if it is extended to have required options
-    #      at source level.
-    # Sources, with extra options for each
-    # (there may be no sources at general level)
-    my $readableSources = 0;
-    if ($Opt{source}) {
-        my @tempSources = @{$Opt{source}};
-        @{$Opt{source}} = ();
-        foreach my $src (@tempSources) {
-            my $abssrc = safeAbsPath($src->{location});
-            if (rsyncReadable($abssrc)) {
-                $readableSources += 1; 
-                push @{$Opt{source}}, {location=>$abssrc, options=>$src->{options}};
-            } else {
-                printlog "WARNING: Source '$abssrc' can not be read:\n" .
-                         "         it will be ignored\n", 1;
-                $warningcount += 1;
-                # (and don't copy it to the final array)
-            }
-        }
-    }
-
     # lockfile option is obsolete
     if ($Opt{lockfile}) {
         printlog "NOTE: Option 'lockfile' is no longer used, and will be ignored.\n" .
@@ -2040,46 +2016,63 @@ sub processOptions () {
         $Opt{specs} = $rawspecs if !$e;
     }
 
-    # Destination directories (with extra options for each)
-    my $writableDests = 0;
-    my @tempDests = @{$Opt{destination}};
-    @{$Opt{destination}} = ();
-    foreach my $dest (@tempDests) {
-        # Check that destination is writable
-        my $absdest = safeAbsPath($dest->{location});
-        #debug "destination: absdest=$absdest\n", 'pO';
-        if (rsyncWritable($absdest)) {
-            my $options = $dest->{options};
-            my $readableSubSources = 0;
-            #debug "checking sub sources for $absdest\n", 'pO';
-            #debug "options = " . Dumper($options), 'pO';
-            if ($options->{source}) {
-                # This destination has its own source(s) which
-                # will override any at the general level
-                my @tempSources = @{$options->{source}};
-                @{$options->{source}} = ();
-                foreach my $src (@tempSources) {
-                    my $abssrc = safeAbsPath($src->{location});
-                    #debug "checking $abssrc within $absdest\n", 'pO';
-                    if (rsyncReadable($abssrc)) {
-                        $readableSubSources += 1; 
-                        #debug "good source $abssrc\n", 'pO';
-                        push @{$options->{source}}, {location=>$abssrc, options=>$src->{options}};
-                    } else {
-                        printlog "WARNING: Source '$abssrc' can not be read: \n" . 
-                                 "         it will be ignored\n", 1;
-                        $warningcount += 1;
-                        # (and don't copy it to the final array)
-                    }
-                }
+    # Sources, with extra options for each (there may be no sources at general level)
+    my $readableSources = 0;
+    if ($Opt{source}) {
+        foreach my $src (@{$Opt{source}}) {
+            $src->{location} = safeAbsPath($src->{location});
+            if (rsyncReadable($src->{location})) {
+                $readableSources += 1; 
+                $src->{readable} = 1;
             } else {
-                # This destination has no sources of its own
-                #debug "no sub sources for $absdest\n", 'pO';
-                $readableSubSources = $readableSources;
+                printlog "WARNING: Source '$src->{location} can not be read\n", 1;
+                $warningcount += 1;
+                $src->{readable} = 0;
             }
+        }
+    }
+
+    # Destination directories (with extra options for each)
+    # and create summary structure
+    my $writableDests = 0;
+    foreach my $dest (@{$Opt{destination}}) { 
+        $dest->{location} = safeAbsPath($dest->{location});
+        $Summary{$dest->{location}}{result} = 'not attempted';
+        my $destInfo = $Summary{$dest->{location}};
+        my $options = $dest->{options};
+        my $readableSubSources = 0;
+        if ($options->{source}) {
+            # This destination has its own source(s) which
+            # will override any at the general level
+            foreach my $src (@{$options->{source}}) {
+                $src->{location} = safeAbsPath($src->{location});
+                $destInfo->{source}{$src->{location}}{result} = 'not attempted';
+                if (rsyncReadable($src->{location})) {
+                    $readableSubSources += 1; 
+                } else {
+                    printlog "WARNING: Source '$src->{location}' can not be read.\n", 1;
+                    $warningcount += 1;
+                    $destInfo->{source}{$src->{location}}{result} = 'not readable';
+                    $AnyDestFailed = 1;
+                }
+            }
+        } else {
+            # This destination has no sources of its own -- use the general-level ones
+            $readableSubSources = $readableSources;
+            foreach my $src (@{$Opt{source}}) {
+                if ($src->{readable}) {
+                    $destInfo->{source}{$src->{location}}{result} = 'not attempted';
+                } else {
+                    $destInfo->{source}{$src->{location}}{result} = 'not readable';
+                    $AnyDestFailed = 1;
+                }
+            }
+        }
+        # Check that destination is writable
+        if (rsyncWritable($dest->{location})) {
             if ($readableSubSources) {
                 $writableDests += 1;
-                # It's a good destination, so parse any spec
+                # It's a good destination, so parse any specs
                 if ($options->{specs}) {
                     my ($w, $e, $msg, $rawspecs, @pspecs) = processSpecs($options->{specs});
                     $errorcount += $e;
@@ -2088,19 +2081,20 @@ sub processOptions () {
                     $options->{pspecs} = \@pspecs if !$e;
                     $options->{specs} = $rawspecs if !$e;
                 }
-                # Store the destination back in the main options hash
-                push @{$Opt{destination}}, {location=>$absdest, options=>$options};
-            } else {
-                printlog "WARNING: None of the sources specified for destination '$absdest'" . 
-                    " are readable\n", 1;
-                printlog "         The whole destination will be ignored\n", 1;
+            #} else {
+            #    printlog "WARNING: None of the sources specified for destination '$absdest'" . 
+            #        " are readable\n", 1;
+            #    printlog "         The whole destination will be ignored\n", 1;
             }
         } else {
-            printlog "WARNING: Destination '$absdest' is not available\n" .
-                     "         as a writable directory: it will be ignored\n", 1;
+            printlog "WARNING: Destination '$dest->{location}' is not available\n" .
+                    "         as a writable directory\n", 1;
             $warningcount += 1;
+            $Summary{$dest->{location}}{result} = 'not available';
+            $AnyDestFailed = 1;
         }
     }
+#print "Summary as created: ", Dumper(\%Summary);
     if ($writableDests == 0) {
         printlog "ERROR: None of the destinations specified is available\n", 1;
         $errorcount += 1;
@@ -2144,22 +2138,6 @@ sub processOptions () {
     }
     return $errorcount if $errorcount;
     
-    # Set up summary structure for results
-    foreach my $dest (@{$Opt{destination}}) {
-        $Summary{$dest->{location}}{result} = 'not attempted';
-        if ($dest->{options}->{source}) {
-            # destination has its own sources -- use them
-            foreach my $source (@{$dest->{options}->{source}}) {
-                $Summary{$dest->{location}}{source}{$source->{location}}{result} = 'not attempted';
-            }
-        } else {
-            # use general sources
-            foreach my $source (@{$Opt{source}}) {
-                $Summary{$dest->{location}}{source}{$source->{location}}{result} = 'not attempted';
-            }
-        }
-    }
-
     # --restart implies --snapshot and --min-interval=0
     $Opt{snapshot} = 1 if $Opt{restart};
     $Opt{'min-interval'} = 0 if $Opt{restart};
@@ -2696,10 +2674,14 @@ sub displaySummary () {
             "This is an error message from $Script running on " . hostname . "." .
             $text .
             ($Opt{validLogfile} ? 
-                "\nFor more details see the logfile ($Opt{validLogfile}).\n" : "\n")
+                "\nFor more details see the logfile (" . hostname . 
+                    ":$Opt{validLogfile}).\n" 
+                : "\n")
         );
         if ($rc) {
-           printlog "\nWARNING: Could not send email to @{$Opt{'email-to'}}.\n", 1;
+            printlog "\nWARNING: Could not send email to @{$Opt{'email-to'}}.\n", 1;
+        } else {
+            printlog "\nNOTE: Email sent to @{$Opt{'email-to'}}.\n", 1;
         }
     }
 }
@@ -4219,8 +4201,12 @@ sub runRsync ($\@$) {
     # Loop through sources one at a time
     SOURCE:
     foreach my $source (@{$Opt{source}}) {
-
+        
         my $location = $source->{location};
+
+        # Skip this source if it's been marked as unreadable
+        next if $Summary{$dest}{source}{$location}{result} ne 'not attempted';
+
         my $srcInfo = $Summary{$dest}{source}{$location};
         $srcInfo->{start} = time();
         printlog "\nCopying from source '$location'\n", 1;
@@ -4776,19 +4762,22 @@ displayOptions();
 # Deal with each destination
 foreach my $dest (@{$Opt{destination}}) {
     last if $Interrupted;
-    debug "running destination $dest->{location}\n", 'ml';
+    my $loc = $dest->{location};
+    debug "running destination $loc ($Summary{$loc}{result})\n", 'ml';
+    next if $Summary{$loc}{result} ne 'not attempted';
+    debug "...yes, really doing it", 'ml';
     local %Opt = %Opt;
     foreach my $destOpt (keys %{$dest->{options}}) {
         debug "overriding $destOpt with '$dest->{options}->{$destOpt}'\n", 'ml';
         $Opt{$destOpt} = $dest->{options}->{$destOpt};
     }
     if ($Opt{status}) {
-        getSnapshotList($dest->{location});
+        getSnapshotList($loc);
         my @cSpecs = compileSpecs(time(), $Opt{pspecs});
         displayCSpecs(@cSpecs) if $Opt{debug}->{status};
-        status($dest->{location}, @cSpecs);
+        status($loc, @cSpecs);
     } else {
-        processDestination($dest->{location});
+        processDestination($loc);
     }
 }
 
