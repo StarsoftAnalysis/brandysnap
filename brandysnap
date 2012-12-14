@@ -82,7 +82,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-our $VERSION = '0.2.10-wip';
+our $VERSION = '0.2.10';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -788,10 +788,27 @@ sub emailTest () {
     my $msg = "This is a test message from $Script, running on " . hostname . ".\n\n";
     $msg   .= "The command-line options specified were: \n";
     $msg   .= "    @ARGVcopy";
-    if (emailSend("$Script test message", $msg)) {
+    if (emailSend("$Script test message from " . hostname, $msg)) {
         printlog "ERROR: Unable to send the test message: please check the 'email-xxx' options\n",1;
     } else {
         printlog "NOTE: Email test message has been sent\n", 1;
+    }
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub emailConfigError () {
+    # Send an email message reporting the configuration problem
+        # FIXME me add at least the name of the config file and the command-line options
+    my $msg = "Ths is an error message from $Script, running on " . hostname . ".\n\n";
+    $msg .= "There was a problem with the configuration, and $Script did not run.\n\n";
+    $msg .= "Command line options: \n    @ARGVcopy\n";
+    $msg .= formatOptions();
+    my $rc = emailSend("brandysnap error on " . hostname, $msg);
+    if ($rc) {
+        printlog "\nWARNING: Could not send email to @{$Opt{'email-to'}}.\n", 1;
+    } else {
+        printlog "\nNOTE: Email sent to @{$Opt{'email-to'}}.\n", 1;
     }
 }
 
@@ -2232,28 +2249,33 @@ sub displayContext ($$$) {
  
 #---------------------------------------------------------------------------------------------------
 
-sub displayOptions () {
-    # Display the options nicely formatted
-    printlog "\nConfiguration file is '" . hostname . ":$Opt{config}'\n\n", 1,1 if $Opt{config};
-    my $optSummary = "\nOptions Summary:\n";
+sub formatOptions () {
+    # Return the options nicely formatted
+    my $text = '';
+    $text .= "\nConfiguration file: '" . hostname . ":$Opt{config}'\n\n" if $Opt{config};
+    $text .= "\nOptions Summary:\n";
     foreach my $opt (sort keys %Opt) {
         next if $opt eq 'validLogfile'; # for internal use only
         next if $opt eq 'pspecs';       # for internal use only
-        my $text = '';
         if ($ValidContext{$opt}) {
-            $text = displayContext($opt, \%Opt, 0);
+            $text .= displayContext($opt, \%Opt, 0);
         } else {
             if (ref($Opt{$opt}) eq 'ARRAY') {
                 foreach my $val (@{$Opt{$opt}}) {
                     $text .= printableOption($opt, $val, 16) . "\n";
                 }
             } else {
-                $text = printableOption($opt, $Opt{$opt}, 16) . "\n";
+                $text .= printableOption($opt, $Opt{$opt}, 16) . "\n";
             }
         }   
-        $optSummary .= $text;
     }
-    printlog "$optSummary\n", 2,2;
+    return "$text\n";
+}
+ 
+#---------------------------------------------------------------------------------------------------
+
+sub displayOptions () {
+    printlog formatOptions(), 1,1;
 }
 
 #===================================================================================================
@@ -2640,8 +2662,6 @@ sub displaySummary () {
     # Print out the results summary
     # and send email if there were problems.
     my $text = '';
-#    my $allFailed = 1;
-#    my $anyFailed = 0;
     $text .= "\n\nResults Summary\n";
     $text .=     "===============\n";
     foreach my $dest (sort keys %Summary) {
@@ -2661,21 +2681,17 @@ sub displaySummary () {
             $timing = ", time taken: " . elapsed($destInfo->{start}, $destInfo->{stop});
         }
         $text .= "\t$destInfo->{result}$timing\n";
-#        if ($destInfo->{result} eq 'succeeded') { 
-#            $allFailed = 0;
-#        } else {
-#            $anyFailed = 1;
-#        }
     }
     printlog $text, 1;
     # Send email if any or all destinations failed.
-    if ($AllDestsFailed or ($Opt{'email-if'} eq 'any' and $AnyDestFailed)) {
+    if ($Opt{'email-to'} and $AllDestsFailed or ($Opt{'email-if'} eq 'any' and $AnyDestFailed)) {
+        # FIXME me add at least the name of the config file and the command-line options
         my $rc = emailSend("$Script error", 
             "This is an error message from $Script running on " . hostname . "." .
             $text .
-            ($Opt{validLogfile} ? 
-                "\nFor more details see the logfile (" . hostname . 
-                    ":$Opt{validLogfile}).\n" 
+            formatOptions() .
+            ($Opt{validLogfile}  
+                ? "\nFor more details see the logfile (" . hostname .  ":$Opt{validLogfile}).\n" 
                 : "\n")
         );
         if ($rc) {
@@ -4205,12 +4221,24 @@ sub runRsync ($\@$) {
         my $location = $source->{location};
 
         # Skip this source if it's been marked as unreadable
-        next if $Summary{$dest}{source}{$location}{result} ne 'not attempted';
+        if ($Summary{$dest}{source}{$location}{result} ne 'not attempted') {
+            printlog "WARNING: skipping source '$location' because it is not readable\n", 1;
+            $succeeded = 0;
+            next SOURCE;
+        }
+
+        # Source and destination can not both be remote (rsync limitation)
+        my $remoteSource = remote($location);
+        if ($remoteDest and $remoteSource) {
+            printlog "WARNING: source '$location' and destination '$dest' are both remote.\n";
+            printlog "         rsync can not do that -- combination has been skipped\n";
+            $succeeded = 0;
+            next SOURCE;
+        }
 
         my $srcInfo = $Summary{$dest}{source}{$location};
         $srcInfo->{start} = time();
         printlog "\nCopying from source '$location'\n", 1;
-        my $remoteSource = remote($location);
 
         # Override options for this source
         local %Opt = %Opt;
@@ -4218,13 +4246,6 @@ sub runRsync ($\@$) {
         foreach my $srcOpt (keys %{$source->{options}}) {
             debug "overriding $srcOpt with '" . Dumper($source->{options}->{$srcOpt}) . "'\n", 'rR';
             $Opt{$srcOpt} = $source->{options}->{$srcOpt};
-        }
-
-        # Source and destination can not both be remote (rsync limitation)
-        if ($remoteDest and $remoteSource) {
-            printlog "WARNING: source '$location' and destination '$dest' are both remote\n";
-            printlog "         rsync can not do that -- combination has been skipped\n";
-            next SOURCE;
         }
 
         # Set up verbosity option
@@ -4481,6 +4502,8 @@ sub processDestination ($) {
                 if ($s < @S and ($now - $S[$s]) < ($Opt{'min-interval'} * MINUTE)) {
                     printlog "\nNOTE: It has been less than $Opt{'min-interval'} minutes\n" . 
                     "      since the last successful snapshot: skipping this destination\n", 1;
+                    $Summary{$dest}{result} = 'skipped';
+                    $AllDestsFailed = 0;    # counts as successful
                     return;
                 }
             }
@@ -4526,7 +4549,11 @@ sub processDestination ($) {
 
     if ($Opt{snapshot} or $Opt{delete}) {
         # Set the destination lock, and give up if that failed
-        return if !rsyncLockDest($dest);
+        if (!rsyncLockDest($dest)) {
+            $Summary{$dest}{result} = 'failed: no lock';
+            $AnyDestFailed = 1;
+            return;
+        }
     }
 
     my $lostDest = 0;
@@ -4567,6 +4594,8 @@ sub processDestination ($) {
         updateSnapshotSizes();
         writeMetadata($dest);
         # Clear the destination lock
+        # (there's no point trying to unlock it if we've lost the connection
+        # to the destination, so this is done here)
         rsyncUnlockDest($dest);
     }
     # Display the current situation after recompiling the specs to allow for changes
@@ -4723,13 +4752,13 @@ if (processOptions() > 0) {
     intro();
     printlog "ERROR: Problems found in configuration -- stopping\n", 1;
     printlog "Try '$Script --help' or 'man $Script' for help.\n", 1;
-    emailSend("brandysnap error", "Problems in config..."); # FIXME need to send more details
+    emailConfigError();
     logit '-'x80 . "\n", 1;
     exit EXITCONFIG;
 }
 
 # Turn off stacktrace unless we're debugging
-if (keys $Opt{debug} == 0) {
+if (keys %{$Opt{debug}} == 0) {
     $SIG{__DIE__} = 'DEFAULT';  
 } 
 

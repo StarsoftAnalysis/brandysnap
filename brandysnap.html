@@ -21,6 +21,7 @@
       <li><a href="#Preserving-Ownership">Preserving Ownership</a></li>
       <li><a href="#Keeping-Snapshots">Keeping Snapshots</a></li>
       <li><a href="#Definition-of-snapshot-vs-full-incremental-backups">Definition of &#39;snapshot&#39; vs full/incremental backups</a></li>
+      <li><a href="#Email-Notifications">Email Notifications</a></li>
       <li><a href="#Options">Options</a>
         <ul>
           <li><a href="#Contexts">Contexts</a></li>
@@ -34,7 +35,8 @@
       <li><a href="#Tuning-options">Tuning options</a></li>
       <li><a href="#Helpful-options">Helpful options</a></li>
       <li><a href="#Rsync-options">Rsync options</a></li>
-      <li><a href="#Advanced-options">Advanced options</a></li>
+      <li><a href="#Email-Options">Email Options</a></li>
+      <li><a href="#Advanced-Options">Advanced Options</a></li>
       <li><a href="#Development-options">Development options</a></li>
     </ul>
   </li>
@@ -52,6 +54,7 @@
   </li>
   <li><a href="#KNOWN-ISSUES">KNOWN ISSUES</a></li>
   <li><a href="#AUTHOR">AUTHOR</a></li>
+  <li><a href="#POD-ERRORS">POD ERRORS</a></li>
 </ul>
 
 <h1 id="NAME">NAME</h1>
@@ -221,6 +224,10 @@
 <p>Lots of snapshots don&#39;t make a file more secure: if the file hasn&#39;t changed, and is the same in all snapshots, then it is only stored once on the disk. If it gets corrupted for any reason, then it will be corrupted in all snapshots. (If the file is DELETED from one snapshot, it will still exist in the others, because of the way hard links work.)</p>
 
 <p>Think of the whole set of snapshots as one backup, with multiple versions of files that have changed.</p>
+
+<h2 id="Email-Notifications">Email Notifications</h2>
+
+<p>Email messages can be sent if brandysnap fails. Emails are sent simply by piping them to the &#39;sendmail&#39; program, which is present on most Linux systems as part of the local email server (exim, for example) and can be installed in the Cygwin environment as part of exim.</p>
 
 <h2 id="Options">Options</h2>
 
@@ -544,7 +551,48 @@
 </dd>
 </dl>
 
-<h2 id="Advanced-options">Advanced options</h2>
+<h2 id="Email-Options">Email Options</h2>
+
+<dl>
+
+<dt id="email-to-address-Email-recipient-for-error-messages-no-default-.-Multiple-email-to-options-can-be-given-or-a-comma-separated-list-of-email-addresses-can-be-specified-on-a-single-option.-email-to-is-required-for-any-emails-to-be-sent."><b>email-to <i>address</i></b> Email recipient for error messages (no default). Multiple <b>email-to</b> options can be given, or a comma-separated list of email addresses can be specified on a single option. <b>email-to</b> is required for any emails to be sent.</dt>
+<dd>
+
+</dd>
+<dt id="email-from-address"><b>email-from <i>address</i></b></dt>
+<dd>
+
+<p>Email address for From: header of email error messages. (default: current user)</p>
+
+</dd>
+<dt id="email-prog-server"><b>email-prog <i>server</i></b></dt>
+<dd>
+
+<p>The email program to run. The default is &#39;/usr/sbin/sendmail -t -oi&#39;, which is installed on many Linux-based systems, and can be set up to run under Cygwin on Windows.</p>
+
+</dd>
+<dt id="email-if-all-any"><b>email-if <i>all|any</i></b></dt>
+<dd>
+
+<p>Send email if all or any destinations failed. (default: all)</p>
+
+</dd>
+<dt id="no-email-test"><b>[no]email-test</b>&gt;</dt>
+<dd>
+
+<p>Just send a message to test the other email settings. Brandsysnap will not do any other processing. (default: no)</p>
+
+<ul>
+
+<li><p></p>
+
+</li>
+</ul>
+
+</dd>
+</dl>
+
+<h2 id="Advanced-Options">Advanced Options</h2>
 
 <dl>
 
@@ -695,6 +743,26 @@
 <h1 id="AUTHOR">AUTHOR</h1>
 
 <p>Chris Dennis, chris@starsoftanalysis.co.uk</p>
+
+<h1 id="POD-ERRORS">POD ERRORS</h1>
+
+<p>Hey! <b>The above document had some coding errors, which are explained below:</b></p>
+
+<dl>
+
+<dt id="Around-line-538:">Around line 538:</dt>
+<dd>
+
+<p>&#39;=item&#39; outside of any &#39;=over&#39;</p>
+
+</dd>
+<dt id="Around-line-568:">Around line 568:</dt>
+<dd>
+
+<p>You forgot a &#39;=back&#39; before &#39;=head2&#39;</p>
+
+</dd>
+</dl>
 
 
 </body>

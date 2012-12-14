@@ -225,11 +225,10 @@ Think of the whole set of snapshots as one backup, with multiple versions of fil
 
 =head2 Email Notifications
 
-Email messages can be sent if brandysnap fails.  This feature is available if the Perl
-module Mail::SendEasy is installed.  The email implementation is very simple: it can do
-SMTP authentication, but not SSL or any other form of security.  If security is important
-for you, the best solution is for brandysnap to send its emails to a proper SMTP
-server running on the same computer (i.e. 'localhost').
+Email messages can be sent if brandysnap fails.  Emails are sent simply by piping them
+to the 'sendmail' program, which is present on most Linux systems as part of the local
+email server (exim, for example) and can be installed
+in the Cygwin environment as part of exim.  
 
 =head2 Options
 
@@ -542,14 +541,14 @@ can be given, or a comma-separated list of email addresses can be specified on
 a single option.
 B<email-to> is required for any emails to be sent.
 
+=item B<email-from I<address>>
+ 
+Email address for From: header of email error messages.  (default: current user)
+
 =item B<email-prog I<server>>
 
 The email program to run.  The default is '/usr/sbin/sendmail -t -oi', which 
 is installed on many Linux-based systems, and can be set up to run under Cygwin on Windows.
-
-=item B<email-from I<address>>
- 
-Email address for From: header of email error messages.  (default: current user)
 
 =item B<email-if I<all|any>>
  

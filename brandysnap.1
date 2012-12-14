@@ -124,7 +124,7 @@
 .\" ========================================================================
 .\"
 .IX Title "BRANDYSNAP 1"
-.TH BRANDYSNAP 1 "2012-12-06" "perl v5.16.2" "User Contributed Perl Documentation"
+.TH BRANDYSNAP 1 "2012-12-14" "perl v5.16.2" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -330,6 +330,12 @@ in all snapshots.
 of the way hard links work.)
 .PP
 Think of the whole set of snapshots as one backup, with multiple versions of files that have changed.
+.SS "Email Notifications"
+.IX Subsection "Email Notifications"
+Email messages can be sent if brandysnap fails.  Emails are sent simply by piping them
+to the 'sendmail' program, which is present on most Linux systems as part of the local
+email server (exim, for example) and can be installed
+in the Cygwin environment as part of exim.
 .SS "Options"
 .IX Subsection "Options"
 All options can be given either on the command line or in the configuration file.  Command line options override configuration file ones (but see below regarding multiple options).  They are case-insensitive.
@@ -606,8 +612,34 @@ Options to pass to rsync, in addition to those that brandysnap will always use (
 .IX Item "rsync-xopts options"
 Extra options to pass to rsync.  This is a convenience option to all you to add to or override
 the standard options without having to remember what the standard options are.  (default: none)
-.SS "Advanced options"
-.IX Subsection "Advanced options"
+.SS "Email Options"
+.IX Subsection "Email Options"
+.IP "\fBemail-to \f(BIaddress\fB\fR Email recipient for error messages (no default).  Multiple \fBemail-to\fR options can be given, or a comma-separated list of email addresses can be specified on a single option. \fBemail-to\fR is required for any emails to be sent." 4
+.IX Item "email-to address Email recipient for error messages (no default).  Multiple email-to options can be given, or a comma-separated list of email addresses can be specified on a single option. email-to is required for any emails to be sent."
+.PD 0
+.IP "\fBemail-from \f(BIaddress\fB\fR" 4
+.IX Item "email-from address"
+.PD
+Email address for From: header of email error messages.  (default: current user)
+.IP "\fBemail-prog \f(BIserver\fB\fR" 4
+.IX Item "email-prog server"
+The email program to run.  The default is '/usr/sbin/sendmail \-t \-oi', which 
+is installed on many Linux-based systems, and can be set up to run under Cygwin on Windows.
+.IP "\fBemail-if \f(BIall|any\fB\fR" 4
+.IX Item "email-if all|any"
+Send email if all or any destinations failed. (default: all)
+.IP "\fB[no]email\-test\fR>" 4
+.IX Item "[no]email-test>"
+Just send a message to test the other email settings. Brandsysnap will not
+do any other processing.  (default: no)
+.RS 4
+.IP "\(bu" 4
+
+.RE
+.RS 4
+.RE
+.SS "Advanced Options"
+.IX Subsection "Advanced Options"
 .IP "\fBall-failed \f(BIkeep/delete\fB\fR" 4
 .IX Item "all-failed keep/delete"
 What to do with the snapshot if none of the sources are copied successfully.
@@ -729,3 +761,12 @@ at the cost of using more disk space.
 .SH "AUTHOR"
 .IX Header "AUTHOR"
 Chris Dennis, chris@starsoftanalysis.co.uk
+.SH "POD ERRORS"
+.IX Header "POD ERRORS"
+Hey! \fBThe above document had some coding errors, which are explained below:\fR
+.IP "Around line 538:" 4
+.IX Item "Around line 538:"
+\&'=item' outside of any '=over'
+.IP "Around line 568:" 4
+.IX Item "Around line 568:"
+You forgot a '=back' before '=head2'
