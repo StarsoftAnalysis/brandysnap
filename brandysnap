@@ -2684,8 +2684,8 @@ sub displaySummary () {
     }
     printlog $text, 1;
     # Send email if any or all destinations failed.
-    if ($Opt{'email-to'} and $AllDestsFailed or ($Opt{'email-if'} eq 'any' and $AnyDestFailed)) {
-        # FIXME me add at least the name of the config file and the command-line options
+    if (exists $Opt{'email-to'} and 
+        ($AllDestsFailed or ($Opt{'email-if'} eq 'any' and $AnyDestFailed))) {
         my $rc = emailSend("$Script error", 
             "This is an error message from $Script running on " . hostname . "." .
             $text .
