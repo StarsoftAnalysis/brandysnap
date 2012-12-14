@@ -1,6 +1,15 @@
 Changelog for brandysnap
 ========================
 
+0.2.10
+* Display more complete results, including elapsed times.
+* Send emails if no successful -- see various --email-xxx options.
+* Bug fixes:
+  - displaySummary -- don't assume that destination start and stop
+    times exist.
+  - fixed two bugs that only show up in Perl 5.10.1: use of
+    'keys $hashRef' instead of 'keys %$hashRef'
+
 0.2.9
 * Added option --rsync-xopts.
 * Print the getDeleteList summary only when debugging.
