@@ -124,7 +124,7 @@
 .\" ========================================================================
 .\"
 .IX Title "BRANDYSNAP 1"
-.TH BRANDYSNAP 1 "2012-12-14" "perl v5.16.2" "User Contributed Perl Documentation"
+.TH BRANDYSNAP 1 "2012-12-22" "perl v5.16.2" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -238,18 +238,31 @@ If the remote side of the transfer is running \s-1SSH\s0 on a non-standard port,
 .PP
 and then specify the location as \fBfred@eg2022:/thingy\fR.
 .PP
+Note that it's the user running rsync that needs to modify their \fB.ssh/config\fR file,
+not necessarily the one who runs brandysnap.  If, for 
+example you use \fB\-\-rsync='sudo rsync'\fR, then you'll need to edit \fB/root/.ssh/config\fR
+rather than \fB~/.ssh/config\fR.
+.PP
 This does not apply when using an rsync daemon, in which case the port can be specified as part of the location, e.g. rsync://fred\e@example.com:1234/thingy.
 .PP
-Multiple destinations can be configured, in which case snapshots will be created on all destinations that are available.  This can be used to put snapshots on several external \s-1USB\s0 drives in rotation, for example.  Or you could specify one local and one remote destination for security.  But note that multiple destinations won't be in sync with each other: that's not the intention.  They will end up with different lists of snapshots if they are available at different times.
+Multiple destinations can be configured, in which case snapshots will be created on all 
+destinations that are available.  
+This can be used to put snapshots on several external \s-1USB\s0 drives in rotation, for example.  
+Or you could specify one local and one remote destination for security.  
+But note that multiple destinations won't always be in sync with each other: 
+that's not the intention.  
+Destinations will end up with different lists of snapshots if they are available at different times.
 .SS "Preserving Ownership"
 .IX Subsection "Preserving Ownership"
-In order to preserver ownership of files, brandysnap needs to be run as root or via 'sudo'.
+In order to preserve ownership of files, brandysnap needs to be run as root or via 'sudo'.
 .PP
 [More detail needed here re use of sudo and \fBremote-rsync-cmd = 'sudo rsync'\fR]
 .SS "Keeping Snapshots"
 .IX Subsection "Keeping Snapshots"
 The number of snapshots that are made depends on how often brandysnap is run.  
-It creates a new snapshot every time.  What is more interesting is how many snapshots are \s-1KEPT\s0.  
+It creates a new snapshot every time (usually).
+.PP
+What is more interesting is how many snapshots are \s-1KEPT\s0.  
 This is determined by a series of specifications, or 'specs', such as
 .PP
 .Vb 1
@@ -309,8 +322,6 @@ If the last spec has no count, it will be padded 'forever'.  The number of snaps
 More spec examples:
 .IP "\(bu" 4
 \&\fB1d\fR \- just keep 1 backup every day, with no limit to the number of backups.
-.Sp
-* Email notifications, e.g. if new snapshot can not be created e.g. disk full
 .IP "\(bu" 4
 \&\fB1h24,4d6,3w3,4m11\fR \- one an hour for the first day, then 4 a day for the rest of the week then 3 a week for the rest of the month, then 4 a month to give a whole year of snapshots.
 .IP "\(bu" 4
@@ -319,6 +330,38 @@ More spec examples:
 
 .PP
 Snapshots also get deleted as time passes.  If a day with four snapshots gets to be old enough to fall within a \fB3w\fR spec, then the extra snapshots will be deleted.
+.SS "Managing Snapshots Manually"
+.IX Subsection "Managing Snapshots Manually"
+Snapshots are stored on the destination, each in a separate directory
+named \fItemplate-timestamp\fR.  For example,
+.PP
+.Vb 5
+\& mightyboosh\-20120515\-100749
+\& mightyboosh\-20120617\-145513
+\& mightyboosh\-20120726\-145512
+\& mightyboosh\-20120823\-145511
+\& mightyboosh\-20120914\-145511
+.Ve
+.PP
+Normally, you would leave the snapshots alone, allowing brandysnap to delete them
+at the appropriate time.
+.PP
+If you wish to mark a snapshot as 'special', just rename it by adding some 
+text to the end of the directory name.  Any text will do \*(-- make it something
+meaningful.  For example,
+.PP
+.Vb 1
+\& mightyboosh\-20120617\-145513\-before\-upgrade
+.Ve
+.PP
+brandysnap will process the snapshot as usual, but will never delete it.  (In fact it will 
+also tweak the priority calculations to make the 'special' snapshot more likely
+to be kept.  In other words, any non-special snapshots in the same time period
+are more likely to be chosen for deletion.)
+.PP
+There is no way to mark a snapshot as 
+\&'unimportant, delete me first', but you can delete a 
+snapshot manually if you want to.
 .SS "Definition of 'snapshot' vs full/incremental backups"
 .IX Subsection "Definition of 'snapshot' vs full/incremental backups"
 Lots of snapshots don't make a file more secure: if the file hasn't changed, 
@@ -628,16 +671,10 @@ is installed on many Linux-based systems, and can be set up to run under Cygwin 
 .IP "\fBemail-if \f(BIall|any\fB\fR" 4
 .IX Item "email-if all|any"
 Send email if all or any destinations failed. (default: all)
-.IP "\fB[no]email\-test\fR>" 4
-.IX Item "[no]email-test>"
+.IP "\fB[no]email\-test\fR" 4
+.IX Item "[no]email-test"
 Just send a message to test the other email settings. Brandsysnap will not
 do any other processing.  (default: no)
-.RS 4
-.IP "\(bu" 4
-
-.RE
-.RS 4
-.RE
 .SS "Advanced Options"
 .IX Subsection "Advanced Options"
 .IP "\fBall-failed \f(BIkeep/delete\fB\fR" 4
@@ -761,12 +798,3 @@ at the cost of using more disk space.
 .SH "AUTHOR"
 .IX Header "AUTHOR"
 Chris Dennis, chris@starsoftanalysis.co.uk
-.SH "POD ERRORS"
-.IX Header "POD ERRORS"
-Hey! \fBThe above document had some coding errors, which are explained below:\fR
-.IP "Around line 538:" 4
-.IX Item "Around line 538:"
-\&'=item' outside of any '=over'
-.IP "Around line 568:" 4
-.IX Item "Around line 568:"
-You forgot a '=back' before '=head2'

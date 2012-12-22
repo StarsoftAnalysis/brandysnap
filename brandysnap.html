@@ -20,6 +20,7 @@
       <li><a href="#Remote-Sources-and-Destinations">Remote Sources and Destinations</a></li>
       <li><a href="#Preserving-Ownership">Preserving Ownership</a></li>
       <li><a href="#Keeping-Snapshots">Keeping Snapshots</a></li>
+      <li><a href="#Managing-Snapshots-Manually">Managing Snapshots Manually</a></li>
       <li><a href="#Definition-of-snapshot-vs-full-incremental-backups">Definition of &#39;snapshot&#39; vs full/incremental backups</a></li>
       <li><a href="#Email-Notifications">Email Notifications</a></li>
       <li><a href="#Options">Options</a>
@@ -54,7 +55,6 @@
   </li>
   <li><a href="#KNOWN-ISSUES">KNOWN ISSUES</a></li>
   <li><a href="#AUTHOR">AUTHOR</a></li>
-  <li><a href="#POD-ERRORS">POD ERRORS</a></li>
 </ul>
 
 <h1 id="NAME">NAME</h1>
@@ -132,19 +132,23 @@
 
 <p>and then specify the location as <b>fred@eg2022:/thingy</b>.</p>
 
+<p>Note that it&#39;s the user running rsync that needs to modify their <b>.ssh/config</b> file, not necessarily the one who runs brandysnap. If, for example you use <b>--rsync=&#39;sudo rsync&#39;</b>, then you&#39;ll need to edit <b>/root/.ssh/config</b> rather than <b>~/.ssh/config</b>.</p>
+
 <p>This does not apply when using an rsync daemon, in which case the port can be specified as part of the location, e.g. rsync://fred\@example.com:1234/thingy.</p>
 
-<p>Multiple destinations can be configured, in which case snapshots will be created on all destinations that are available. This can be used to put snapshots on several external USB drives in rotation, for example. Or you could specify one local and one remote destination for security. But note that multiple destinations won&#39;t be in sync with each other: that&#39;s not the intention. They will end up with different lists of snapshots if they are available at different times.</p>
+<p>Multiple destinations can be configured, in which case snapshots will be created on all destinations that are available. This can be used to put snapshots on several external USB drives in rotation, for example. Or you could specify one local and one remote destination for security. But note that multiple destinations won&#39;t always be in sync with each other: that&#39;s not the intention. Destinations will end up with different lists of snapshots if they are available at different times.</p>
 
 <h2 id="Preserving-Ownership">Preserving Ownership</h2>
 
-<p>In order to preserver ownership of files, brandysnap needs to be run as root or via &#39;sudo&#39;.</p>
+<p>In order to preserve ownership of files, brandysnap needs to be run as root or via &#39;sudo&#39;.</p>
 
 <p>[More detail needed here re use of sudo and <b>remote-rsync-cmd = &#39;sudo rsync&#39;</b>]</p>
 
 <h2 id="Keeping-Snapshots">Keeping Snapshots</h2>
 
-<p>The number of snapshots that are made depends on how often brandysnap is run. It creates a new snapshot every time. What is more interesting is how many snapshots are KEPT. This is determined by a series of specifications, or &#39;specs&#39;, such as</p>
+<p>The number of snapshots that are made depends on how often brandysnap is run. It creates a new snapshot every time (usually).</p>
+
+<p>What is more interesting is how many snapshots are KEPT. This is determined by a series of specifications, or &#39;specs&#39;, such as</p>
 
 <pre><code> 4d5,3w3,1d11</code></pre>
 
@@ -203,8 +207,6 @@
 
 <li><p><b>1d</b> - just keep 1 backup every day, with no limit to the number of backups.</p>
 
-<p>* Email notifications, e.g. if new snapshot can not be created e.g. disk full</p>
-
 </li>
 <li><p><b>1h24,4d6,3w3,4m11</b> - one an hour for the first day, then 4 a day for the rest of the week then 3 a week for the rest of the month, then 4 a month to give a whole year of snapshots.</p>
 
@@ -218,6 +220,26 @@
 </ul>
 
 <p>Snapshots also get deleted as time passes. If a day with four snapshots gets to be old enough to fall within a <b>3w</b> spec, then the extra snapshots will be deleted.</p>
+
+<h2 id="Managing-Snapshots-Manually">Managing Snapshots Manually</h2>
+
+<p>Snapshots are stored on the destination, each in a separate directory named <i>template-timestamp</i>. For example,</p>
+
+<pre><code> mightyboosh-20120515-100749
+ mightyboosh-20120617-145513
+ mightyboosh-20120726-145512
+ mightyboosh-20120823-145511
+ mightyboosh-20120914-145511</code></pre>
+
+<p>Normally, you would leave the snapshots alone, allowing brandysnap to delete them at the appropriate time.</p>
+
+<p>If you wish to mark a snapshot as &#39;special&#39;, just rename it by adding some text to the end of the directory name. Any text will do -- make it something meaningful. For example,</p>
+
+<pre><code> mightyboosh-20120617-145513-before-upgrade</code></pre>
+
+<p>brandysnap will process the snapshot as usual, but will never delete it. (In fact it will also tweak the priority calculations to make the &#39;special&#39; snapshot more likely to be kept. In other words, any non-special snapshots in the same time period are more likely to be chosen for deletion.)</p>
+
+<p>There is no way to mark a snapshot as &#39;unimportant, delete me first&#39;, but you can delete a snapshot manually if you want to.</p>
 
 <h2 id="Definition-of-snapshot-vs-full-incremental-backups">Definition of &#39;snapshot&#39; vs full/incremental backups</h2>
 
@@ -577,17 +599,10 @@
 <p>Send email if all or any destinations failed. (default: all)</p>
 
 </dd>
-<dt id="no-email-test"><b>[no]email-test</b>&gt;</dt>
+<dt id="no-email-test"><b>[no]email-test</b></dt>
 <dd>
 
 <p>Just send a message to test the other email settings. Brandsysnap will not do any other processing. (default: no)</p>
-
-<ul>
-
-<li><p></p>
-
-</li>
-</ul>
 
 </dd>
 </dl>
@@ -743,26 +758,6 @@
 <h1 id="AUTHOR">AUTHOR</h1>
 
 <p>Chris Dennis, chris@starsoftanalysis.co.uk</p>
-
-<h1 id="POD-ERRORS">POD ERRORS</h1>
-
-<p>Hey! <b>The above document had some coding errors, which are explained below:</b></p>
-
-<dl>
-
-<dt id="Around-line-538:">Around line 538:</dt>
-<dd>
-
-<p>&#39;=item&#39; outside of any &#39;=over&#39;</p>
-
-</dd>
-<dt id="Around-line-568:">Around line 568:</dt>
-<dd>
-
-<p>You forgot a &#39;=back&#39; before &#39;=head2&#39;</p>
-
-</dd>
-</dl>
 
 
 </body>

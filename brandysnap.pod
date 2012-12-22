@@ -108,14 +108,25 @@ If the remote side of the transfer is running SSH on a non-standard port, you'll
 
 and then specify the location as B<fred@eg2022:/thingy>.
 
+Note that it's the user running rsync that needs to modify their B<.ssh/config> file,
+not necessarily the one who runs brandysnap.  If, for 
+example you use B<--rsync='sudo rsync'>, then you'll need to edit B</root/.ssh/config>
+rather than B<~/.ssh/config>.
+
 This does not apply when using an rsync daemon, in which case the port can be specified as part of the location, e.g. rsync://fred\@example.com:1234/thingy.
 
-Multiple destinations can be configured, in which case snapshots will be created on all destinations that are available.  This can be used to put snapshots on several external USB drives in rotation, for example.  Or you could specify one local and one remote destination for security.  But note that multiple destinations won't be in sync with each other: that's not the intention.  They will end up with different lists of snapshots if they are available at different times.
+Multiple destinations can be configured, in which case snapshots will be created on all 
+destinations that are available.  
+This can be used to put snapshots on several external USB drives in rotation, for example.  
+Or you could specify one local and one remote destination for security.  
+But note that multiple destinations won't always be in sync with each other: 
+that's not the intention.  
+Destinations will end up with different lists of snapshots if they are available at different times.
 
 
 =head2 Preserving Ownership
 
-In order to preserver ownership of files, brandysnap needs to be run as root or via 'sudo'.
+In order to preserve ownership of files, brandysnap needs to be run as root or via 'sudo'.
 
 [More detail needed here re use of sudo and B<remote-rsync-cmd = 'sudo rsync'>]
 
@@ -123,7 +134,9 @@ In order to preserver ownership of files, brandysnap needs to be run as root or 
 =head2 Keeping Snapshots
 
 The number of snapshots that are made depends on how often brandysnap is run.  
-It creates a new snapshot every time.  What is more interesting is how many snapshots are KEPT.  
+It creates a new snapshot every time (usually).  
+
+What is more interesting is how many snapshots are KEPT.  
 This is determined by a series of specifications, or 'specs', such as
 
  4d5,3w3,1d11
@@ -194,8 +207,6 @@ More spec examples:
 
 B<1d> - just keep 1 backup every day, with no limit to the number of backups.
 
-* Email notifications, e.g. if new snapshot can not be created e.g. disk full
-
 =item * 
 
 B<1h24,4d6,3w3,4m11> - one an hour for the first day, then 4 a day for the rest of the week then 3 a week for the rest of the month, then 4 a month to give a whole year of snapshots.
@@ -210,6 +221,34 @@ B<0-6d5,2-5w3,4m12> - keep up to 6 snapshots a day for five days, but consider d
 
 Snapshots also get deleted as time passes.  If a day with four snapshots gets to be old enough to fall within a B<3w> spec, then the extra snapshots will be deleted.
 
+=head2 Managing Snapshots Manually
+
+Snapshots are stored on the destination, each in a separate directory
+named I<template-timestamp>.  For example, 
+
+ mightyboosh-20120515-100749
+ mightyboosh-20120617-145513
+ mightyboosh-20120726-145512
+ mightyboosh-20120823-145511
+ mightyboosh-20120914-145511
+
+Normally, you would leave the snapshots alone, allowing brandysnap to delete them
+at the appropriate time.
+
+If you wish to mark a snapshot as 'special', just rename it by adding some 
+text to the end of the directory name.  Any text will do -- make it something
+meaningful.  For example,
+
+ mightyboosh-20120617-145513-before-upgrade
+
+brandysnap will process the snapshot as usual, but will never delete it.  (In fact it will 
+also tweak the priority calculations to make the 'special' snapshot more likely
+to be kept.  In other words, any non-special snapshots in the same time period
+are more likely to be chosen for deletion.)
+
+There is no way to mark a snapshot as 
+'unimportant, delete me first', but you can delete a 
+snapshot manually if you want to.
 
 =head2 Definition of 'snapshot' vs full/incremental backups
 
@@ -535,6 +574,8 @@ the standard options without having to remember what the standard options are.  
 
 =head2 Email Options
 
+=over
+
 =item B<email-to I<address>>
 Email recipient for error messages (no default).  Multiple B<email-to> options
 can be given, or a comma-separated list of email addresses can be specified on 
@@ -554,14 +595,10 @@ is installed on many Linux-based systems, and can be set up to run under Cygwin 
  
 Send email if all or any destinations failed. (default: all)
 
-=item B<[no]email-test>>
+=item B<[no]email-test>
 
 Just send a message to test the other email settings. Brandsysnap will not
 do any other processing.  (default: no)
-
-=over
-
-=item
 
 =back
 

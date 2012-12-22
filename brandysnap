@@ -82,7 +82,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-our $VERSION = '0.2.10';
+our $VERSION = '0.2.11-wip';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -293,6 +293,9 @@ my %Matrix = (
 my @DestReqOpt = qw(source template specs);
 my %DestReqOpt = (map {$_ => 1} @ReqOpt);
 
+# Error and warning messages, collected for emailing
+my $Messages = '';
+
 # Mainline code is at the end of this file
 
 #===================================================================================================
@@ -373,11 +376,18 @@ sub logit ($;$) {
 
 # --------------------------------------------------------------------------------------------------
 
+sub printlog ($;$$); 
 sub printlog ($;$$) {
     # Print and log depending on the level of verbose
     my $text   = shift;
     my $plevel = shift // 1;
     my $llevel = shift // $plevel;
+    state $introPrinted = 0;
+    if (!$introPrinted) {
+        $introPrinted = 1;
+        printlog under2("\n$Script version $VERSION starting at " . 
+            (strftime "%H:%M:%S", localtime) . "\n\n"), 1,1;
+    }
     printit $text, $plevel;
     logit $text, $llevel;
 }
@@ -398,17 +408,30 @@ sub debug ($;$) {
 
 # --------------------------------------------------------------------------------------------------
 
+sub printError ($) {
+    # Print an error messsage at level 1
+    my $text = shift;
+    $Messages .= $text;
+    printlog "WARNING: $text", 2,2;
+}
+
+# --------------------------------------------------------------------------------------------------
+
+sub printNote ($) {
+    # Print a note at level 3
+    my $text = shift;
+    $Messages .= $text;
+    printlog "NOTE: $text", 3,3;
+}
+
+# --------------------------------------------------------------------------------------------------
+
 sub intro () {
     # To avoid printing the introductory lines of output before we know if the user
     # wants any output, intro() is called before printing any error messages up until
     # the point in processOptions() when the --verbose and --loglevel options have
     # been processed, and any logfile has been opened.
-    state $introPrinted = 0;
-    if (!$introPrinted) {
-        $introPrinted = 1;
-        printlog under2("\n$Script version $VERSION starting at " . 
-            (strftime "%H:%M:%S", localtime) . "\n\n"), 1,1;
-    }
+    # !!! now done in printlog
 }
 
 #===================================================================================================
@@ -507,7 +530,7 @@ sub dumpSnapshot ($) {
     my $s = shift;
     return "$s (" . time2stamp($s) . ") => {" . 
         join(' ', 
-            map {"$_=>" . (defined $S{$s}{$_} ? $S{$s}{$_} : 'null')} sort keys %{$S{$s}}) . "}";
+            map {"$_=>" . (defined $S{$s}{$_} ? "'$S{$s}{$_}'" : 'null')} sort keys %{$S{$s}}) ."}";
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -521,10 +544,18 @@ sub dumpSnapshots (@) {
 #---------------------------------------------------------------------------------------------------
 
 sub dumpSnapshots2 (\@) {
-    # Return a list of snapshots's timestamps as a string for printing.
+    # Return a list of snapshots' timestamps as a string for printing.
     # This version also uses %S to mark snapshots as good or bad.
     my @S = @{(shift)};
     return join(', ', map {time2stamp($_) . ($S{$_}{unfinished} ? '-b' : '-g')} @S);
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub dumpSnapshotFullnames () {
+    # Return a list of all snapshots' timestamps and their full names
+    my @S = sort keys %S;
+    return join("\n", map {time2stamp($_) . '  ' . ($S{$_}{fullname} // 'none!')} @S);
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -785,30 +816,41 @@ sub emailSend ($$) {
 
 sub emailTest () {
     # Send a test email
+    if (!$Opt{'email-to'}) {
+        printlog "ERROR Unable to send the test message: no email-to option given\n";
+    }
     my $msg = "This is a test message from $Script, running on " . hostname . ".\n\n";
     $msg   .= "The command-line options specified were: \n";
     $msg   .= "    @ARGVcopy";
     if (emailSend("$Script test message from " . hostname, $msg)) {
         printlog "ERROR: Unable to send the test message: please check the 'email-xxx' options\n",1;
     } else {
-        printlog "NOTE: Email test message has been sent\n", 1;
+        printlog "NOTE: Email test message has been sent to @{$Opt{'email-to'}}\n", 1;
     }
 }
 
 #---------------------------------------------------------------------------------------------------
 
-sub emailConfigError () {
+sub emailConfigError ($$$) {
     # Send an email message reporting the configuration problem
-        # FIXME me add at least the name of the config file and the command-line options
-    my $msg = "Ths is an error message from $Script, running on " . hostname . ".\n\n";
-    $msg .= "There was a problem with the configuration, and $Script did not run.\n\n";
-    $msg .= "Command line options: \n    @ARGVcopy\n";
-    $msg .= formatOptions();
-    my $rc = emailSend("brandysnap error on " . hostname, $msg);
+    my $e    = shift;
+    my $w    = shift;
+    my $msgs = shift;
+    return if !($Opt{'email-to'});
+    my $text = "Ths is an error message from $Script, running on " . hostname . ".\n\n";
+    $text .= "There was a problem with the configuration, and $Script did not run.\n\n";
+    $text .= $msgs;
+    $text .= "\n($e errors, $w warnings)\n\n";
+    $text .= "Command line options: \n$0 @ARGVcopy\n";
+    $text .= "\nConfiguration file: '" . hostname . ":$Opt{config}'\n\n" if $Opt{config};
+    #$text .= formatOptions();
+    # Errors in config, so better to not print options summary,
+    # just command line, config file, and error messages
+    my $rc = emailSend("brandysnap error on " . hostname, $text);
     if ($rc) {
         printlog "\nWARNING: Could not send email to @{$Opt{'email-to'}}.\n", 1;
     } else {
-        printlog "\nNOTE: Email sent to @{$Opt{'email-to'}}.\n", 1;
+        printlog "\nNOTE: Email sent to @{$Opt{'email-to'}}\n", 1;
     }
 }
 
@@ -926,8 +968,9 @@ sub updateSnapshotSizes () {
         my $totalFiles = 0;
         # Get rsync listing into an array
         my @items;
+        debug time2stamp($snapshot) . ": fullname=" . ($S{$snapshot}{fullname} // 'none!'), 'uSS';
         my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'}, 
-            stdArgs(0) . " --recursive '$S{$snapshot}{fullname}/'", 9,9, \@items);
+            stdArgs(0) . " --recursive --list-only '$S{$snapshot}{fullname}/'", 9,9, \@items);
         debug "snapshot=$snapshot rc=$rc rc2='$rc2'\n", 'uSS';
         if (!$rc) {
             foreach my $item (@items) {
@@ -1788,11 +1831,15 @@ sub processOptions () {
     $defopt{strict}         = 0;
     $defopt{version}        = 0;
     $defopt{weekstart}      = 1;          # 1=Sunday
+    $defopt{'email-to'}     = '';
+    $defopt{'email-from'}   = (getpwuid($<))[0];
+    $defopt{'email-prog'}   = '/usr/sbin/sendmail -t -oi';
+    $defopt{'email-if'}     = 'any';
+    $defopt{'email-test'}   = 0;
     # The following deliberately do not have defaults:
     #   template   source  logfile   config  destination  specs
     #   include include-from exclude exclude-from
     #   remote-rsync-cmd
-    # Nor do any of the email- options.
 
     my %confopt = ();   # config file options
     my %cmdopt = ();    # command line options
@@ -1852,6 +1899,21 @@ sub processOptions () {
 
     my $errorcount = 0;
     my $warningcount = 0;
+    my $msgs = '';   # all messages printed from this subroutine
+
+    # FIXME !! some messages/errors are added/printed elsewhere
+    # maybe need an 'error()' and 'warn()' routine that accumulate
+    # the messages globally and prepend 'ERROR: ' and 'WARNING: '
+    # Maybe just for the config validation?
+    sub plpo ($;$$) {
+        # Special version of printlog for use in processOptions: 
+        # also adds the text to $msgs
+        my $text   = shift;
+        my $plevel = shift // 1;
+        my $llevel = shift // $plevel;
+        printlog $text, $plevel,$llevel;
+        $msgs .= $text;
+    }
 
     # Block to limit the scope of the SIGWARN override which traps warnings from GetOptions
     {
@@ -1862,17 +1924,17 @@ sub processOptions () {
         if (!$GOok) {
             foreach my $error (@GOerrors) {
                 intro();
-                printlog "ERROR: $error", 1;
+                plpo "ERROR: $error", 1;
             }
             $errorcount += @GOerrors;
         }
         if (@ARGV) {
             intro();
-            printlog "ERROR: Unexpected word(s) on the command line: " .
+            plpo "ERROR: Unexpected word(s) on the command line: " .
                 join(', ', map {"'$_'"} @ARGV) . "\n", 1;
             $errorcount += @ARGV;
         }
-        return $errorcount if $errorcount;
+#        return $errorcount if $errorcount;
     }
 
     # Validate command-line options 
@@ -1884,10 +1946,10 @@ sub processOptions () {
         $cmdopt{$option} = $value;
         if ($msg) {
             intro();
-            printlog "$msg (on command line)\n", 1;
+            plpo "$msg (on command line)\n", 1;
         }
     }
-    return $errorcount if $errorcount;
+#    return $errorcount if $errorcount;
 
     # Tweak context options from command line to make them into config-file structures
     foreach my $context (keys %ValidContext) {
@@ -1908,7 +1970,7 @@ sub processOptions () {
             return $rc if $rc;
         } else {
             intro();
-            printlog "ERROR: Configuration file '$cmdopt{config}' can not be read\n", 1,1;
+            plpo "ERROR: Configuration file '$cmdopt{config}' can not be read\n", 1,1;
             return 1;
         }
     }
@@ -1940,7 +2002,7 @@ sub processOptions () {
     foreach my $ropt (@ReqOpt) {
         unless ($Opt{$ropt}) {
             intro();
-            printlog "ERROR: Required option '$ropt' is missing\n", 1;
+            plpo "ERROR: Required option '$ropt' is missing\n", 1;
             $errorcount += 1;
         }
     }
@@ -1978,7 +2040,7 @@ sub processOptions () {
         }
     }
 
-    return $errorcount if $errorcount;
+#    return $errorcount if $errorcount;
 
     # Now that we know the verbosity and logging options, 
     # we can output the intro appropriately.
@@ -1987,7 +2049,7 @@ sub processOptions () {
 
     # lockfile option is obsolete
     if ($Opt{lockfile}) {
-        printlog "NOTE: Option 'lockfile' is no longer used, and will be ignored.\n" .
+        plpo "NOTE: Option 'lockfile' is no longer used, and will be ignored.\n" .
                  "      It will become invalid in the future: please remove it.\n";
         delete $Opt{lockfile};
     }
@@ -1997,30 +2059,23 @@ sub processOptions () {
         foreach my $ropt (@DestReqOpt) {
             #debug "checking $ropt for dest $dest->{location}\n", 'pO';
             unless ($Opt{$ropt} or ${$dest->{options}}{$ropt}) {
-                printlog "ERROR: Required option '$ropt' is missing " .
+                plpo "ERROR: Required option '$ropt' is missing " .
                     "for destination '$dest->{location}'\n", 1;
                 $errorcount += 1;
             }
         }
     }
-    return $errorcount if $errorcount;
+#    return $errorcount if $errorcount;
     
     # Email options
     if ($Opt{'email-to'}) {
         # Set up emailing -- some options have defaults.
         # Note that we don't attempt to validate any of the email settings --
         # that's what the email-test option is for.
-        $Opt{'email-from'}     = (getpwuid($<))[0]           if !$Opt{'email-from'};
-        $Opt{'email-prog'}     = '/usr/sbin/sendmail -t -oi' if !$Opt{'email-prog'};
-        $Opt{'email-if'}       = 'any'                       if !$Opt{'email-if'};
-        $Opt{'email-test'}     = 0                           if !exists $Opt{'email-test'};
     } elsif ($Opt{'email-test'}) {
-        printlog "ERROR: Option 'email-to' (and possibly other 'email-xxx' options) " .
+        plpo "ERROR: Option 'email-to' (and possibly other 'email-xxx' options) " .
             "must be given when using 'email-test'\n";
         $errorcount += 1;
-    } elsif ($Opt{'email-prog'} or $Opt{'email-from'} or $Opt{'email-if'}) {
-        printlog "WARNING: No 'email-to' option -- " . 
-                 "all other email options will be ignored\n", 1,1;
     }
 
     # Parse general-level specs
@@ -2028,7 +2083,7 @@ sub processOptions () {
         my ($w, $e, $msg, $rawspecs, @pspecs) = processSpecs($Opt{specs});
         $errorcount += $e;
         $warningcount += $w;
-        printlog "$msg\n" if $msg;
+        plpo "$msg\n" if $msg;
         $Opt{pspecs} = \@pspecs if !$e;
         $Opt{specs} = $rawspecs if !$e;
     }
@@ -2042,7 +2097,7 @@ sub processOptions () {
                 $readableSources += 1; 
                 $src->{readable} = 1;
             } else {
-                printlog "WARNING: Source '$src->{location} can not be read\n", 1;
+                plpo "WARNING: Source '$src->{location} can not be read\n", 1;
                 $warningcount += 1;
                 $src->{readable} = 0;
             }
@@ -2051,6 +2106,7 @@ sub processOptions () {
 
     # Destination directories (with extra options for each)
     # and create summary structure
+    my $destError = 0;
     my $writableDests = 0;
     foreach my $dest (@{$Opt{destination}}) { 
         $dest->{location} = safeAbsPath($dest->{location});
@@ -2067,7 +2123,7 @@ sub processOptions () {
                 if (rsyncReadable($src->{location})) {
                     $readableSubSources += 1; 
                 } else {
-                    printlog "WARNING: Source '$src->{location}' can not be read.\n", 1;
+                    plpo "WARNING: Source '$src->{location}' can not be read.\n", 1;
                     $warningcount += 1;
                     $destInfo->{source}{$src->{location}}{result} = 'not readable';
                     $AnyDestFailed = 1;
@@ -2093,18 +2149,19 @@ sub processOptions () {
                 if ($options->{specs}) {
                     my ($w, $e, $msg, $rawspecs, @pspecs) = processSpecs($options->{specs});
                     $errorcount += $e;
+                    $destError = 1 if $e;
                     $warningcount += $w;
-                    printlog "$msg\n" if $msg;
+                    plpo "$msg\n" if $msg;
                     $options->{pspecs} = \@pspecs if !$e;
                     $options->{specs} = $rawspecs if !$e;
                 }
-            #} else {
-            #    printlog "WARNING: None of the sources specified for destination '$absdest'" . 
-            #        " are readable\n", 1;
-            #    printlog "         The whole destination will be ignored\n", 1;
+            } else {
+                plpo "WARNING: None of the sources specified for destination '$absdest'" . 
+                    " are readable\n", 1;
+                plpo "         The whole destination will be skipped\n", 1;
             }
         } else {
-            printlog "WARNING: Destination '$dest->{location}' is not available\n" .
+            plpo "WARNING: Destination '$dest->{location}' is not available\n" .
                     "         as a writable directory\n", 1;
             $warningcount += 1;
             $Summary{$dest->{location}}{result} = 'not available';
@@ -2113,47 +2170,50 @@ sub processOptions () {
     }
 #print "Summary as created: ", Dumper(\%Summary);
     if ($writableDests == 0) {
-        printlog "ERROR: None of the destinations specified is available\n", 1;
+        plpo "ERROR: None of the destinations specified is available\n", 1;
         $errorcount += 1;
+        $destError = 1;
     }
-    return $errorcount if $errorcount;
+#    return $errorcount if $errorcount;
 
-    # Cross-check sources and destinations -- they can't all be remote
-    # 1. for each destination
-    #       if local sources, check them
-    #       else check top-level sources
-    #          i.e. override top-level temporarily if any
-    my $somethingToDo = 0;
-    #debug "opt-dest = " . Dumper($Opt{destination}), 'pO';
-    foreach my $dest (@{$Opt{destination}}) {
-        #debug "checking $dest->{location}\n", 'pO';
-        my $remoteDest = remote($dest->{location});
-        my $source;
-        #debug "dest sources = " . Dumper($dest), 'pO';
-        if (exists $dest->{options}->{source}) {
-            $source = $dest->{options}->{source};
-            #debug "dest sources = " . Dumper($source), 'pO';
-        } else {
-            $source = $Opt{source};
-            #debug "global sources = " . Dumper($source), 'pO';
-        }
-        foreach my $src (@{$source}) {
-            #debug "x-checking $dest->{location} -- $src->{location}", 'pO';
-            my $remoteSrc = remote($src->{location});
-            if (!remote($src->{location}) or !$remoteDest) {
-                $somethingToDo = 1;
-                #debug " -- OK\n", 'pO';
+    if (!$destError) {
+        # Cross-check sources and destinations -- they can't all be remote
+        # 1. for each destination
+        #       if local sources, check them
+        #       else check top-level sources
+        #          i.e. override top-level temporarily if any
+        my $somethingToDo = 0;
+        #debug "opt-dest = " . Dumper($Opt{destination}), 'pO';
+        foreach my $dest (@{$Opt{destination}}) {
+            #debug "checking $dest->{location}\n", 'pO';
+            my $remoteDest = remote($dest->{location});
+            my $source;
+            #debug "dest sources = " . Dumper($dest), 'pO';
+            if (exists $dest->{options}->{source}) {
+                $source = $dest->{options}->{source};
+                #debug "dest sources = " . Dumper($source), 'pO';
             } else {
-                #debug " -- Not\n", 'pO';
+                $source = $Opt{source};
+                #debug "global sources = " . Dumper($source), 'pO';
+            }
+            foreach my $src (@{$source}) {
+                #debug "x-checking $dest->{location} -- $src->{location}", 'pO';
+                my $remoteSrc = remote($src->{location});
+                if (!remote($src->{location}) or !$remoteDest) {
+                    $somethingToDo = 1;
+                    #debug " -- OK\n", 'pO';
+                } else {
+                    #debug " -- Not\n", 'pO';
+                }
             }
         }
+        if (!$somethingToDo) {
+            plpo "ERROR: All destination/source combinations are remote/remote -- " . 
+                "can not continue\n", 1;
+            $errorcount += 1;
+        }
     }
-    if (!$somethingToDo) {
-        printlog "ERROR: All destination/source combinations are remote/remote -- " . 
-            "can not continue\n", 1;
-        $errorcount += 1;
-    }
-    return $errorcount if $errorcount;
+#    return $errorcount if $errorcount;
     
     # --restart implies --snapshot and --min-interval=0
     $Opt{snapshot} = 1 if $Opt{restart};
@@ -2164,12 +2224,12 @@ sub processOptions () {
 
     # $Opt{specs} is checked later
 
-    return $errorcount if $errorcount;
+#    return $errorcount if $errorcount;
+#
+#   debug "Validated final options: " . join(' ', 
+#       map {$_ . '=' . $Opt{$_}} sort keys %Opt) . "\n", 'pO';
 
-    debug "Validated final options: " . join(' ', 
-        map {$_ . '=' . $Opt{$_}} sort keys %Opt) . "\n", 'pO';
-
-    return $errorcount;
+    return $errorcount, $warningcount, $msgs;
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -2237,7 +2297,7 @@ sub displayContext ($$$) {
                     }
                 }
             }
-            $text .= $text2;    
+            $text .= $text2;
             $text .= sprintf("%*s\n", $indent+16+2, "</$context>");
         } else {
             # No sub-options, just display as a simple option
@@ -2257,6 +2317,7 @@ sub formatOptions () {
     foreach my $opt (sort keys %Opt) {
         next if $opt eq 'validLogfile'; # for internal use only
         next if $opt eq 'pspecs';       # for internal use only
+        next if ($opt =~ /^email-/ and !$Opt{'email-to'});  # skip email options if no email-to
         if ($ValidContext{$opt}) {
             $text .= displayContext($opt, \%Opt, 0);
         } else {
@@ -2413,6 +2474,10 @@ sub deleteSnapshot ($) {
         printlog "Not deleting snapshot '$S{$snapshot}{name}' because of option 'delete=no'\n", 1;
         return 0;
     }
+    if ($S{$snapshot}{note}) {
+        printlog "Not deleting snapshot '$S{$snapshot}{name}' because it has a note\n", 1;
+        return 0;
+    }
     # Use some rsync trickery to delete the snapshot
     # (gleaned from http://lists.samba.org/archive/rsync/2010-October/025723.html)
     # This involves copying an empty directory onto the snapshot, and
@@ -2538,7 +2603,19 @@ sub markOrDeleteSnapshot ($$$) {
 
 #---------------------------------------------------------------------------------------------------
 
+sub longestName () {
+    # Return the length of the longest snapshot name (including any notes)
+    my $l = 0;
+    foreach my $s (keys %S) {
+        $l = max($l, length($S{$s}{name}));
+    }
+    return $l;
+}
+
+#---------------------------------------------------------------------------------------------------
+
 sub status ($;\@) {
+    
     # Print a status report on existing snapshots for a single destination
     my $dest   = shift;
     my @cSpecs;
@@ -2572,12 +2649,12 @@ sub status ($;\@) {
         #                                    ------ Size ------   ----- Files ------
         # Snapshots (most recent first)         Total       New      Total       New   Spec
         # --------------------------------   ------------------   ------------------   ------------
-        # longtemplatename-20121024-123456   1.23 MiB  1023 MiB    9999999      9999   1-4h23:21
+        # template-20121024-123456-note      1.23 MiB  1023 MiB    9999999      9999   1-4h23:21
         # --------------------------------   ------------------   ------------------
         #   Total:  (+999 unfinished) 9999   28.0 MiB  28.0 GiB   12345678  12345678   
         # Average:                            123 MiB       0 B     234234    234234 
         # <-------- $nameLength -------->
-        my $nameLength = max(length($Opt{template}) + 16, 32);
+        my $nameLength = max(longestName(), 32);
         printlog sprintf("%-*s   ------ Size ------   ----- Files ------", $nameLength, ''), 
             $plevel,$llevel;
         printlog sprintf("%-*s   %8s  %8s   %8s  %8s   %s\n", $nameLength, 
@@ -2958,6 +3035,8 @@ sub readMetadata ($) {
 sub getSnapshotList ($) {
     # Read in the existing snapshots, storing their details in global hash %S.
     # Uses rsync in case the destination is remote.
+    # The 'note' is an optional ending to the directory name that the 
+    # user can create manually.
     my $dest = shift;
     my $template = $Opt{template};  
     debug "dest=$dest template=$Opt{template}\n", 'gSL';
@@ -2976,11 +3055,14 @@ sub getSnapshotList ($) {
     my $daemon = remoteDaemon($dest);
     foreach (@listing) {
         chomp;
-        # matching e.g. 'drwxr-xr-x        4096 2011/08/09 23:01:29 library-20110809-165521'
+        debug "listing line: $_\n", 'gSL';
+        # matching e.g. 'drwxr-xr-x        4096 2011/08/09 23:01:29 library-20110809-165521-note'
         if (/\d\d:\d\d:\d\d\s+ 
             (?<name>($template)-
-            (?<Y>\d{4})(?<M>\d{2})(?<D>\d{2})-
-            (?<h>\d{2})(?<m>\d{2})(?<s>\d{2}))
+              (?<Y>\d{4})(?<M>\d{2})(?<D>\d{2})-
+              (?<h>\d{2})(?<m>\d{2})(?<s>\d{2})
+              (?<note>.*)?
+            )
             $/x) {
             # Skip over any template with an invalid date (should not happen)
             next if $+{M} < 1;
@@ -2990,16 +3072,35 @@ sub getSnapshotList ($) {
             next if $+{h} > 23;
             next if $+{m} > 59;
             next if $+{s} > 60;
-            # Add information about the snapshot to the global hash
-            $S{stamp2time($_)} = {
-                name     => "$+{name}",
-                path     => $dest,
-                fullname => "$dest/$+{name}",
-                unfinished => 0,    # unless metadata says otherwise -- see below
-                #size     => -1,     # no size information yet -- see below
-                remote   => $remote,
-                daemon   => $daemon,
-            };
+            my $s = stamp2time($_); # snapshot time
+            # Check for duplicates -- this will only happen if the user has
+            # been toying with snapshot folders, and perhaps has mistakenly
+            # copied, e.g., template-20121217-145225 to template-2012127-145225-special
+            # instead of renaming it.
+            # rsync's sorting is a bit strange, so don't rely on the non-special one
+            # being first -- always drop the one with the note.
+            if (!exists $S{$s}{name} or    # non-duplicate
+                $S{$s}{note}           ) { # duplicate, but existing one has a note, so overwrite it
+                if ($S{$s}{name}) {
+                    printlog "\nWARNING: Snapshot $S{$s}{name} is a duplicate of $+{name} -\n" .
+                        "         $S{$s}{name} will be ignored\n";
+                }
+                # Add information about the snapshot to the global hash
+                $S{$s} = {
+                    name     => "$+{name}",     # including any note
+                    path     => $dest,
+                    fullname => "$dest/$+{name}",
+                    unfinished => 0,            # unless metadata says otherwise -- see below
+                    #size     => -1,            # no size information yet -- see below
+                    remote   => $remote,
+                    daemon   => $daemon,
+                    note     => $+{note} // '',
+                };
+            } else {
+                # New snapshot is a duplicate without a note -- ignore it
+                printlog "\nWARNING: Snapshot $+{name} is a duplicate of $S{$s}{name} -\n" .
+                    "         $+{name} will be ignored\n";
+            }
         } else {
             debug "unmatched: $_\n", 'gSL';
         }
@@ -3025,6 +3126,7 @@ sub getSnapshotList ($) {
             }
         }
     }
+    debug "Snapshots: \n" . dumpSnapshotFullnames(), 'gSL';
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -3266,13 +3368,13 @@ sub getMatchingSnapshots ($$$$\@) {
         # Adjust end of range 
         # (+1 to make sure last snapshot is IN the range)
         $end = $S[0];
-        debug "gMS: adjusting end of range for closeness, now $end (".time2stamp($end).")\n",'gMS';
+        debug "adjusting end of range for closeness, now $end (".time2stamp($end).")\n",'gMS';
         $sbFactor2 = 0;
     }
     if ($closeness[-1] < ($averageC * $groupFactor)) {
         # Adjust beginning of range
         $beg = $S[-1];
-        debug "gMS: adjusting beg of range for closeness, now $beg (".time2stamp($beg).")\n",'gMS';
+        debug "adjusting beg of range for closeness, now $beg (".time2stamp($beg).")\n",'gMS';
         $sbFactor1 = 0;
     }
 
@@ -3285,6 +3387,8 @@ sub getMatchingSnapshots ($$$$\@) {
         push @badoffset, ($S{$s}{unfinished} ? $range * 10000 : 0);
     }
     debug "badoffsets: @badoffset\n", 'gMS';
+
+    # 
 
     # Make sure best isn't out of range
     # (this is needed sometimes even if the closeness adjustment above isn't used)
@@ -3310,7 +3414,7 @@ sub getMatchingSnapshots ($$$$\@) {
     @I = ();
     # put the best one in first (they get sorted later)
     $I[0] = $bestTime;
-    debug "gMS: best=$I[0] " . hms($best) . "\n", 'gMS';
+    debug "best=$I[0] " . hms($best) . "\n", 'gMS';
     if ($freqmax > 1) {  # more than one ideal to place, not just the best one
         # Calculate how many should go before and after, then spread them out.
         #my $bbyr = $best / $range;
@@ -3318,32 +3422,32 @@ sub getMatchingSnapshots ($$$$\@) {
         my $afters  = floor((($range-1 - $best) / $range) * $freqmax);
         # (the '-1' above is to avoid fence-post errors:
         # we don't want to consider the final second of the period)
-        debug "gMS: befores=$befores  afters=$afters\n", 'gMS';
+        debug "befores=$befores  afters=$afters\n", 'gMS';
         if ($befores > 0) {
             # befores
             my $interval = floor($best / ($befores + $sbFactor1));
-            debug "gMS: befores: interval=$interval " . hms($interval) . "\n", 'gMS';
+            debug "befores: interval=$interval " . hms($interval) . "\n", 'gMS';
             my $ptr = $beg + $best;
             for my $i (1..$befores) {
                 $ptr -= $interval;
-                debug "gMS: B - i=$i ideal = $ptr " . time2stamp($ptr) . "\n", 'gMS'; 
+                debug "B - i=$i ideal = $ptr " . time2stamp($ptr) . "\n", 'gMS'; 
                 unshift @I, $ptr;
             }
         }
         if ($afters > 0) {
             # afters
             my $interval = floor(($range-$best) / ($afters + $sbFactor2));
-            debug "gMS: afters : interval=$interval " . hms($interval) . "\n", 'gMS';
+            debug "afters : interval=$interval " . hms($interval) . "\n", 'gMS';
             my $ptr = $beg + $best;
             for my $i (1..$afters) {
                 $ptr += $interval;
-                debug "gMS: A - i=$i ideal = $ptr " . time2stamp($ptr) . "\n", 'gMS';
+                debug "A - i=$i ideal = $ptr " . time2stamp($ptr) . "\n", 'gMS';
                 push @I, $ptr;
             }
         }
     }
 
-    debug "gMS: ideals: @I total: " . @I . "\n", 'gMS';
+    debug "ideals: @I total: " . @I . "\n", 'gMS';
 
     # Generate all combinations of the ideal number of snapshots
     # out of the existing snapshots, then calculate a score for each combination
@@ -3362,7 +3466,23 @@ sub getMatchingSnapshots ($$$$\@) {
             my $c = $comb[$i];  # choose the corresponding existing snapshot
             # The score for each existing snapshot is:
             #    (distance to ideal * closeness) + offset for being bad
-            my $score = abs($I[$i] - $S[$c]) * $closeness[$c] + $badoffset[$c];
+            #my $score = abs($I[$i] - $S[$c]) * $closeness[$c] + $badoffset[$c];
+            my $score = abs($I[$i] - $S[$c]) * $closeness[$c];
+            # Experimental:
+            if ($S{$S[$c]}{note}) {
+                # Snapshot has a note -- treat it special:
+                # - ignore badoffset
+                # - reduce the score by a factor (this could be an option perhaps)
+                # This makes the special snapshot more likely to be kept
+                # (it won't actually be deleted anyway, but this effectively makes
+                # the non-special adjacent snapshot more likely to be deleted)
+                my $noteFactor = 2;
+                debug "note for $S[$c] $S{$S[$c]}{name}: $score ... " . $score/$noteFactor, 'gMS';
+                $score /= $noteFactor;
+            } else {
+                # No note -- include badness score
+                $score += $badoffset[$c];
+            }
             debug "i=$i comb[i]=$c I[i]=$I[$i] S[c]=$S[$c] I-S=". abs($I[$i]-$S[$c]) .
                 " clo=$closeness[$c] bo=$badoffset[$c] score=$score\n", 'gMS';
             $combtotal += $score;
@@ -4174,6 +4294,7 @@ sub newSnapshot ($$) {
         tfrfiles => undef,
         remote   => remote($dest),
         daemon   => remoteDaemon($dest),
+        note     => '',
     };
 
     return $snapshot;
@@ -4578,9 +4699,13 @@ sub processDestination ($) {
     }
 
     if (!$Interrupted) {
+# !! Interrupted is one of the reasons for the new snapshot being
+#    unfinished, so maybe... no
         if ($Opt{delete}) {
             # Get the delete list again because the snapshot we've just created (if any)
             # may not be complete
+            #
+            # TODO only call gDL if new snapshot was 'unfinished' ie some sources failed
             @D = getDeleteList(@cSpecs) if $Opt{snapshot};
             # Now we can actually delete things
             deleteSnapshots(@D, @cSpecs, $deleteNew);
@@ -4748,11 +4873,12 @@ if (@ARGV == 0) {
 }
 
 # Get and validate options
-if (processOptions() > 0) {
+my ($e, $w, $msgs) = processOptions();
+if ($e > 0) {
     intro();
     printlog "ERROR: Problems found in configuration -- stopping\n", 1;
     printlog "Try '$Script --help' or 'man $Script' for help.\n", 1;
-    emailConfigError();
+    emailConfigError($e, $w, $msgs);
     logit '-'x80 . "\n", 1;
     exit EXITCONFIG;
 }
