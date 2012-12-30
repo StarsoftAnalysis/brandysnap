@@ -1,9 +1,19 @@
 Changelog for brandysnap
 ========================
 
+0.2.11
+* Allow use of 'notes' on snapshot names to prevent deletion,
+  and tweak the code to make noted snapshots more likely to be kept.
+* Deal with (very unlikely) duplicate snapshot folders.
+* Reworked error/warning/note reporting.
+* Better trapping of time-out errors.
+* Better handling of interruptions.
+* More information in warning messages when sources and destinations are
+  unavailable
+
 0.2.10
 * Display more complete results, including elapsed times.
-* Send emails if no successful -- see various --email-xxx options.
+* Send emails if not successful -- see various --email-xxx options.
 * Bug fixes:
   - displaySummary -- don't assume that destination start and stop
     times exist.

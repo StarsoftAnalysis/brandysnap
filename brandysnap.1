@@ -605,12 +605,15 @@ Prints out a brief summary of options, and then stops.
 .IP "\fBversion\fR" 4
 .IX Item "version"
 Prints out the brandysnap version number only and then stops.
-.IP "\fBverbose \f(BI0..3\fB\fR" 4
-.IX Item "verbose 0..3"
-This options sets the verbosity of the printed output, on a scale from \fB0\fR to \fB3\fR.  Use higher values to see more about what brandysnap and rsync are doing.  \fBverbose\fR can also be spelled \fBverbosity\fR (default: \fB1\fR)
-.IP "\fBloglevel \f(BI0..3\fB\fR" 4
-.IX Item "loglevel 0..3"
-Sets the verbosity level of output in the log file, on a scale from \fB0\fR to \fB3\fR.  If no \fBlogfile\fR is defined, this option is effectively set to \fB0\fR.  (default: \fB1\fR)
+.IP "\fBverbose \f(BI0..9\fB\fR" 4
+.IX Item "verbose 0..9"
+This options sets the verbosity of the printed output, on a scale from \fB0\fR to \fB9\fR.  
+Use higher values to see more about what brandysnap and rsync are doing.  
+\&\fBverbose\fR can also be spelled \fBverbosity\fR (default: \fB3\fR)
+.IP "\fBloglevel \f(BI0..9\fB\fR" 4
+.IX Item "loglevel 0..9"
+Sets the verbosity level of output in the log file, on a scale from \fB0\fR to \fB9\fR.  
+If no \fBlogfile\fR is defined, this option is effectively set to \fB0\fR.  (default: \fB3\fR)
 .IP "\fB[no]dry\-run\fR" 4
 .IX Item "[no]dry-run"
 In \fBdry-run\fR mode, brandysnap goes through the motions, 

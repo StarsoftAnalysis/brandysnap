@@ -82,7 +82,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-our $VERSION = '0.2.11-wip';
+our $VERSION = '0.2.11';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -168,6 +168,16 @@ use constant HOUR   => MINUTE * 60;
 use constant DAY    => HOUR * 24;
 use constant WEEK   => DAY * 7;
 # months and years aren't fixed in terms of seconds!
+
+# Error codes trapped in systemCall()
+my %ErrorCodes = (
+    'diskfull'    => 'no space left on device',
+    'nofileordir' => 'no such file or directory',
+    'nohost'      => 'could not resolve hostname',
+    'interrupted' => 'interrupted',
+    'timedout'    => 'connection timed out',
+    'permission'  => 'permission denied',
+);
 
 # Regexp used for parsing a spec, e.g. 1d or 1d7 or 0-2d31
 my $specRegex = 
@@ -305,7 +315,7 @@ sub underline ($$) {
     # Underline a string with the given character
     my $string = shift;
     my $char   = shift;
-    (my $lnl, $string, my $tnl) = ($string =~ /^(\n*)(.*)(\n*)$/);
+    (my $lnl, $string, my $tnl) = ($string =~ /^(\n*)(.*?)(\n*)$/);
     return $lnl . $string . "\n" . $char x length($string) . $tnl;
 }
 
@@ -401,9 +411,23 @@ sub debug ($;$) {
     my $prefix = '';
     $prefix = "$level: " if $level;
     if ($Opt{debug}->{lc($level)}) {
-        (my $leadingnl, $text) = ($text =~ m/^(\n?)(.*)$/s); 
+        (my $leadingnl, $text) = ($text =~ m/^(\n*)(.*)$/s); 
         printlog "${leadingnl}dbg: $prefix$text", 0,0;
     }
+}
+
+# --------------------------------------------------------------------------------------------------
+
+sub printEWN ($$$) {
+    # Print an error/warning/note message with fancy formatting
+    my $text   = shift;
+    my $prefix = shift;
+    my $level  = shift;
+    (my $leadingnl, $text, my $trailingnl) = ($text =~ m/^(\n*)(.*?)(\n*)$/s); 
+    my $spaces = ' ' x length($prefix);
+    $text =~ s/(\n+)/$1$spaces/;
+    $Messages .= "$leadingnl$prefix$text$trailingnl" if $level <= 2;
+    printlog "$leadingnl$prefix$text$trailingnl", $level,$level;
 }
 
 # --------------------------------------------------------------------------------------------------
@@ -411,8 +435,15 @@ sub debug ($;$) {
 sub printError ($) {
     # Print an error messsage at level 1
     my $text = shift;
-    $Messages .= $text;
-    printlog "WARNING: $text", 2,2;
+    printEWN $text, 'ERROR: ', 1;
+}
+
+# --------------------------------------------------------------------------------------------------
+
+sub printWarning ($) {
+    # Print a warning messsage at level 2
+    my $text = shift;
+    printEWN $text, 'WARNING: ', 2;
 }
 
 # --------------------------------------------------------------------------------------------------
@@ -420,8 +451,23 @@ sub printError ($) {
 sub printNote ($) {
     # Print a note at level 3
     my $text = shift;
-    $Messages .= $text;
-    printlog "NOTE: $text", 3,3;
+    printEWN $text, 'NOTE: ', 3;
+}
+
+# --------------------------------------------------------------------------------------------------
+
+sub printMsg ($) {
+    # Print a message that may already start with 'ERROR' or 'WARNING'
+    my $text = shift;
+    if ($text =~ /^\s*ERROR/) {
+        $Messages .= $text;
+        printlog $text, 1,1;
+    } elsif ($text =~ /^\s*WARNING/) {
+        $Messages .= $text;
+        printlog $text, 2,2;
+    } else {
+        printlog "$text", 3,3;
+    }
 }
 
 # --------------------------------------------------------------------------------------------------
@@ -597,6 +643,17 @@ sub diskSpace ($) {
     my $size = shift;
     my $blocksize = 512;
     return ceil($size / $blocksize) * $blocksize; 
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub checkInterruption ($) {
+    # Check if we've been interrupted: if so, print a message and exit
+    my $msg = shift // '';
+    if ($Interrupted) {
+        printlog "\nInterrupted with signal '$Interrupted' $msg\n", 1;
+        exit EXITINT;
+    }
 }
 
 # Date/time routines ===============================================================================
@@ -783,8 +840,8 @@ sub fullName ($) {
     }
     return $name if @matches == 0;
     return $matches[0] if @matches == 1;
-    printlog "ERROR: option '$name' is ambiguous, matching any of " .
-        join(', ', @matches) . "\n", 1,1;
+    printError "Option '$name' is ambiguous, matching any of " .
+        join(', ', @matches) . "\n";
     return '!*ambiguous';
 }
 
@@ -806,7 +863,7 @@ sub emailSend ($$) {
         print MAIL "\n$body\n";
         close(MAIL);
     } else {
-        printlog "ERROR: failed to run '$Opt{'email-prog'}' to send email\n", 1;
+        printError "Failed to run '$Opt{'email-prog'}' to send email\n";
         $rc = 1;
     }
     return $rc;
@@ -817,29 +874,28 @@ sub emailSend ($$) {
 sub emailTest () {
     # Send a test email
     if (!$Opt{'email-to'}) {
-        printlog "ERROR Unable to send the test message: no email-to option given\n";
+        printError "Unable to send the test message: no email-to option given\n";
     }
     my $msg = "This is a test message from $Script, running on " . hostname . ".\n\n";
     $msg   .= "The command-line options specified were: \n";
     $msg   .= "    @ARGVcopy";
     if (emailSend("$Script test message from " . hostname, $msg)) {
-        printlog "ERROR: Unable to send the test message: please check the 'email-xxx' options\n",1;
+        printError "Unable to send the test message: please check the 'email-xxx' options\n";
     } else {
-        printlog "NOTE: Email test message has been sent to @{$Opt{'email-to'}}\n", 1;
+        printNote "Email test message has been sent to @{$Opt{'email-to'}}\n";
     }
 }
 
 #---------------------------------------------------------------------------------------------------
 
-sub emailConfigError ($$$) {
+sub emailConfigError ($$) {
     # Send an email message reporting the configuration problem
     my $e    = shift;
     my $w    = shift;
-    my $msgs = shift;
     return if !($Opt{'email-to'});
     my $text = "Ths is an error message from $Script, running on " . hostname . ".\n\n";
     $text .= "There was a problem with the configuration, and $Script did not run.\n\n";
-    $text .= $msgs;
+    $text .= $Messages;
     $text .= "\n($e errors, $w warnings)\n\n";
     $text .= "Command line options: \n$0 @ARGVcopy\n";
     $text .= "\nConfiguration file: '" . hostname . ":$Opt{config}'\n\n" if $Opt{config};
@@ -848,9 +904,9 @@ sub emailConfigError ($$$) {
     # just command line, config file, and error messages
     my $rc = emailSend("brandysnap error on " . hostname, $text);
     if ($rc) {
-        printlog "\nWARNING: Could not send email to @{$Opt{'email-to'}}.\n", 1;
+        printWarning "\nCould not send email to @{$Opt{'email-to'}}.\n";
     } else {
-        printlog "\nNOTE: Email sent to @{$Opt{'email-to'}}\n", 1;
+        printNote "\nEmail sent to @{$Opt{'email-to'}}\n";
     }
 }
 
@@ -1036,7 +1092,7 @@ sub rsyncRmdir ($$) {
     my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'},
         stdArgs(1) . "--dirs -f '-!r $subdir' --delete $EmptyDir/ $dir",
         9,9, \@output, \@errors);
-    debug "dir='$dir' subdir='$subdir' rc=$rc rc2=$rc2 output='@output' errors='@errors'\n", 'rRd';
+    debug "dir='$dir' subdir='$subdir' rc=$rc rc2=$rc2 output='@output' errors='@errors'\n", 'rRm';
     return $rc;
 }
 
@@ -1067,8 +1123,8 @@ sub rsyncReadable ($) {
     my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'},
         stdArgs(0) . "--list-only $source",
         9,9, \@output, \@errors);
-    debug "source='$source' rc=$rc rc2=$rc2 output='@output' errors='@errors'\n", 'rR';
-    return ($rc == 0); 
+    debug "source='$source' rc=$rc rc2=$rc2 output='@output' errors='@errors'\n", 'rRd';
+    return ($rc, $rc2); 
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -1089,10 +1145,10 @@ sub rsyncWritable ($) {
         9,9, \@output, \@errors);
     debug "dest='$dest' tempdir='$tempdir' rc=$rc rc2=$rc2 output='@output' errors='@errors'\n", 
         'rW';
-    return 0 if $rc;  # non-zero - it's not writable, return false
+    return ($rc, $rc2) if $rc;  # non-zero - it's not writable
     # temp dir was created, so delete it
     rsyncRmdir($dest, $tempdir);
-    return 1;
+    return (0, '');
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -1140,7 +1196,7 @@ sub rsyncLockDest ($) {
     if (!$stillrunning) {
         # Create a new lock directory with our pid
         if (rsyncMkdir("$dest/" . lockName($$))) {
-            printlog "ERROR: Failed to create lock directory " . lockName($$) . "\n", 1,1;
+            printError "Failed to create lock directory " . lockName($$) . "\n";
         } else {
            $locked = 1;
         }
@@ -1216,13 +1272,13 @@ sub parseSpecs ($) {
                 $freqmax = int($+{freqmax});
             }
             if ($freqmax == 0) {
-                printlog "ERROR: Frequency 0 in spec '$spec' does not make sense\n", 1;
+                printError "Frequency 0 in spec '$spec' is not allowed\n";
                 $errorcount += 1;
                 next;
             }
             if ($freqmax < $freqmin) {
-                printlog "ERROR: Maximum frequency must be greater than minimum: \n", 1;
-                printlog "       '$freqmin-$freqmax' in spec '$spec' does not make sense\n", 1;
+                printError "Maximum frequency must be greater than minimum: \n" . 
+                           "'$freqmin-$freqmax' in spec '$spec' does not make sense\n";
                 $errorcount += 1;
             }
             my $period = $+{period};
@@ -1230,7 +1286,7 @@ sub parseSpecs ($) {
             if ($+{count} ne '') { 
                 $count = int($+{count});
                 if ($count == 0) {
-                    printlog "ERROR: Count 0 in spec '$spec' will make no snapshots\n", 1;
+                    printError "Count 0 in spec '$spec' will make no snapshots\n";
                     $errorcount += 1;
                     next;
                 }
@@ -1247,7 +1303,7 @@ sub parseSpecs ($) {
                 count   => $count,
             };  
         } else {
-            printlog "ERROR: Invalid spec '$spec'\n", 1;
+            printError "Invalid spec '$spec'\n";
             $errorcount += 1;
         }
     }
@@ -1268,11 +1324,11 @@ sub parseSpecs ($) {
             # This is done even if --calendar is false.
             if ($i == $#specs) {
                 # last spec -- can't pad, so set count to lots
-                printlog "NOTE: last spec padded forever\n", 3;
+                printNote "Last spec padded forever\n";
                 $spec->{count} = UNLIMITED; 
             } elsif ($specs[$i+1]->{periodn} <= $spec->{periodn}) {
-                #printlog "WARNING: Can not pad spec $spec->{rawspec} because next spec is " .
-                #    "not at a higher level; count set to 1\n", 1;
+                #printWarning "Can not pad spec $spec->{rawspec} because next spec is " .
+                #    "not at a higher level; count set to 1\n";
                 #$warningcount += 1;
                 $spec->{count} = 1;
             } else {
@@ -1296,8 +1352,8 @@ sub parseSpecs ($) {
         debug "Spec1: $spec->{freqmin}-$spec->{freqmax} $spec->{period} $spec->{count}\n", 'pS';
         # Check alignment (calendar mode only)
         if ($Opt{calendar} and !aligned($timesofar, $spec->{periodn})) {
-            printlog "WARNING: Spec at $LevelName[$spec->{periodn}] level is not aligned - " 
-                . "it starts at " . fmtHours($timesofar) . "\n", 1;
+            printWarning "Spec at $LevelName[$spec->{periodn}] level is not aligned - " 
+                . "it starts at " . fmtHours($timesofar) . "\n";
             $warningcount += 1;
         }
         $i += 1;
@@ -1308,10 +1364,11 @@ sub parseSpecs ($) {
     my $lastint  = 0;
     $i = 0;
     foreach my $spec (@specs) {
+        next if $spec->{freqmax} == 0;
         my $int = $Hours[$spec->{periodn}] / $spec->{freqmax};  # yes, use max
         if ($int < $lastint) {
-            printlog "WARNING: Interval is smaller for spec " . ($i+2) . 
-                " ($spec->{rawspec}) than for " .  "previous one ($specs[$i-1]->{rawspec})\n", 3;
+            printWarning "Interval is smaller for spec " . ($i+2) . 
+                " ($spec->{rawspec}) than for " .  "previous one ($specs[$i-1]->{rawspec})\n";
             $warningcount += 1;
         }
         $lastint = $int;
@@ -1355,18 +1412,18 @@ sub processSpecs ($) {
     # Validate the specs given 
     my $specs = shift;
     my ($warnings, $errors, $rawspecs, @specs) = parseSpecs($specs); 
-    my $msg;
+    #my $msg;
     if ($errors) {
-        $msg = "ERROR: One or more specs is invalid -- stopping";
+        printError "One or more specs is invalid -- stopping";
     }
     if ($warnings and $Opt{strict}) {
-        $msg = "ERROR: Warnings when parsing specs, and strict mode in effect -- stopping";
+        printError "Warnings when parsing specs, and strict mode in effect -- stopping";
         $errors += 1;
     }
 #    if (!@specs) {
 #        $msg =  "ERROR: No valid specs found -- stopping";
 #    }
-    return ($warnings, $errors, $msg, $rawspecs, @specs);
+    return ($warnings, $errors, $rawspecs, @specs);
 }
 
 #===================================================================================================
@@ -1413,7 +1470,7 @@ sub checkOptionSingle ($$) {
         if (looks_like_number($value)) {
             $value = $value + 0;    # make it really numeric
         } else {
-            $msg .=  "ERROR: Invalid option: '$option' must be numeric, not '$value'\n";
+            $msg .= "ERROR: Invalid option: '$option' must be numeric, not '$value'\n";
             $e += 1;
         }
     }
@@ -1446,7 +1503,7 @@ sub checkOptionSingle ($$) {
             when ('mbest') { 
                 if (!($value >= 1 and $value <= 31)) {
                     # (31 gives the last day of any month)
-                    $msg .=  "ERROR: Invalid option: 'mbest' must be a whole number between" . 
+                    $msg .= "ERROR: Invalid option: 'mbest' must be a whole number between" . 
                         " 1 and 31, not '$value'\n";
                     $e += 1;
                 }
@@ -1454,7 +1511,7 @@ sub checkOptionSingle ($$) {
             when ('ybest') { 
                 if (!($value >= 1 and $value <= 366)) {
                     # (366 gives the last day of the year, whether a leap year or not)
-                    $msg .=  "ERROR: Invalid option: 'ybest' must be a whole number between" .
+                    $msg .= "ERROR: Invalid option: 'ybest' must be a whole number between" .
                         " 1 and 366, not '$value'\n";
                     $e += 1;
                 }
@@ -1470,19 +1527,19 @@ sub checkOptionSingle ($$) {
             when ('ldcount') {
                 $value = int($value);
                 if ($value < 0 or $value > 20) {
-                    $msg .=  "ERROR: Invalid option: 'ldcount' must be a number from 1 to 20, " .
+                    $msg .= "ERROR: Invalid option: 'ldcount' must be a number from 1 to 20, " .
                         "not '$value'\n";
                     $e += 1;
                 } elsif ($value == 0) {
-                    $msg .=  "WARNING: Option 'ldcount' is zero -- no hard-linking will be done,\n";
-                    $msg .=  "         and the snapshot created may be much larger than expected\n";
+                    $msg .= "WARNING: Option 'ldcount' is zero -- no hard-linking will be done,\n"
+                    . "and the snapshot created may be much larger than expected\n";
                     $w += 1;
                 }
             }
             # Band-width limits (0 = unlimited)
             when (['bwlimit-in', 'bwlimit-out']) {
                 if (!looks_like_number($value) or $value < 0) {
-                    $msg .=  "ERROR: Invalid option: '$option' must be zero or a positive whole" . 
+                    $msg .= "ERROR: Invalid option: '$option' must be zero or a positive whole" . 
                         " number (in kbps), not '$value'\n";
                     $e += 1;
                 } else {
@@ -1496,7 +1553,7 @@ sub checkOptionSingle ($$) {
                 } elsif (index('delete', lc($value)) == 0) {    # ditto
                     $value = 'delete';
                 } else {
-                    $msg .=  "ERROR: Invalid option: '$option' must be either 'keep' or" . 
+                    $msg .= "ERROR: Invalid option: '$option' must be either 'keep' or" . 
                         " 'delete', not '$value'\n";
                     $e += 1;
                 }
@@ -1504,7 +1561,7 @@ sub checkOptionSingle ($$) {
             # Minimum interval between snapshots (in minutes)
             when ('min-interval') {
                 if (!looks_like_number($value) or $value < 0) {
-                    $msg .=  "ERROR: Invalid option: 'min-interval' must be a positive number" . 
+                    $msg .= "ERROR: Invalid option: 'min-interval' must be a positive number" . 
                         " of minutes, not '$value'\n";
                     $e += 1;
                 }
@@ -1520,7 +1577,7 @@ sub checkOptionSingle ($$) {
             when ('email-if') {
                 $value = lc($value);
                 if ($value ne 'any' and $value ne 'all') {
-                    $msg .=  "ERROR: Invalid option: '$option' must be either 'any' or" . 
+                    $msg .= "ERROR: Invalid option: '$option' must be either 'any' or" . 
                         " 'all', not '$value'\n";
                     $e += 1;
                 }
@@ -1582,7 +1639,7 @@ sub getOptionsFromArray ($$$) {
     if (!GetOptionsFromArray($argRef, $optRef, @$GOarrayRef)) {
         # Print the error messages
         foreach my $error (@GOFAerrors) {
-            printlog "ERROR: Unexpected option error: $error", 1;
+            printError "Unexpected option error: $error";
         }
         $rc = @GOFAerrors;  # error count
     }
@@ -1645,8 +1702,8 @@ sub readConfig ($$) {
                 my $value = $+{value} // '';
                 if ($BoolOpt{$option}) {
                     if ($value) {
-                        printlog "ERROR: Option '$option' should not have a value; " .
-                            "use '--no$option' turn it off" . confLine(), 1;
+                        printError "Option '$option' should not have a value; " .
+                            "use '--no$option' turn it off" . confLine();
                         $rc += 1;
                         next LINE;
                     }
@@ -1657,15 +1714,14 @@ sub readConfig ($$) {
                 (my $e, my $w, $value, my $msg) = checkOptionSingle($option, $value);
                 #debug "cOS returns $e, $w, '$value', '$msg'\n", 'rC';
                 if (!$AllOpt{$option}) {
-                    printlog "ERROR: Unknown option '$option'" . confLine(), 1
+                    printError "Unknown option '$option'" . confLine()
                         if $option ne '!*ambiguous';
                     $rc += 1;
                 } elsif (!$Matrix{$context}{$option}) {
-                    printlog "ERROR: Option '$option' not allowed within context '$context'" 
-                        . confLine(), 1;
+                    printError "Option '$option' not allowed within context '$context'" .confLine();
                     $rc += 1;
                 } elsif ($e) {
-                    printlog $msg . confLine(), 1,1;
+                    printMsg $msg . confLine();
                     $rc += $e; 
                 } elsif ($ValidContext{$option}) {
                     # These are treated separately so that, for example,
@@ -1673,7 +1729,7 @@ sub readConfig ($$) {
                     # is treated as
                     #   <destination d1></destination>
                     if (!$value) {
-                        printlog "ERROR: Option '$option' must have a value " . confLine(), 1;
+                        printError "Option '$option' must have a value " . confLine();
                         $rc += 1;
                     } else {
                         push @{$confopt{$option}}, {location => $value, options => {}};
@@ -1682,7 +1738,7 @@ sub readConfig ($$) {
                 } else {
                     # Simple option -- just add it to the list
                     # First, print any warnings
-                    printlog $msg . confLine(), 1,1 if $w;
+                    printMsg $msg . confLine() if $w;
                     if ($BoolOpt{$option}) {
                         debug "restoring no?: option=$option value=$value\n", 'rC';
                         push @options, '--' . ($value ? '' : 'no') . $option;
@@ -1701,24 +1757,23 @@ sub readConfig ($$) {
                 debug "\n>>>>>> new context=$option  \n", 'rC';
                 (my $e, my $w, $value, my $msg) = checkOptionSingle($option, $value);
                 if (!$ValidContext{$option}) {
-                    printlog "ERROR: Unknown context '$option' -- context skipped" .
-                        confLine(), 1;
+                    printError "Unknown context '$option' -- context skipped" . confLine();
                     $rc += 1;
                 } elsif (!$AllowedContext{$context}{$option}) {
-                    printlog "ERROR: Context '$option' not allowed within context '$context'" . 
-                        " -- context skipped" . confLine(), 1;
+                    printError "Context '$option' not allowed within context '$context'" . 
+                        " -- context skipped" . confLine();
                     $rc += 1;
                 } elsif ($e) {
-                    printlog $msg . confLine(), 1,1;
+                    printMsg $msg . confLine();
                     $rc += $e; 
                 } else {
                     #if (!$value) {
-                    #    printlog "ERROR: Option '$option' must have a value" . 
-                    #        confLine() . "\n", 1;
+                    #    printError "Option '$option' must have a value" . 
+                    #        confLine() . "\n";
                     #    $rc += 1;
                     #} else {
                     # First, print any warnings
-                    printlog $msg . confLine(), 1,1 if $w;
+                    printMsg $msg . confLine() if $w;
                     # OK, it's a valid context (source or destination) - recurse
                     my ($newrc, $newConfRef) = readContext($option);
                     push @{$confopt{$option}}, {location => $value, options => $newConfRef};
@@ -1726,13 +1781,12 @@ sub readConfig ($$) {
                     $rc += $newrc;
                     #}
                 }
-
+ # got to here
             } elsif (/^\s*<\/\s*(?<option>[[:alpha:]]*)[^>]*>/) {
                 # End of context: ignore the name -- just match on any </...>
                 if ($context eq 'general') {
                     # end of context is an error 
-                    printlog "ERROR: Unmatched end-of-context: '$+{option}'" .
-                        confLine(), 1;
+                    printError "Unmatched end-of-context: '$+{option}'" . confLine();
                     $rc += 1;
                 } else {
                     # Finish this level of recursion
@@ -1741,7 +1795,7 @@ sub readConfig ($$) {
                 }
 
             } else {
-                printlog "ERROR: Invalid line: '$_'" . confLine(), 1;
+                printError "Invalid line: '$_'" . confLine();
                 $rc += 1;
             }
 
@@ -1761,7 +1815,7 @@ sub readConfig ($$) {
 
     if (!open CONFIG, '<', $cfile) {
         # Shouldn't happen as we've already tested for readability 
-        printlog "ERROR: failed to open configuration file '$cfile'\n", 1;
+        printError "Failed to open configuration file '$cfile'\n";
         return (1, {});
     }
     my ($rc, $confoptRef) = readContext('general');
@@ -1792,10 +1846,10 @@ sub processOptions () {
     # Default options hard-coded here
     # -------------------------------
     my %defopt = ();    # default options
-    # output: for each of these, 0 means no (or minimal) output, 3 means lots, 
-    # (higher values for debugging only)
-    $defopt{verbose}        = 1;
-    $defopt{loglevel}       = 1;
+    # output: for each of these, 0 means no output, 1 gives errors only, 2 adds warning,
+    # 3 adds notes... (higher values for debugging only)
+    $defopt{verbose}        = 3;
+    $defopt{loglevel}       = 3;
     #
     $defopt{debug}          = '';
     $defopt{test}           = 0;          # a non-zero value indicates which test to run
@@ -1899,21 +1953,21 @@ sub processOptions () {
 
     my $errorcount = 0;
     my $warningcount = 0;
-    my $msgs = '';   # all messages printed from this subroutine
+#    my $msgs = '';   # all messages printed from this subroutine
 
-    # FIXME !! some messages/errors are added/printed elsewhere
-    # maybe need an 'error()' and 'warn()' routine that accumulate
-    # the messages globally and prepend 'ERROR: ' and 'WARNING: '
-    # Maybe just for the config validation?
-    sub plpo ($;$$) {
-        # Special version of printlog for use in processOptions: 
-        # also adds the text to $msgs
-        my $text   = shift;
-        my $plevel = shift // 1;
-        my $llevel = shift // $plevel;
-        printlog $text, $plevel,$llevel;
-        $msgs .= $text;
-    }
+#    # FIXME !! some messages/errors are added/printed elsewhere
+#    # maybe need an 'error()' and 'warn()' routine that accumulate
+#    # the messages globally and prepend 'ERROR: ' and 'WARNING: '
+#    # Maybe just for the config validation?
+#    sub plpo ($;$$) {
+#        # Special version of printlog for use in processOptions: 
+#        # also adds the text to $msgs
+#        my $text   = shift;
+#        my $plevel = shift // 1;
+#        my $llevel = shift // $plevel;
+#        printlog $text, $plevel,$llevel;
+#        $msgs .= $text;
+#    }
 
     # Block to limit the scope of the SIGWARN override which traps warnings from GetOptions
     {
@@ -1923,15 +1977,13 @@ sub processOptions () {
         my $GOok = GetOptions(\%cmdopt, @GOarray);
         if (!$GOok) {
             foreach my $error (@GOerrors) {
-                intro();
-                plpo "ERROR: $error", 1;
+                printError $error;
             }
             $errorcount += @GOerrors;
         }
         if (@ARGV) {
-            intro();
-            plpo "ERROR: Unexpected word(s) on the command line: " .
-                join(', ', map {"'$_'"} @ARGV) . "\n", 1;
+            printError "Unexpected word(s) on the command line: " .
+                join(', ', map {"'$_'"} @ARGV) . "\n";
             $errorcount += @ARGV;
         }
 #        return $errorcount if $errorcount;
@@ -1945,8 +1997,7 @@ sub processOptions () {
         $warningcount += $w;
         $cmdopt{$option} = $value;
         if ($msg) {
-            intro();
-            plpo "$msg (on command line)\n", 1;
+            printMsg "$msg (on command line)\n";
         }
     }
 #    return $errorcount if $errorcount;
@@ -1969,8 +2020,7 @@ sub processOptions () {
             (my $rc, %confopt) = readConfig($cmdopt{config}, \@GOarray);    
             return $rc if $rc;
         } else {
-            intro();
-            plpo "ERROR: Configuration file '$cmdopt{config}' can not be read\n", 1,1;
+            printError "Configuration file '$cmdopt{config}' can not be read\n";
             return 1;
         }
     }
@@ -2001,8 +2051,7 @@ sub processOptions () {
     # Check for missing options at general level
     foreach my $ropt (@ReqOpt) {
         unless ($Opt{$ropt}) {
-            intro();
-            plpo "ERROR: Required option '$ropt' is missing\n", 1;
+            printError "Required option '$ropt' is missing\n";
             $errorcount += 1;
         }
     }
@@ -2033,8 +2082,7 @@ sub processOptions () {
                 exit EXITNOLOCK;
             } 
         } else {
-            intro();
-            printit "ERROR: Logfile '$Opt{logfile}' (option 'logfile') can not be written\n", 1;
+            printError "Logfile '$Opt{logfile}' (option 'logfile') can not be written\n";
             $Opt{loglevel} = 0;
             $errorcount += 1;
         }
@@ -2049,8 +2097,8 @@ sub processOptions () {
 
     # lockfile option is obsolete
     if ($Opt{lockfile}) {
-        plpo "NOTE: Option 'lockfile' is no longer used, and will be ignored.\n" .
-                 "      It will become invalid in the future: please remove it.\n";
+        printWarning "Option 'lockfile' is no longer used, and will be ignored.\n" .
+            "It will become invalid in the future: please remove it.\n";
         delete $Opt{lockfile};
     }
 
@@ -2059,8 +2107,8 @@ sub processOptions () {
         foreach my $ropt (@DestReqOpt) {
             #debug "checking $ropt for dest $dest->{location}\n", 'pO';
             unless ($Opt{$ropt} or ${$dest->{options}}{$ropt}) {
-                plpo "ERROR: Required option '$ropt' is missing " .
-                    "for destination '$dest->{location}'\n", 1;
+                printError "Required option '$ropt' is missing " .
+                    "for destination '$dest->{location}'\n";
                 $errorcount += 1;
             }
         }
@@ -2073,17 +2121,17 @@ sub processOptions () {
         # Note that we don't attempt to validate any of the email settings --
         # that's what the email-test option is for.
     } elsif ($Opt{'email-test'}) {
-        plpo "ERROR: Option 'email-to' (and possibly other 'email-xxx' options) " .
+        printError "Option 'email-to' (and possibly other 'email-xxx' options) " .
             "must be given when using 'email-test'\n";
         $errorcount += 1;
     }
 
     # Parse general-level specs
     if ($Opt{specs}) {
-        my ($w, $e, $msg, $rawspecs, @pspecs) = processSpecs($Opt{specs});
+        my ($w, $e, $rawspecs, @pspecs) = processSpecs($Opt{specs});
         $errorcount += $e;
         $warningcount += $w;
-        plpo "$msg\n" if $msg;
+        #plpo "$msg\n" if $msg;
         $Opt{pspecs} = \@pspecs if !$e;
         $Opt{specs} = $rawspecs if !$e;
     }
@@ -2093,14 +2141,18 @@ sub processOptions () {
     if ($Opt{source}) {
         foreach my $src (@{$Opt{source}}) {
             $src->{location} = safeAbsPath($src->{location});
-            if (rsyncReadable($src->{location})) {
+            my ($rrrc, $rrrc2) = rsyncReadable($src->{location});
+            if ($rrrc == 0) {
                 $readableSources += 1; 
                 $src->{readable} = 1;
             } else {
-                plpo "WARNING: Source '$src->{location} can not be read\n", 1;
+                printWarning "Source '$src->{location} can not be read" .
+                    ($rrrc2 eq '' ? '' : " ($ErrorCodes{$rrrc2})") .
+                    "\n";
                 $warningcount += 1;
                 $src->{readable} = 0;
             }
+            return ++$errorcount, $warningcount if $Interrupted;
         }
     }
 
@@ -2120,14 +2172,18 @@ sub processOptions () {
             foreach my $src (@{$options->{source}}) {
                 $src->{location} = safeAbsPath($src->{location});
                 $destInfo->{source}{$src->{location}}{result} = 'not attempted';
-                if (rsyncReadable($src->{location})) {
+                my ($rrrc, $rrrc2) = rsyncReadable($src->{location});
+                if ($rrrc == 0) {
                     $readableSubSources += 1; 
                 } else {
-                    plpo "WARNING: Source '$src->{location}' can not be read.\n", 1;
+                    printWarning "Source '$src->{location}' can not be read" .
+                        ($rrrc2 eq '' ? '' : " ($ErrorCodes{$rrrc2})") .
+                        "\n";
                     $warningcount += 1;
                     $destInfo->{source}{$src->{location}}{result} = 'not readable';
                     $AnyDestFailed = 1;
                 }
+                return ++$errorcount, $warningcount if $Interrupted;
             }
         } else {
             # This destination has no sources of its own -- use the general-level ones
@@ -2142,35 +2198,39 @@ sub processOptions () {
             }
         }
         # Check that destination is writable
-        if (rsyncWritable($dest->{location})) {
+        my ($rwrc, $rwrc2) = rsyncWritable($dest->{location});
+        if ($rwrc == 0) {
             if ($readableSubSources) {
                 $writableDests += 1;
                 # It's a good destination, so parse any specs
                 if ($options->{specs}) {
-                    my ($w, $e, $msg, $rawspecs, @pspecs) = processSpecs($options->{specs});
+                    my ($w, $e, $rawspecs, @pspecs) = processSpecs($options->{specs});
                     $errorcount += $e;
                     $destError = 1 if $e;
                     $warningcount += $w;
-                    plpo "$msg\n" if $msg;
+                    #plpo "$msg\n" if $msg;
                     $options->{pspecs} = \@pspecs if !$e;
                     $options->{specs} = $rawspecs if !$e;
                 }
             } else {
-                plpo "WARNING: None of the sources specified for destination '$absdest'" . 
-                    " are readable\n", 1;
-                plpo "         The whole destination will be skipped\n", 1;
+                printWarning "None of the sources specified for destination '$dest->{location}'" . 
+                    " are readable\n" . 
+                    "The whole destination will be skipped\n";
             }
         } else {
-            plpo "WARNING: Destination '$dest->{location}' is not available\n" .
-                    "         as a writable directory\n", 1;
+            printWarning "Destination '$dest->{location}' is not available\n" .
+                    "as a writable directory" .
+                    ($rwrc2 eq '' ? '' : " ($ErrorCodes{$rwrc2})") .
+                    "\n";
             $warningcount += 1;
             $Summary{$dest->{location}}{result} = 'not available';
             $AnyDestFailed = 1;
         }
+        return ++$errorcount, $warningcount if $Interrupted;
     }
 #print "Summary as created: ", Dumper(\%Summary);
     if ($writableDests == 0) {
-        plpo "ERROR: None of the destinations specified is available\n", 1;
+        printError "None of the destinations specified is available\n";
         $errorcount += 1;
         $destError = 1;
     }
@@ -2208,8 +2268,8 @@ sub processOptions () {
             }
         }
         if (!$somethingToDo) {
-            plpo "ERROR: All destination/source combinations are remote/remote -- " . 
-                "can not continue\n", 1;
+            printError "All destination/source combinations are remote/remote -- " . 
+                "can not continue\n";
             $errorcount += 1;
         }
     }
@@ -2229,7 +2289,7 @@ sub processOptions () {
 #   debug "Validated final options: " . join(' ', 
 #       map {$_ . '=' . $Opt{$_}} sort keys %Opt) . "\n", 'pO';
 
-    return $errorcount, $warningcount, $msgs;
+    return $errorcount, $warningcount;
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -2393,8 +2453,8 @@ Tuning options
 Helpful options
 --help                       display this help message and stop
 --version                    display version number only stop
---verbose      0..3       ds amount of output displayed (default: 1) 
---loglevel     0..3       ds amount of logging information (default: 1) 
+--verbose      0..9       ds amount of output displayed (default: 3) 
+--loglevel     0..9       ds amount of logging information (default: 3) 
 --[no]dry-run                make no actual changes (default: nodry-run) 
 Rsync options
 --rsync-cmd    file       ds location of the rsync programme (default: rsync) 
@@ -2493,8 +2553,8 @@ sub deleteSnapshot ($) {
     debug "rsync returned $rc, '$rc2'\n", 'dS';
     # This returns no error if the snapshot didn't exist, which is fine
     if ($rc) {
-        printlog "ERROR: failed to delete remote snapshot '$S{$snapshot}{name}' " .
-            "from '$S{$snapshot}{path}' (code $rc)", 1,1;
+        printError "Failed to delete remote snapshot '$S{$snapshot}{name}' " .
+            "from '$S{$snapshot}{path}' (code $rc)";
         return 1;
     }
     delete $S{$snapshot};   # delete it from %S too
@@ -2576,10 +2636,10 @@ sub markOrDeleteSnapshot ($$$) {
     } else {
         if ($sourcesCompleted == 0) {
             $action = $Opt{'all-failed'};
-            printlog "NOTE: All sources failed, will $action snapshot\n", 1;
+            printNote "All sources failed, will $action snapshot\n";
         } else {
             $action = $Opt{'some-failed'};
-            printlog "NOTE: Some sources failed, will $action snapshot\n", 1;
+            printNote "Some sources failed, will $action snapshot\n";
         }
     }
 
@@ -2591,9 +2651,9 @@ sub markOrDeleteSnapshot ($$$) {
     if ($action eq 'delete') {
         my $rc = deleteSnapshot($snapshot);
         if ($rc == 0) {
-            printlog "NOTE: Snapshot deleted\n", 1;
+            printNote "Snapshot deleted\n";
         } else {
-            printlog "WARNING: Snapshot could not be deleted (error $rc)\n", 1;
+            printWarning "Snapshot could not be deleted (error $rc)\n";
         }
     } else {
         # Mark it as unfinished
@@ -2763,18 +2823,19 @@ sub displaySummary () {
     # Send email if any or all destinations failed.
     if (exists $Opt{'email-to'} and 
         ($AllDestsFailed or ($Opt{'email-if'} eq 'any' and $AnyDestFailed))) {
-        my $rc = emailSend("$Script error", 
+        my $rc = emailSend("$Script error on " . hostname, 
             "This is an error message from $Script running on " . hostname . "." .
             $text .
             formatOptions() .
+            $Messages .
             ($Opt{validLogfile}  
                 ? "\nFor more details see the logfile (" . hostname .  ":$Opt{validLogfile}).\n" 
                 : "\n")
         );
         if ($rc) {
-            printlog "\nWARNING: Could not send email to @{$Opt{'email-to'}}.\n", 1;
+            printWarning "\nCould not send email to @{$Opt{'email-to'}}.\n";
         } else {
-            printlog "\nNOTE: Email sent to @{$Opt{'email-to'}}.\n", 1;
+            printNote "\nEmail sent to @{$Opt{'email-to'}}\n";
         }
     }
 }
@@ -2959,9 +3020,8 @@ sub writeMetadata ($) {
     $succeeded = 1 if !$rc;
 
     if (!$succeeded) {
-        printlog "WARNING: Unable to create metadata file '$mdfile'\n";
-        printlog "         Metadata is:\n", 1;
-        printlog "$json\n\n", 1;
+        printWarning "Unable to create metadata file '$mdfile'\n" . 
+        "Metadata is:\n" . "$json\n\n";
     }
 }
 
@@ -3082,8 +3142,8 @@ sub getSnapshotList ($) {
             if (!exists $S{$s}{name} or    # non-duplicate
                 $S{$s}{note}           ) { # duplicate, but existing one has a note, so overwrite it
                 if ($S{$s}{name}) {
-                    printlog "\nWARNING: Snapshot $S{$s}{name} is a duplicate of $+{name} -\n" .
-                        "         $S{$s}{name} will be ignored\n";
+                    printWarning "\nSnapshot $S{$s}{name} is a duplicate of $+{name} -\n" .
+                        "$S{$s}{name} will be ignored\n";
                 }
                 # Add information about the snapshot to the global hash
                 $S{$s} = {
@@ -3098,8 +3158,8 @@ sub getSnapshotList ($) {
                 };
             } else {
                 # New snapshot is a duplicate without a note -- ignore it
-                printlog "\nWARNING: Snapshot $+{name} is a duplicate of $S{$s}{name} -\n" .
-                    "         $+{name} will be ignored\n";
+                printWarning "\nSnapshot $+{name} is a duplicate of $S{$s}{name} -\n" .
+                    "$+{name} will be ignored\n";
             }
         } else {
             debug "unmatched: $_\n", 'gSL';
@@ -3122,7 +3182,7 @@ sub getSnapshotList ($) {
                 }
                 #printlog "S in rM: " . Dumper($S{$s});
             } else {
-                printlog "WARNING: snapshot '$template-$md->{timestamp}' is missing\n", 1;
+                printWarning "Snapshot '$template-$md->{timestamp}' is missing\n";
             }
         }
     }
@@ -4343,7 +4403,7 @@ sub runRsync ($\@$) {
 
         # Skip this source if it's been marked as unreadable
         if ($Summary{$dest}{source}{$location}{result} ne 'not attempted') {
-            printlog "WARNING: skipping source '$location' because it is not readable\n", 1;
+            printWarning "Skipping source '$location' because it is not readable\n";
             $succeeded = 0;
             next SOURCE;
         }
@@ -4351,8 +4411,8 @@ sub runRsync ($\@$) {
         # Source and destination can not both be remote (rsync limitation)
         my $remoteSource = remote($location);
         if ($remoteDest and $remoteSource) {
-            printlog "WARNING: source '$location' and destination '$dest' are both remote.\n";
-            printlog "         rsync can not do that -- combination has been skipped\n";
+            printWarning "Source '$location' and destination '$dest' are both remote.\n" . 
+                "rsync can not do that -- the combination has been skipped\n";
             $succeeded = 0;
             next SOURCE;
         }
@@ -4371,8 +4431,8 @@ sub runRsync ($\@$) {
 
         # Set up verbosity option
         my $verbose = '';
-        $verbose = '--verbose' if $Opt{verbose} > 2;
-        $verbose .= ' --verbose --stats' if $Opt{verbose} > 3;  
+        $verbose = '--verbose' if $Opt{verbose} > 3;
+        $verbose .= ' --verbose --stats' if $Opt{verbose} > 4;  
 
         # Add the include/exclude options -- there may be several of each
         # Note that each file/directory is double-quoted to allow escapes to work
@@ -4435,9 +4495,9 @@ sub runRsync ($\@$) {
         # Run rsync, dealing with various types of error
         while ($keepTrying and !$Interrupted) {
             $tries += 1;
-            printlog "Running rsync" . ($maxTries>1 ? " -- try $tries of $maxTries" : "") . "\n", 3;
+            printlog " (try $tries of $maxTries)\n", 3 if $maxTries > 1;
             my $rsyncInterrupted = '';     # only true if interrupted during the main rsync  
-            my ($rc, $rc2, $statsR) = systemCall($Opt{'rsync-cmd'}, $args, 3,3);
+            my ($rc, $rc2, $statsR) = systemCall($Opt{'rsync-cmd'}, $args, 4,1);
             $rsyncInterrupted = $Interrupted;
             debug "after rsync rc=$rc rc2='$rc2' rsyncInterrupted='$rsyncInterrupted'\n", 'rR';
             #printlog "source stats: " . Dumper($statsR), 1;
@@ -4453,8 +4513,8 @@ sub runRsync ($\@$) {
                 }
                 #* source not found
                 when (($_ == 23) and ($rc2 eq 'nofileordir')) {
-                    printlog "NOTE: Source '$location' could not be read -- " . 
-                        "will continue with any other sources\n", 1;
+                    printNote "Source '$location' could not be read -- " . 
+                        "will continue with any other sources\n";
                     $keepTrying = 0;    # don't try this source again
                     $succeeded = 0;
                     $srcInfo->{result} = 'source not found';
@@ -4463,7 +4523,7 @@ sub runRsync ($\@$) {
                 when ([22, 23, 24]) {   
                     # Errors on some files such as problems with permissions,
                     # or files that have vanished -- carry on
-                    printlog "NOTE: Some errors from rsync have been ignored\n", 2;
+                    printNote "Some errors from rsync have been ignored\n";
                     $keepTrying = 0;
                     $sourcesSucceeded += 1;
                     $srcInfo->{result} = 'succeeded (minor errors ignored)';
@@ -4471,8 +4531,8 @@ sub runRsync ($\@$) {
                 }
                 #* interrupted
                 when ($rsyncInterrupted ne '' or $rc2 eq 'interrupted') {
-                    printlog "NOTE: rsync was interrupted with signal '$rsyncInterrupted' -- " .
-                        "the snapshot will be kept to allow restart\n", 1;
+                    printNote "rsync was interrupted with signal '$rsyncInterrupted' -- " .
+                        "the snapshot will be kept to allow restart\n";
                     $keepTrying = 0;
                     $succeeded = 0;
                     $restartable = 1;
@@ -4481,42 +4541,41 @@ sub runRsync ($\@$) {
                 }
                 #* timed out -- continue with other sources/destinations
                 #               which may use a different route
-                when (30) {
+                when (($_ == 30) or ($rc2 eq 'timedout')) {
                     $keepTrying = 0;
                     $succeeded = 0;
                     $restartable = 1;
                     $srcInfo->{result} = 'timed out';
                     if ($remoteDest) {
                         # lost connection to remote destination 
-                        printlog 
-                            "ERROR: rsync timed out: probably lost connection to destination\n", 1;
+                        printError "rsync timed out: probably lost connection to destination\n";
                         $lostDest = 1;
                         last SOURCE;
                     } elsif ($remoteSource) {
-                        printlog "ERROR: rsync timed out: probably lost connection to source\n", 1;
+                        printError "rsync timed out: probably lost connection to source\n";
                     } else {
                         # local/local rsync timed out -- why would that happen?
                         # - perhaps when using NFS, for example.
-                        printlog "ERROR: rsync timed out\n", 1;
+                        printError "rsync timed out\n";
                     }
                 }
                 #* errors that can be recovered from -- i.e. lack of space (sometimes)
                 when (($_ == 12) and ($rc2 eq 'diskfull') and ($keepTrying > 0)) {
                     # Try to make some space before having another go
-                    printlog "WARNING: destination '$dest' is full -- " . 
+                    printWarning "Destination '$dest' is full -- " . 
                         "will delete an old snapshot and try again\n";
                     debug "_=$_ rc=$rc rc2=$rc2 keepTrying=$keepTrying\n", 'rR';
                     my $deleted = deleteOldSnapshots(@expirableSnapshots, 1);
                     if ($deleted >= 1) {
                         # More space freed, so try again
-                        printlog "NOTE: Old snapshot deleted successfully -- continuing\n";
+                        printNote "Old snapshot deleted successfully -- continuing\n";
                         $deletions += $deleted;
                         $deletionsAllSources += $deleted;
                         $keepTrying -= $deleted;
                         $srcInfo->{result} = 'failed (will try again)';
                     } else {
                         # No snapshots deleted, so stop trying
-                        printlog "ERROR: unable to delete old snapshot to make space\n", 1;
+                        printError "Unable to delete old snapshot to make space\n";
                         $keepTrying = 0;
                         $succeeded = 0;
                         $ExitCode = EXITRSYNC;
@@ -4532,7 +4591,7 @@ sub runRsync ($\@$) {
                 # -1
                 # etc.
                 default {
-                    printlog "ERROR: rsync reported a serious problem ($rc / '$rc2')\n", 1;
+                    printError "rsync reported a serious problem ($rc / '$rc2')\n";
                     $keepTrying = 0;
                     $succeeded = 0;
                     $ExitCode = $rc >= 1000 ? EXITINT : EXITRSYNC;
@@ -4545,9 +4604,9 @@ sub runRsync ($\@$) {
         } # while keep trying for this source
 
         if ($deletions) {
-            printlog "NOTE: $deletions expirable snapshots were deleted while " . 
-                "processing source '$location'\n", 2;
-            printlog "(dry run: no snapshots actually deleted)\n", 2 if $Opt{'dry-run'};
+            printNote "$deletions expirable snapshots were deleted while " . 
+                "processing source '$location'\n";
+            printlog "(dry run: no snapshots actually deleted)\n", 3 if $Opt{'dry-run'};
         }
 
         $srcInfo->{stop} = time();
@@ -4558,19 +4617,17 @@ sub runRsync ($\@$) {
         printlog "\nSuccessfully created new snapshot '$S{$snapshot}{fullname}'" .   
             ($Opt{'dry-run'} ? "\n(dry run: no snapshot actually created)" : '') . "\n\n", 1;
         if ($deletionsAllSources) {
-            printlog "NOTE: $deletionsAllSources expirable snapshots were deleted" . 
-                " from destination '$dest'\n", 2;
-            printlog "(dry run: no snapshots actually deleted)\n", 2 if $Opt{'dry-run'};
+            printNote "$deletionsAllSources expirable snapshots were deleted" . 
+                " from destination '$dest'\n";
+            printlog "(dry run: no snapshots actually deleted)\n", 3 if $Opt{'dry-run'};
         }
         $Summary{$dest}{result} = 'succeeded';
     } else {
-        printlog "\nWARNING: rsync did NOT create a complete new snapshot on" . 
-            " destination '$dest'\n", 1;
-        printlog   "         $sourcesSucceeded out of " . @{$Opt{source}} . 
-            " sources were completed\n", 1;
+        printWarning "\nrsync did NOT create a complete new snapshot on destination '$dest':\n" .
+            "$sourcesSucceeded out of " . @{$Opt{source}} . " sources were completed\n";
         if ($restartable and $Opt{'allow-restart'}) {
-            printlog "NOTE: Unfinished snapshot has been left to allow the run to be restarted\n",1;
-            printlog "      (use the --restart option to do so)\n", 1;
+            printNote "Unfinished snapshot has been left to allow the run to be restarted\n" .
+                "(use the --restart option to do so)\n";
             $Summary{$dest}{result} = 'unfinished (restartable)';
         } else {
             $Summary{$dest}{result} = "failed -- $sourcesSucceeded sources succeeded";
@@ -4598,7 +4655,7 @@ sub processDestination ($) {
 
     # If there are no previous snapshots, ignore the 'restart' option
     if ($Opt{restart} and !%S) {
-        printlog "NOTE: No previous snapshots found, so 'restart' option will be ignored\n", 1;
+        printNote "No previous snapshots found, so 'restart' option will be ignored\n";
         $Opt{restart} = 0;  # don't worry, this copy of %Opt is local to this destination
     }
 
@@ -4611,7 +4668,7 @@ sub processDestination ($) {
                 $S{$S[0]}{unfinished} and 
                 ($now - $S[0]) < ($Opt{'min-interval'} * MINUTE)) {
                 if (!$Opt{restart}) {
-                    printlog "\nNOTE: Automatically restarting recent unsuccessful snapshot", 1;
+                    printNote "\nAutomatically restarting recent unsuccessful snapshot";
                     $Opt{restart} = 1;
                 }
             } else {
@@ -4621,7 +4678,7 @@ sub processDestination ($) {
                     $s += 1;
                 }
                 if ($s < @S and ($now - $S[$s]) < ($Opt{'min-interval'} * MINUTE)) {
-                    printlog "\nNOTE: It has been less than $Opt{'min-interval'} minutes\n" . 
+                    printNote "\nIt has been less than $Opt{'min-interval'} minutes\n" . 
                     "      since the last successful snapshot: skipping this destination\n", 1;
                     $Summary{$dest}{result} = 'skipped';
                     $AllDestsFailed = 0;    # counts as successful
@@ -4680,10 +4737,12 @@ sub processDestination ($) {
     my $lostDest = 0;
     if ($Opt{snapshot}) {
         if ($deleteNew and $Opt{delete} and $Opt{'delete-cp'}) {
-            printlog "NOTE: The new snapshot would be immediately deleted,\n" . 
-                     "      so rsync will NOT be run for this destination\n", 1;
+            printNote "The new snapshot would be immediately deleted,\n" . 
+                "so rsync will NOT be run for this destination\n";
             # Tidy up the empty directory we created for it
             deleteSnapshot($S[0]);
+            $Summary{$dest->{location}}{result} = 'not needed';
+            # note that it's not marked as failed
         } else {
             my @expirableSnapshots = getExpirableSnapshots($Opt{pspecs}, @cSpecs, $now);
             # Run rsync to create the new snapshot
@@ -4695,7 +4754,7 @@ sub processDestination ($) {
             }
         }
     } else {
-        printlog "NOTE: Option 'no-snapshot' given, so no new snapshot will be created\n", 2;
+        printNote "Option 'no-snapshot' given, so no new snapshot will be created\n";
     }
 
     if (!$Interrupted) {
@@ -4710,7 +4769,7 @@ sub processDestination ($) {
             # Now we can actually delete things
             deleteSnapshots(@D, @cSpecs, $deleteNew);
         } else {
-            printlog "NOTE: Option 'no-delete' given, so no existing snapshots will be deleted\n",2;
+            printNote "Option 'no-delete' given, so no existing snapshots will be deleted\n";
         }
     }
 
@@ -4784,6 +4843,7 @@ sub systemCall ($$$$;$$) {
             } elsif (/Literal data: (\d+)/) {
                 $stats{tfrbytes} = $1;
             }
+            # direct the output as required
             if (ref($stdoutRef) eq 'ARRAY') {
                 push @$stdoutRef, $_; 
             } elsif (ref($stdoutRef) eq 'GLOB') {
@@ -4804,28 +4864,37 @@ sub systemCall ($$$$;$$) {
         $outputStarted = 0;
         while (<CATCHERR>) {
             if (!$outputStarted) {
-                printlog "------- $cmd errors start\n", $stderrLevel unless $stderrRef;
+                #printlog "------- $cmd errors start\n", $stderrLevel unless $stderrRef;
+                printError "------- $cmd errors start\n" unless $stderrRef;
                 $outputStarted = 1;
             }
-            # scan for specific errors
+            # scan for specific errors (see %ErrorCodes)
             if (/No space left on device/i) {    # (this text is not always there)
                 $rc2 = 'diskfull';
             } elsif (/No such file or directory/i) {
                 $rc2 = 'nofileordir';
+            } elsif (/Could not resolve hostname/i) {
+                $rc2 = 'nohost';
             } elsif (/received SIGINT/i) {
                 $rc2 = 'interrupted';
+            } elsif (/Connection timed out/i) {
+                $rc2 = 'timedout';
+            } elsif (/Permission denied/i) {
+                $rc2 = 'permission';
             }
+            # direct the output as required
             if (ref($stderrRef) eq 'ARRAY') {
                 push @$stderrRef, $_; 
             } elsif (ref($stderrRef) eq 'GLOB') {
                 print $stderrRef $_;
             } else {
                 # FIXME do I ever need to write to stderr AND array/file?
-                printlog $_, $stderrLevel;
+                printError $_; #, $stderrLevel;
             }
         }
         if ($outputStarted) {
-            printlog "------- $cmd errors end\n", $stderrLevel unless $stderrRef;
+            #printlog "------- $cmd errors end\n", $stderrLevel unless $stderrRef;
+            printError "------- $cmd errors end\n" unless $stderrRef;
         }
     }
     if ($rc == -1) {
@@ -4866,19 +4935,18 @@ my $startTime = time();
 
 # No options supplied -- display help and exit
 if (@ARGV == 0) {
-    intro();
-    printit "ERROR: No options given\n"; 
+    printError "No options given\n"; 
     showHelp;
     exit EXITCONFIG;
 }
 
 # Get and validate options
-my ($e, $w, $msgs) = processOptions();
+my ($e, $w) = processOptions();
+checkInterruption('while checking options');
 if ($e > 0) {
-    intro();
-    printlog "ERROR: Problems found in configuration -- stopping\n", 1;
+    printError "Problems found in configuration -- stopping\n";
     printlog "Try '$Script --help' or 'man $Script' for help.\n", 1;
-    emailConfigError($e, $w, $msgs);
+    emailConfigError($e, $w);
     logit '-'x80 . "\n", 1;
     exit EXITCONFIG;
 }
@@ -4919,7 +4987,7 @@ foreach my $dest (@{$Opt{destination}}) {
     last if $Interrupted;
     my $loc = $dest->{location};
     debug "running destination $loc ($Summary{$loc}{result})\n", 'ml';
-    next if $Summary{$loc}{result} ne 'not attempted';
+    next if $Summary{$loc}{result} ne 'not attempted';  # skip it if it's not available
     debug "...yes, really doing it", 'ml';
     local %Opt = %Opt;
     foreach my $destOpt (keys %{$dest->{options}}) {
@@ -4933,15 +5001,16 @@ foreach my $dest (@{$Opt{destination}}) {
         status($loc, @cSpecs);
     } else {
         processDestination($loc);
+        checkInterruption("while creating snapshot on destination '$loc'");
     }
 }
 
 displaySummary() if !$Opt{status};
 
-if ($Interrupted) {
-    printlog "\n(Interrupted with signal '$Interrupted')\n", 1;
-    $ExitCode = EXITINT if $ExitCode != EXITOK;
-}
+#if ($Interrupted) {
+#    printlog "\n(Interrupted with signal '$Interrupted')\n", 1;
+#    $ExitCode = EXITINT if $ExitCode != EXITOK;
+#}
 my $stopTime = time();
 printlog "\n$Script stopping at " . (strftime "%H:%M:%S", localtime) . 
     " with exit code $ExitCode\n", 1,1;

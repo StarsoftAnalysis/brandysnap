@@ -507,13 +507,16 @@ Prints out a brief summary of options, and then stops.
 
 Prints out the brandysnap version number only and then stops.
 
-=item B<verbose I<0..3>>
+=item B<verbose I<0..9>>
 
-This options sets the verbosity of the printed output, on a scale from B<0> to B<3>.  Use higher values to see more about what brandysnap and rsync are doing.  B<verbose> can also be spelled B<verbosity> (default: B<1>)
+This options sets the verbosity of the printed output, on a scale from B<0> to B<9>.  
+Use higher values to see more about what brandysnap and rsync are doing.  
+B<verbose> can also be spelled B<verbosity> (default: B<3>)
 
-=item B<loglevel I<0..3>>     
+=item B<loglevel I<0..9>>     
 
-Sets the verbosity level of output in the log file, on a scale from B<0> to B<3>.  If no B<logfile> is defined, this option is effectively set to B<0>.  (default: B<1>)
+Sets the verbosity level of output in the log file, on a scale from B<0> to B<9>.  
+If no B<logfile> is defined, this option is effectively set to B<0>.  (default: B<3>)
 
 =item B<[no]dry-run>
 
