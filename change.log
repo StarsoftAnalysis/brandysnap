@@ -1,6 +1,16 @@
 Changelog for brandysnap
 ========================
 
+0.2.12
+* Check for and delete any completely empty snapshots
+* Change the way existing snapshots are counted: for example if the spec calls
+  for 7 snapshots in a week, and there are 3 last week and 4 the week before,
+  then that now meets the requirement; previously the algorithm would look
+  for a single week with 7 snapshots.
+* Bug fixes:
+  - display summary correctly when there are 'old' but undeleted snapshots.
+  - deal with zero-size sources as failures
+
 0.2.11
 * Allow use of 'notes' on snapshot names to prevent deletion,
   and tweak the code to make noted snapshots more likely to be kept.
