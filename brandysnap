@@ -82,7 +82,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-our $VERSION = '0.2.12';
+our $VERSION = '0.2.13';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -4613,6 +4613,7 @@ sub runRsync ($\@$) {
         while ($keepTrying and !$Interrupted) {
             $tries += 1;
             printlog " (try $tries of $maxTries)\n", 3 if $maxTries > 1;
+            printlog "Running rsync command: '$Opt{'rsync-cmd'} $args'\n", 1;
             my $rsyncInterrupted = '';     # only true if interrupted during the main rsync  
             my ($rc, $rc2, $statsR) = systemCall($Opt{'rsync-cmd'}, $args, 4,1);
             $rsyncInterrupted = $Interrupted;
