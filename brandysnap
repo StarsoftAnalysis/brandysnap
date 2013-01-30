@@ -82,7 +82,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-our $VERSION = '0.2.12';
+our $VERSION = '0.2.13-next';
 
 # A copy of @ARG before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -2698,6 +2698,23 @@ sub longestName () {
 
 #---------------------------------------------------------------------------------------------------
 
+sub averageSnapshotBytes () {
+    # Get average size of previous snapshots
+    my ($count, $totsize) = (0,0);
+    foreach my $s (sort keys %S) {
+        if (defined $S{$s}{totbytes} and $S{$s}{totbytes} > 0) { # only count non-empty ones
+            $count += 1;
+            $totsize += $S{$s}{totbytes};
+        }
+        debug "count=$count this=$S{$s}{totbytes} tot=$totsize\n", 'aSB';
+    }
+    my $sAvBytes = 0;
+    $sAvBytes = floor($totsize / $count) if $count > 0;
+    return $sAvBytes;
+}
+
+#---------------------------------------------------------------------------------------------------
+
 sub status ($;\@) {
     
     # Print a status report on existing snapshots for a single destination
@@ -4480,12 +4497,12 @@ sub newSnapshot ($$) {
 #---------------------------------------------------------------------------------------------------
 
 sub addStats ($$) {
-    # Add statistics from one source into the totals for the destination
-    my $destStatsR = shift;
-    my $srcStatsR  = shift;
+    # Add statistics from one source into the totals for the snapshot
+    my $snapshotR = shift;
+    my $srcStatsR = shift;
     debug "adding stats: " . Dumper($srcStatsR), 'aS';
     foreach my $key (keys %$srcStatsR) {
-        $$destStatsR{$key} += $$srcStatsR{$key};
+        $$snapshotR{$key} += $$srcStatsR{$key};
     }
 }
 
@@ -4504,13 +4521,14 @@ sub runRsync ($\@$) {
 
     my $remoteDest = remote($dest);
 
+    my $sAvBytes = averageSnapshotBytes();  # average size of previous snapshots
+
     my $succeeded = 1;          # stays true if ALL sources are copied successfully
     my $sourcesSucceeded = 0;   # count of successfully backed-up sources
     my $restartable = 0;        # becomes true if unfinished snapshot should be kept for restarting
     my $lostDest = 0;           # becomes true if we lose connection to destination
 
     my $deletionsAllSources = 0;
-    my %destStats;
 
     # Loop through sources one at a time
     SOURCE:
@@ -4572,6 +4590,7 @@ sub runRsync ($\@$) {
         # Loop to create as many link-dests as required.
         # Previous unfinished snapshots are linked in case they contain useful
         # files, but don't count towards the total.
+        # Experimental: snapshots less than a % of the average size are linked but not counted
         # Note that rsync limits the number of link-dests to 20.
         my $ld    = 0; # number of 'good' link-dests created
         my $s = 1;  # start at snapshot 1 (i.e. skip the 0th one that we're creating now)
@@ -4579,7 +4598,8 @@ sub runRsync ($\@$) {
         while ($ld < $Opt{ldcount} and $s <= min($#S, 20)) {
             debug "linking: s=$s S[s]=$S[$s] S{S[s]}{name}=$S{$S[$s]}{name}\n", 'rR';
             $linkdest .= "--link-dest='../../$S{$S[$s]}{name}/$subDir' ";
-            $ld += 1 if !$S{$S[$s]}{unfinished};
+            debug "sAvBytes=$sAvBytes   this s=$S{$S[$s]}{totbytes}\n", 'rR';
+            $ld += 1 if !$S{$S[$s]}{unfinished} and ($S{$S[$s]}{totbytes} > $sAvBytes*0.3);
             $s += 1;
         }
 
@@ -4619,6 +4639,15 @@ sub runRsync ($\@$) {
             debug "after rsync rc=$rc rc2='$rc2' rsyncInterrupted='$rsyncInterrupted'\n", 'rR';
             debug "source stats: " . Dumper($statsR), 'rR';
             given ($rc) {
+                #* source is empty (or apparently so)
+                #  (note that we test this first, even if rc==0)
+                when ($statsR->{totbytes} <= 0) {
+                    printError "Source '$location' appears to be empty -- " . 
+                        "will continue with any other sources\n";
+                    $keepTrying = 0;    # don't try this source again
+                    $succeeded = 0;
+                    $srcInfo->{result} = 'source is empty';
+                }
                 #* success
                 when (0) {
                 #when ($_ == 0 and (!($location =~ /cache/) or rand()>0.5 ))  # for debugging!
@@ -4635,14 +4664,6 @@ sub runRsync ($\@$) {
                     $keepTrying = 0;    # don't try this source again
                     $succeeded = 0;
                     $srcInfo->{result} = 'source not found';
-                }
-                #* source is empty (or apparently so)
-                when ($statsR->{totbytes} <= 0) {
-                    printError "Source '$location' appears to be empty -- " . 
-                        "will continue with any other sources\n";
-                    $keepTrying = 0;    # don't try this source again
-                    $succeeded = 0;
-                    $srcInfo->{result} = 'source is empty';
                 }
                 #* errors that can (usually) be ignored, treat as successful 
                 when ([22, 23, 24]) {   
@@ -4737,7 +4758,6 @@ sub runRsync ($\@$) {
         $srcInfo->{stop} = time();
     } # for each source
 
-    #printlog "dest stats: " . Dumper(\%destStats), 1;
     if ($succeeded) {
         printlog "\nSuccessfully created new snapshot '$S{$snapshot}{fullname}'" .   
             ($Opt{'dry-run'} ? "\n(dry run: no snapshot actually created)" : '') . "\n\n", 1;
