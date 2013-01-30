@@ -4633,6 +4633,7 @@ sub runRsync ($\@$) {
         while ($keepTrying and !$Interrupted) {
             $tries += 1;
             printlog " (try $tries of $maxTries)\n", 3 if $maxTries > 1;
+            printlog "Running rsync command: '$Opt{'rsync-cmd'} $args'\n", 1;
             my $rsyncInterrupted = '';     # only true if interrupted during the main rsync  
             my ($rc, $rc2, $statsR) = systemCall($Opt{'rsync-cmd'}, $args, 4,1);
             $rsyncInterrupted = $Interrupted;
