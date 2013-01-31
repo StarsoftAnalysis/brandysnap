@@ -506,7 +506,8 @@ sub bytes ($) {
     # Return '0 B' if size is zero or less
     # (it could be -1 for a new snapshot during a dry-run)
     my $n = shift;
-    return '0 B' if (!defined $n) or ($n <= 0);
+    return '' if (!defined $n) or ($n eq '');
+    return '0 B' if $n <= 0;
     my $base = 1024;
     my $mult = 0;
     while ($n >= $base) { 
@@ -1022,6 +1023,7 @@ sub getSnapshotSize ($) {
     my $snapshot = shift;
     my $totalBytes = 0;
     my $totalFiles = 0;
+    my $dirsOnly = 1;
     # Get rsync listing into an array
     my (@items, @errors);
     debug time2stamp($snapshot) . ": fullname=" . ($S{$snapshot}{fullname} // 'none!'), 'gSS';
@@ -1052,6 +1054,7 @@ sub getSnapshotSize ($) {
                     debug "t=$+{t} size=$+{size} name=$+{name}\n", 'gSS';
                     $totalBytes += diskSpace($+{size});
                     $totalFiles += 1;
+                    $dirsOnly = 0 if $+{t} eq '-' or $+{t} eq 'l';
                 } else {
                     # (ignore anything other than files and directories)
                     debug "ignoring non-file-or-dir $item\n", 'gSS'
@@ -1065,6 +1068,12 @@ sub getSnapshotSize ($) {
         # Error -- return -1
         printError "Unable to get the size of snapshot $S{$snapshot}{fullname}";
         ($totalBytes, $totalFiles) = (-1, -1);
+    }
+    # If a snapshot only contains empty directories, consider it empty
+    if ($dirsOnly) {
+        printWarning "Snapshot $S{$snapshot}{name} has only empty directories -" .
+        " its size will be set to zero\n";
+        return (0, 0);
     }
     return ($totalBytes, $totalFiles);
 }
@@ -1803,7 +1812,7 @@ sub readConfig ($$) {
                     $rc += $newrc;
                     #}
                 }
- # got to here
+ # got to here  FIXME
             } elsif (/^\s*<\/\s*(?<option>[[:alpha:]]*)[^>]*>/) {
                 # End of context: ignore the name -- just match on any </...>
                 if ($context eq 'general') {
@@ -2096,10 +2105,8 @@ sub processOptions () {
                 $| = 1;
                 select $oldfh;
             } else {
-                intro();
                 printit "\nCan not lock logfile '$Opt{logfile}'.\n" .
                     "$Script is probably already running with that logfile.\n\n", 1;
-                    #"If you're sure it isn't, delete the lock-file and try again.\n", 1;
                 close LOGFILE;
                 exit EXITNOLOCK;
             } 
@@ -2110,11 +2117,6 @@ sub processOptions () {
         }
     }
 
-#    return $errorcount if $errorcount;
-
-    # Now that we know the verbosity and logging options, 
-    # we can output the intro appropriately.
-    intro();
     logit "\nCommand line: $0 @ARGVcopy\n", 3;
 
     # lockfile option is obsolete
@@ -2135,7 +2137,6 @@ sub processOptions () {
             }
         }
     }
-#    return $errorcount if $errorcount;
     
     # Email options
     if ($Opt{'email-to'}) {
@@ -2250,13 +2251,11 @@ sub processOptions () {
         }
         return ++$errorcount, $warningcount if $Interrupted;
     }
-#print "Summary as created: ", Dumper(\%Summary);
     if ($writableDests == 0) {
         printError "None of the destinations specified is available\n";
         $errorcount += 1;
         $destError = 1;
     }
-#    return $errorcount if $errorcount;
 
     if (!$destError) {
         # Cross-check sources and destinations -- they can't all be remote
@@ -2295,7 +2294,6 @@ sub processOptions () {
             $errorcount += 1;
         }
     }
-#    return $errorcount if $errorcount;
     
     # --restart implies --snapshot and --min-interval=0
     $Opt{snapshot} = 1 if $Opt{restart};
@@ -2305,11 +2303,6 @@ sub processOptions () {
     # - these are not checked at all, just passed to rsync
 
     # $Opt{specs} is checked later
-
-#    return $errorcount if $errorcount;
-#
-#   debug "Validated final options: " . join(' ', 
-#       map {$_ . '=' . $Opt{$_}} sort keys %Opt) . "\n", 'pO';
 
     return $errorcount, $warningcount;
 }
@@ -2715,18 +2708,16 @@ sub averageSnapshotBytes () {
 
 #---------------------------------------------------------------------------------------------------
 
-sub status ($;\@) {
+sub statusold ($\@) {
     
     # Print a status report on existing snapshots for a single destination
     my $dest   = shift;
-    my @cSpecs;
-    @cSpecs    = @{(shift)} if @_;    # FIXME is cSpecs always supplied? probs below else
+    my @cSpecs = @{(shift)};
 
     my $count  = 0; # complete
     my $newcount = 0; # new-style totals (complete only)
     my $ucount = 0; # unfinished
     my $total  = 0;
-    #my $sumtotbytes = 0;
     my $sumtfrbytes = 0;
     my $sumtotfiles = 0;
     my $sumtfrfiles = 0;
@@ -2794,6 +2785,7 @@ sub status ($;\@) {
                     #$label = $cSpecs[$ci]->{rawspec};
                     #$label .= (' ' . $LevelName{$cSpecs[$ci]->{period}});
                 }
+                debug "adding: tb=$S{$s}{totbytes} fb=$S{$s}{tfrbytes} tf=$S{$s}{totfiles} ff=$S{$s}{tfrfiles}\n", 'status';
                 $count += 1;  # new + old style
                 $total       += $S{$s}{totbytes} if defined $S{$s}{totbytes};
                 $sumtfrbytes += $S{$s}{tfrbytes} if defined $S{$s}{tfrbytes};
@@ -2804,6 +2796,9 @@ sub status ($;\@) {
             #printlog sprintf("%-*s   %15s   %s\n", $nameLength, $name, 
             #    bytes($size) || 'empty', $label), $plevel,$llevel;
             #printlog "snapshot: " . Dumper($S{$s});
+
+            # TODO print each value if available...
+            #  
             if (defined $S{$s}{tfrfiles}) {
                 printlog sprintf("%-*s   %8s  %8s   %8d  %8d   %s\n", $nameLength, $name, 
                     bytes($S{$s}{totbytes}), bytes($S{$s}{tfrbytes}),
@@ -2839,6 +2834,124 @@ sub status ($;\@) {
                 bytes($total/$count), '', '', ''), 
                 $plevel,$llevel;
         }
+    }
+}
+
+sub status ($\@) {
+    
+    # Print a status report on existing snapshots for a single destination
+    my $dest   = shift;
+    my @cSpecs = @{(shift)};
+
+    my $ucount = 0; # unfinished snapshots
+    my $ci = 0;     # index into @cSpecs
+    my $pi = -1;    # index into $Opt{pspecs}
+    debug "pspecs: " . Dumper($Opt{pspecs}), 'status';
+
+    my $plevel = 1; # only output at this level or above
+    my $llevel = 1;
+    if ($Opt{status}) {
+        # User has asked for status, so make sure it's printed and not logged
+        $plevel = 1;
+        $llevel = 9;
+    }
+
+    printlog under1("\nStatus report for $dest\n"), $plevel,$llevel;
+    if (!%S) {
+        printlog "No snapshots found\n", $plevel,$llevel;
+    } else {
+        # Report layout:
+        #                                    ------ Size ------   ----- Files ------
+        # Snapshots (most recent first)         Total       New      Total       New   Spec
+        # --------------------------------   ------------------   ------------------   ------------
+        # template-20121024-123456-note      1.23 MiB  1023 MiB    9999999      9999   1-4h23:21
+        # --------------------------------   ------------------   ------------------
+        #   Total:  (+999 unfinished) 9999   28.0 MiB  28.0 GiB   12345678  12345678   
+        # Average:                            123 MiB       0 B     234234    234234 
+        # <-------- $nameLength -------->
+        my $nameLength = max(longestName()+4, 32); # +4 to allow for ' (u)'
+        printlog sprintf("%-*s   ------ Size ------   ----- Files ------", $nameLength, ''), 
+            $plevel,$llevel;
+        printlog sprintf("%-*s   %8s  %8s   %8s  %8s   %s\n", $nameLength, 
+            'Snapshots (most recent first)', 'Total', 'New', 'Total', 'New', 'Spec'), 
+            $plevel,$llevel;
+        printlog sprintf("%-*s   %8s--%8s   %8s--%8s   %s\n", $nameLength, '-'x$nameLength, 
+            '-'x8, '-'x8, '-'x8, '-'x8, '-'x12), 
+            $plevel,$llevel;
+        # Totals and counts for each column
+        my (%total, %count, %value, %avrag);
+        my @cols = qw(totbytes tfrbytes totfiles tfrfiles);
+        foreach my $col (@cols) {
+            #$total{$col} = '';    # will stay undefined if nothing is added
+            $count{$col} = 0;
+            $avrag{$col} = '';
+        }
+        foreach my $s (rsort keys %S) {
+            # Print period details if we've got to a new spec
+            #debug "pi=$pi", 'status';
+            while ($pi < 0 or 
+                ($pi <= $#{$Opt{pspecs}} and ${$Opt{pspecs}}[$pi]->{beg} > $s)) {
+                $pi += 1;
+                if ($pi > $#{$Opt{pspecs}}) {
+                    # no more parsed specs -- we're dealing 'old' snapshots
+                    printlog "Snapshots no longer covered by specs\n", 1; 
+                } else {
+                    printlog "Period covered by spec ${$Opt{pspecs}}[$pi]->{rawspec} is " .
+                    pair2range(${$Opt{pspecs}}[$pi]->{beg}, ${$Opt{pspecs}}[$pi]->{end}) . 
+                    "\n", 1;
+                }
+            }
+            my $name = $S{$s}{name};
+            my $label = '';
+            if ($S{$s}{unfinished}) {
+                $name .= ' (u)';
+                $ucount += 1;
+            }
+            if (@cSpecs) {
+                # Find which cSpec applies (complete snapshots only)
+                while ($cSpecs[$ci]->{beg} > $s) { 
+                    $ci += 1; 
+                }; 
+                $label = $cSpecs[$ci]->{label};
+            }
+            # Get values for each column and add to totals
+            foreach my $col (@cols) {
+                $value{$col} = '';
+                if (defined $S{$s}{$col}) {
+                    $value{$col}  = $S{$s}{$col};
+                    $total{$col} += $S{$s}{$col};
+                    $count{$col} += 1;
+                }
+            }
+            printlog sprintf("%-*s   %8s  %8s   %8s  %8s   %s\n", $nameLength, $name, 
+                bytes($value{totbytes}), bytes($value{tfrbytes}),
+                $value{totfiles}, $value{tfrfiles}, $label), 
+                $plevel, $llevel;
+        }
+        # --------------------------------   ------------------   ------------------
+        #   Total:  (+999 unfinished) 9999   28.0 MiB  28.0 GiB   12345678  12345678   
+        # Average:                            123 MiB       0 B     234234    234234 
+        printlog sprintf("%-*s   %8s--%8s   %8s--%8s\n", $nameLength, '-'x$nameLength, 
+            '-'x8, '-'x8, '-'x8, '-'x8), 
+            $plevel,$llevel;
+        my $unfinished = '';
+        $unfinished = "(+$ucount unfinished)" if $ucount;
+        printlog sprintf("%8s %s %17s %4d   %8s  %8s   %8s  %8s\n", 
+            'Total:', ' 'x($nameLength-32), $unfinished, $count{totbytes}, 
+            bytes($total{totbytes}), bytes($total{tfrbytes}), 
+            $total{totfiles}, $total{tfrfiles}), 
+            $plevel,$llevel;
+        foreach my $col (@cols) {
+            $avrag{$col} = floor($total{$col} / $count{$col}) if $count{$col} > 0;
+        }
+        printlog sprintf("%-*s   %8s  %8s   %8s  %8s\n", $nameLength, 'Average:', 
+            bytes($avrag{totbytes}), bytes($avrag{tfrbytes}), 
+            $avrag{totfiles}, $avrag{tfrfiles}), 
+            $plevel,$llevel;
+        printlog sprintf("%-*s   %8s  %8s   %8s  %8s\n", $nameLength, '  Count:', 
+            $count{totbytes}, $count{tfrbytes}, 
+            $count{totfiles}, $count{tfrfiles}), 
+            $plevel,$llevel if $Opt{debug}->{status};
     }
 }
 
@@ -4904,13 +5017,9 @@ sub processDestination ($) {
     }
 
     if (!$Interrupted) {
-# !! Interrupted is one of the reasons for the new snapshot being
-#    unfinished, so maybe... no
         if ($Opt{delete}) {
             # Get the delete list again because the snapshot we've just created (if any)
-            # may not be complete
-            #
-            # TODO only call gDL if new snapshot was 'unfinished' ie some sources failed
+            # may not be complete (or may not have been created)
             @D = getDeleteList(@cSpecs) if $Opt{snapshot};
             # Now we can actually delete things
             deleteSnapshots(@D, @cSpecs, $deleteNew);
