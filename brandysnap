@@ -419,40 +419,47 @@ sub debug ($;$) {
 
 # --------------------------------------------------------------------------------------------------
 
-sub printEWN ($$$) {
+sub printEWN ($$$;$) {
     # Print an error/warning/note message with fancy formatting
     my $text   = shift;
     my $prefix = shift;
-    my $level  = shift;
+    my $plevel = shift;
+    my $llevel = shift // $plevel;
     (my $leadingnl, $text, my $trailingnl) = ($text =~ m/^(\n*)(.*?)(\n*)$/s); 
     my $spaces = ' ' x length($prefix);
     $text =~ s/(\n+)/$1$spaces/;
-    $Messages .= "$leadingnl$prefix$text$trailingnl" if $level <= 2;
-    printlog "$leadingnl$prefix$text$trailingnl", $level,$level;
+    $Messages .= "$leadingnl$prefix$text$trailingnl" if $plevel <= 2;
+    printlog "$leadingnl$prefix$text$trailingnl", $plevel,$llevel;
 }
 
 # --------------------------------------------------------------------------------------------------
 
-sub printError ($) {
-    # Print an error messsage at level 1
-    my $text = shift;
-    printEWN $text, 'ERROR: ', 1;
+sub printError ($;$$) {
+    # Print an error messsage, by default at level 1
+    my $text   = shift;
+    my $plevel = shift // 1;
+    my $llevel = shift // $plevel;
+    printEWN $text, 'ERROR: ', $plevel,$llevel;
 }
 
 # --------------------------------------------------------------------------------------------------
 
-sub printWarning ($) {
-    # Print a warning messsage at level 2
-    my $text = shift;
-    printEWN $text, 'WARNING: ', 2;
+sub printWarning ($;$$) {
+    # Print a warning messsage, by default at level 2
+    my $text   = shift;
+    my $plevel = shift // 2;
+    my $llevel = shift // $plevel;
+    printEWN $text, 'WARNING: ', $plevel,$llevel;
 }
 
 # --------------------------------------------------------------------------------------------------
 
-sub printNote ($) {
-    # Print a note at level 3
-    my $text = shift;
-    printEWN $text, 'NOTE: ', 3;
+sub printNote ($;$$) {
+    # Print a note, by default at level 3
+    my $text   = shift;
+    my $plevel = shift // 3;
+    my $llevel = shift // $plevel;
+    printEWN $text, 'NOTE: ', $plevel,$llevel;
 }
 
 # --------------------------------------------------------------------------------------------------
@@ -471,16 +478,6 @@ sub printMsg ($) {
     }
 }
 
-# --------------------------------------------------------------------------------------------------
-
-sub intro () {
-    # To avoid printing the introductory lines of output before we know if the user
-    # wants any output, intro() is called before printing any error messages up until
-    # the point in processOptions() when the --verbose and --loglevel options have
-    # been processed, and any logfile has been opened.
-    # !!! now done in printlog
-}
-
 #===================================================================================================
 
 # Useful stuff
@@ -495,6 +492,14 @@ sub max ($$) {
     my $a = shift;
     my $b = shift;
     return ($a > $b) ? $a : $b;
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub round ($) {
+    # Simplistic integer rounding
+    my $float = shift;
+    return int($float + $float/abs($float*2));
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -653,7 +658,7 @@ sub checkInterruption ($) {
     # Check if we've been interrupted: if so, print a message and exit
     my $msg = shift // '';
     if ($Interrupted) {
-        printlog "\nInterrupted with signal '$Interrupted' $msg\n", 1;
+        printError "\nInterrupted with signal '$Interrupted' $msg\n", 1;
         exit EXITINT;
     }
 }
@@ -2547,11 +2552,11 @@ sub deleteSnapshot ($) {
         return 0;
     }
     if (!$Opt{delete}) {
-        printlog "Not deleting snapshot '$S{$snapshot}{name}' because of option 'delete=no'\n", 1;
+        printNote "Not deleting snapshot '$S{$snapshot}{name}' because of option 'delete=no'\n", 1;
         return 0;
     }
     if ($S{$snapshot}{note}) {
-        printlog "Not deleting snapshot '$S{$snapshot}{name}' because it has a note\n", 1;
+        printNote "Not deleting snapshot '$S{$snapshot}{name}' because it has a note\n", 1;
         return 0;
     }
     # Use some rsync trickery to delete the snapshot
@@ -2601,15 +2606,14 @@ sub deleteSnapshots (\@\@$) {
         } else {
             my $unfinished = $S{$d}{unfinished} ? 'unfinished ' : '';
             if ($cSpecs[$ci]->{label} eq 'old') {
-                printlog "Deleting old ${unfinished}snapshot '$S{$d}{name}'\n", 1;
+                printNote "Deleting old ${unfinished}snapshot '$S{$d}{name}'\n", 1;
             } else {
-                printlog "Deleting ${unfinished}snapshot '$S{$d}{name}'" . 
+                printNote "Deleting ${unfinished}snapshot '$S{$d}{name}'" . 
                 " because there are too many for spec '" . $cSpecs[$ci]->{label} . "'\n", 1;
             }
             $errors += deleteSnapshot($d);
         }
     }
-    #printlog "Total of $errors errors while deleting snapshots!\n", 1; 
     return $errors;
 }
 
@@ -2624,11 +2628,11 @@ sub deleteOldSnapshots (\@;$) {
     while (@$expirablesR and $n > 0) {
         my $e = pop @$expirablesR;
         $n -= 1;
-        printlog "Expiring old snapshot $S{$e}{name}\n", 2;
+        printNote "Expiring old snapshot $S{$e}{name}\n";
         if (deleteSnapshot($e) == 0) {  
             $deleted += 1;
         } else {
-            debug "failed to delete snapshot $S{$e}{name}\n", 'dOS';
+            debug "Failed to delete snapshot $S{$e}{name}\n", 'dOS';
         }
     }
     debug "deleted $deleted oldest snapshots\n", 'dOS';
@@ -2699,143 +2703,13 @@ sub averageSnapshotBytes () {
             $count += 1;
             $totsize += $S{$s}{totbytes};
         }
-        debug "count=$count this=$S{$s}{totbytes} tot=$totsize\n", 'aSB';
     }
     my $sAvBytes = 0;
-    $sAvBytes = floor($totsize / $count) if $count > 0;
+    $sAvBytes = round($totsize / $count) if $count > 0;
     return $sAvBytes;
 }
 
 #---------------------------------------------------------------------------------------------------
-
-sub statusold ($\@) {
-    
-    # Print a status report on existing snapshots for a single destination
-    my $dest   = shift;
-    my @cSpecs = @{(shift)};
-
-    my $count  = 0; # complete
-    my $newcount = 0; # new-style totals (complete only)
-    my $ucount = 0; # unfinished
-    my $total  = 0;
-    my $sumtfrbytes = 0;
-    my $sumtotfiles = 0;
-    my $sumtfrfiles = 0;
-    my $ci = 0;     # index into @cSpecs
-    my $pi = -1;    # index into $Opt{pspecs}
-    debug "pspecs: " . Dumper($Opt{pspecs}), 'status';
-
-    my $plevel = 1; # only output at this level or above
-    my $llevel = 1;
-    if ($Opt{status}) {
-        # User has asked for status, so make sure it's printed and not logged
-        $plevel = 0;
-        $llevel = 9;
-    }
-
-    printlog under1("\nStatus report for $dest\n"), $plevel,$llevel;
-    if (!%S) {
-        printlog "No snapshots found\n", $plevel,$llevel;
-    } else {
-        # Report layout:
-        #                                    ------ Size ------   ----- Files ------
-        # Snapshots (most recent first)         Total       New      Total       New   Spec
-        # --------------------------------   ------------------   ------------------   ------------
-        # template-20121024-123456-note      1.23 MiB  1023 MiB    9999999      9999   1-4h23:21
-        # --------------------------------   ------------------   ------------------
-        #   Total:  (+999 unfinished) 9999   28.0 MiB  28.0 GiB   12345678  12345678   
-        # Average:                            123 MiB       0 B     234234    234234 
-        # <-------- $nameLength -------->
-        my $nameLength = max(longestName(), 32);
-        printlog sprintf("%-*s   ------ Size ------   ----- Files ------", $nameLength, ''), 
-            $plevel,$llevel;
-        printlog sprintf("%-*s   %8s  %8s   %8s  %8s   %s\n", $nameLength, 
-            'Snapshots (most recent first)', 'Total', 'New', 'Total', 'New', 'Spec'), 
-            $plevel,$llevel;
-        printlog sprintf("%-*s   %8s--%8s   %8s--%8s   %s\n", $nameLength, '-'x$nameLength, 
-            '-'x8, '-'x8, '-'x8, '-'x8, '-'x12), 
-            $plevel,$llevel;
-        foreach my $s (rsort keys %S) {
-            # Print period details if we've got to a new spec
-            #debug "pi=$pi", 'status';
-            while ($pi < 0 or 
-                   ($pi <= $#{$Opt{pspecs}} and ${$Opt{pspecs}}[$pi]->{beg} > $s)) {
-                $pi += 1;
-                if ($pi > $#{$Opt{pspecs}}) {
-                    # no more parsed specs -- we're dealing 'old' snapshots
-                    printlog "Snapshots no longer covered by specs\n", 1; 
-                } else {
-                    printlog "Period covered by spec ${$Opt{pspecs}}[$pi]->{rawspec} is " .
-                    pair2range(${$Opt{pspecs}}[$pi]->{beg}, ${$Opt{pspecs}}[$pi]->{end}) . 
-                    "\n", 1;
-                }
-            }
-            my $name = $S{$s}{name};
-            $name .= ' (u)' if $S{$s}{unfinished};
-            my $label = '';
-            if ($S{$s}{unfinished}) {
-                $ucount += 1;
-            } else {
-                if (@cSpecs) {
-                    # Find which cSpec applies (complete snapshots only)
-                    while ($cSpecs[$ci]->{beg} > $s) { 
-                        $ci += 1; 
-                    }; 
-                    $label = $cSpecs[$ci]->{label};
-                    #$label = $cSpecs[$ci]->{rawspec};
-                    #$label .= (' ' . $LevelName{$cSpecs[$ci]->{period}});
-                }
-                debug "adding: tb=$S{$s}{totbytes} fb=$S{$s}{tfrbytes} tf=$S{$s}{totfiles} ff=$S{$s}{tfrfiles}\n", 'status';
-                $count += 1;  # new + old style
-                $total       += $S{$s}{totbytes} if defined $S{$s}{totbytes};
-                $sumtfrbytes += $S{$s}{tfrbytes} if defined $S{$s}{tfrbytes};
-                $sumtotfiles += $S{$s}{totfiles} if defined $S{$s}{totfiles};
-                $sumtfrfiles += $S{$s}{tfrfiles} if defined $S{$s}{tfrfiles};
-                $newcount += 1 if defined $S{$s}{totfiles} and $S{$s}{totfiles} > 0;# new-style only
-            }
-            #printlog sprintf("%-*s   %15s   %s\n", $nameLength, $name, 
-            #    bytes($size) || 'empty', $label), $plevel,$llevel;
-            #printlog "snapshot: " . Dumper($S{$s});
-
-            # TODO print each value if available...
-            #  
-            if (defined $S{$s}{tfrfiles}) {
-                printlog sprintf("%-*s   %8s  %8s   %8d  %8d   %s\n", $nameLength, $name, 
-                    bytes($S{$s}{totbytes}), bytes($S{$s}{tfrbytes}),
-                    $S{$s}{totfiles}, $S{$s}{tfrfiles}, $label), 
-                    $plevel, $llevel;
-            } else { # totfiles etc. not available
-                printlog sprintf("%-*s   %8s  %8s   %8s  %8s   %s\n", $nameLength, $name, 
-                    bytes($S{$s}{totbytes}), '', '', '', $label), 
-                    $plevel,$llevel;
-            }
-        }
-        # --------------------------------   ------------------   ------------------
-        #   Total:  (+999 unfinished) 9999   28.0 MiB  28.0 GiB   12345678  12345678   
-        # Average:                            123 MiB       0 B     234234    234234 
-        printlog sprintf("%-*s   %8s--%8s   %8s--%8s\n", $nameLength, '-'x$nameLength, 
-            '-'x8, '-'x8, '-'x8, '-'x8), 
-            $plevel,$llevel;
-        my $unfinished = '';
-        $unfinished = "(+$ucount unfinished)" if $ucount;
-        printlog sprintf("%8s %s %17s %4d   %8s  %8s   %8s  %8s\n", 
-            'Total:', ' 'x($nameLength-32), $unfinished, $count, 
-            bytes($total), bytes($sumtfrbytes), $sumtotfiles, $sumtfrfiles), 
-            $plevel,$llevel;
-        if ($newcount > 0) {
-            my $average = floor($total/$count);
-            printlog sprintf("%-*s   %8s  %8s   %8s  %8s\n", $nameLength, 'Average:', 
-                bytes($total/$count), bytes($sumtfrbytes/$newcount), 
-                floor($sumtotfiles/$newcount), floor($sumtfrfiles/$newcount)), 
-                $plevel,$llevel;
-        } elsif ($count > 0) {
-            my $average = floor($total/$count);
-            printlog sprintf("%-*s   %8s  %8s   %8s  %8s\n", $nameLength, 'Average:', 
-                bytes($total/$count), '', '', ''), 
-                $plevel,$llevel;
-        }
-    }
-}
 
 sub status ($\@) {
     
@@ -2942,7 +2816,7 @@ sub status ($\@) {
             $total{totfiles}, $total{tfrfiles}), 
             $plevel,$llevel;
         foreach my $col (@cols) {
-            $avrag{$col} = floor($total{$col} / $count{$col}) if $count{$col} > 0;
+            $avrag{$col} = round($total{$col} / $count{$col}) if $count{$col} > 0;
         }
         printlog sprintf("%-*s   %8s  %8s   %8s  %8s\n", $nameLength, 'Average:', 
             bytes($avrag{totbytes}), bytes($avrag{tfrbytes}), 
@@ -2958,8 +2832,7 @@ sub status ($\@) {
 #---------------------------------------------------------------------------------------------------
 
 sub displaySummary () {
-    # Print out the results summary
-    # and send email if there were problems.
+    # Print out the results summary and send email if there were problems.
     my $text = '';
     $text .= "\n\nResults Summary\n";
     $text .=     "===============\n";
@@ -4997,11 +4870,12 @@ sub processDestination ($) {
     if ($Opt{snapshot}) {
         if ($deleteNew and $Opt{delete} and $Opt{'delete-cp'}) {
             printNote "The new snapshot would be immediately deleted,\n" . 
-                "so rsync will NOT be run for this destination\n";
+                "so rsync will NOT be run for this destination\n", 1;
             # Tidy up the empty directory we created for it
             deleteSnapshot($S[0]);
             $Summary{$dest->{location}}{result} = 'not needed';
             # note that it's not marked as failed
+            $AllDestsFailed = 0;
         } else {
             my @expirableSnapshots = getExpirableSnapshots($Opt{pspecs}, @cSpecs, $now);
             # Run rsync to create the new snapshot
@@ -5013,7 +4887,7 @@ sub processDestination ($) {
             }
         }
     } else {
-        printNote "Option 'no-snapshot' given, so no new snapshot will be created\n";
+        printNote "Option 'no-snapshot' given, so no new snapshot will be created\n", 1;
     }
 
     if (!$Interrupted) {
@@ -5024,7 +4898,7 @@ sub processDestination ($) {
             # Now we can actually delete things
             deleteSnapshots(@D, @cSpecs, $deleteNew);
         } else {
-            printNote "Option 'no-delete' given, so no existing snapshots will be deleted\n";
+            printNote "Option 'no-delete' given, so no existing snapshots will be deleted\n", 1;
         }
     }
 
