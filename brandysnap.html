@@ -539,10 +539,21 @@
 <p>Note that compression is used for any &#39;remote&#39; transfer, i.e. when the source and destination are not on the same computer. On a fast local network, you may want to use <b>--nocompress</b>.</p>
 
 </dd>
-<dt id="include-include-from-exclude-exclude-from-pattern-or-file-"><b>include</b>/<b>include-from</b>/<b>exclude</b>/<b>exclude-from <i>pattern-or-file</i></b> *</dt>
+<dt id="include-exclude-pattern-"><b>include</b>/&lt;exclude&gt;/ <i>pattern</i>&gt; *</dt>
 <dd>
 
-<p>These four options are passed through to rsync unchecked and unchanged. &#39;~&#39; is NOT expanded to a home directory. See the rsync documentation for details. (default: none)</p>
+<p>These two options are passed through to rsync unchecked and unchanged. See the rsync documentation for details. (default: none)</p>
+
+</dd>
+<dt id="include-from-exclude-from-filename-"><b>include-from</b>/<b>exclude-from <i>filename</i></b> *</dt>
+<dd>
+
+<p>The filenames are checked: if the file exists, the option is passed on to rsync (but the contents of the file are not checked). &#39;~&#39; is NOT expanded to a home directory. These files can be remote, so that they can be kept on the same computer as the source they refer to. For example:</p>
+
+<pre><code> source:        fred@host1:/home/fred
+ exclude-from:  fred@host1:/home/fred/brandysnap.exclusions</code></pre>
+
+<p>See the rsync documentation for details. (default: none)</p>
 
 </dd>
 <dt id="bwlimit-in-n"><b>bwlimit-in</b> &lt;n&gt;</dt>

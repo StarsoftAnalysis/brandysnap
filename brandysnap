@@ -237,7 +237,7 @@ my %BoolOpt = (map {$_ => 1} @BoolOpt);
 my @StringOpt = qw(config lockfile logfile template
     rsync-cmd rsync-opts rsync-xopts remote-rsync-cmd
     all-failed some-failed
-    email-from);
+    email-from email-prog);
 my %StringOpt = (map {$_ => 1} @StringOpt);
 # Numeric options
 my @NumericOpt = qw(verbose loglevel test
@@ -1108,6 +1108,7 @@ sub rsyncMkdir ($) {
     my $newdir = shift;  # full path of dir to be created
     my @output;
     my @errors;
+    # FIXME ? --chmod may only work with --perms -- is --perms needed here?
     my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'},
         stdArgs(1) . " -v --recursive --chmod=ug=rwx,o=rx $EmptyDir/ $newdir", 
         9,9, \@output, \@errors);
@@ -1136,7 +1137,6 @@ sub rsyncRmdir ($$) {
 
 sub rsyncExists ($) {
     # Use rsync to check if a directory or file exists.
-    # Returns 1 if it does, 0 otherwise.
     my $item = shift;   # full path of directory or file
     my @output;
     my @errors;
@@ -1146,20 +1146,67 @@ sub rsyncExists ($) {
     debug "item='$item' rc=$rc rc2=$rc2 output='@output' errors='@errors'\n", 'rEx';
     # rc=23 if it doesn't exist.
     # FIXME what about other errors?
+    return ($rc, $rc2);
+}
+
+sub rsyncExistsTest ($) {
+    # True/false version of rsyncExists
+    my $item = shift;   # full path of directory or file
+    my ($rc, $rc2) = rsyncExists($item);
     return ($rc == 0 ? 1 : 0);
 }
 
 #---------------------------------------------------------------------------------------------------
 
-sub rsyncReadable ($) {
-    # Use rsync to check if a source is readable
-    my $source = shift;
+sub rsyncMakeLocal ($) {
+    # Make sure a file is local: if not, make a local copy of it
+    # and return the local file name (or '' on error)
+    # (note the hacky way we override the --dry-run option)
+    my $origPath = shift;
+    if (!remote($origPath)) {
+        if (rsyncExistsTest($origPath)) {
+            return $origPath;
+        } else {
+            debug "no such local file: $origPath", 'rML';
+            return '';
+        }
+    }
+    my ($origBase, $origDir, undef) = fileparse($origPath);
+    my $tempdir = tempdir(CLEANUP => 1);  
+    debug "tempdir is $tempdir\n", 'rML';
+    my (@output, @errors);
+    my $dryrun = $Opt{'dry-run'};
+    $Opt{'dry-run'} = 0;
+    my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'}, 
+        stdArgs(0) . " '$origPath' '$tempdir/'", 
+        9,9, \@output, \@errors);
+    $Opt{'dry-run'} = $dryrun;
+    debug "rc=$rc rc2='$rc2' newfile='$tempdir/$origBase' output: '@output' errors: @errors\n", 'rML';
+    if ($rc == 0) {
+        return "$tempdir/$origBase";
+    } else {
+        return '';
+    }
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub XrsyncReadable ($) {  # THIS IS NOT USABLE
+    # Use rsync to check if a file or directory is readable
+    # FIXME I think this only works if it's a directory
+    # -- for a file, need to read it, i.e. copy it to a local file i.e. back it up!!
+    # NO, look at the permissions in the listing!
+    #  -- but it's too hard to know which is the relevant uid/gid
+    # PLAN: if it's a directory (first char of first line of output is 'd'),
+    #   then ... it still might not have read permissions.
+    # All we can do is see if it exists...
+    my $item = shift;
     my @output;
     my @errors;
     my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'},
-        stdArgs(0) . "--list-only $source",
+        stdArgs(0) . "--list-only $item",
         9,9, \@output, \@errors);
-    debug "source='$source' rc=$rc rc2=$rc2 output='@output' errors='@errors'\n", 'rRd';
+    debug "item='$item' rc=$rc rc2=$rc2 output='@output' errors='@errors'\n", 'rRd';
     return ($rc, $rc2); 
 }
 
@@ -1174,7 +1221,7 @@ sub rsyncWritable ($) {
     if ($Opt{'dry-run'} or $Opt{status}) {
         # --dry-run: can't write to dest: just see if it's readable
         # --status : don't need to write to dest: ditto
-        return rsyncReadable($dest);
+        return rsyncExists($dest);
     }
     my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'},
         stdArgs(1) . "--recursive $EmptyDir/ $dest/$tempdir/", 
@@ -1622,7 +1669,7 @@ sub checkOptionSingle ($$) {
             # Source and destination are done later
 
             # Options 'include', 'include-from', 'exclude', 'exclude-from'
-            # - these are not checked at all, just passed to rsync
+            # - these are not checked at all at this stage
         }
     }
 
@@ -1989,21 +2036,6 @@ sub processOptions () {
 
     my $errorcount = 0;
     my $warningcount = 0;
-#    my $msgs = '';   # all messages printed from this subroutine
-
-#    # FIXME !! some messages/errors are added/printed elsewhere
-#    # maybe need an 'error()' and 'warn()' routine that accumulate
-#    # the messages globally and prepend 'ERROR: ' and 'WARNING: '
-#    # Maybe just for the config validation?
-#    sub plpo ($;$$) {
-#        # Special version of printlog for use in processOptions: 
-#        # also adds the text to $msgs
-#        my $text   = shift;
-#        my $plevel = shift // 1;
-#        my $llevel = shift // $plevel;
-#        printlog $text, $plevel,$llevel;
-#        $msgs .= $text;
-#    }
 
     # Block to limit the scope of the SIGWARN override which traps warnings from GetOptions
     {
@@ -2169,7 +2201,7 @@ sub processOptions () {
     if ($Opt{source}) {
         foreach my $src (@{$Opt{source}}) {
             $src->{location} = safeAbsPath($src->{location});
-            my ($rrrc, $rrrc2) = rsyncReadable($src->{location});
+            my ($rrrc, $rrrc2) = rsyncExists($src->{location});
             if ($rrrc == 0) {
                 $readableSources += 1; 
                 $src->{readable} = 1;
@@ -2200,7 +2232,7 @@ sub processOptions () {
             foreach my $src (@{$options->{source}}) {
                 $src->{location} = safeAbsPath($src->{location});
                 $destInfo->{source}{$src->{location}}{result} = 'not attempted';
-                my ($rrrc, $rrrc2) = rsyncReadable($src->{location});
+                my ($rrrc, $rrrc2) = rsyncExists($src->{location});
                 if ($rrrc == 0) {
                     $readableSubSources += 1; 
                 } else {
@@ -2304,8 +2336,23 @@ sub processOptions () {
     $Opt{snapshot} = 1 if $Opt{restart};
     $Opt{'min-interval'} = 0 if $Opt{restart};
 
-    # Options 'include', 'include-from', 'exclude', 'exclude-from'
-    # - these are not checked at all, just passed to rsync
+    # Check that exclude-from and include-from files are readable
+    foreach my $opt ('exclude-from', 'include-from') {
+        my @tempOpt;
+        foreach my $file (@{$Opt{$opt}}) {
+            my $file2 = rsyncMakeLocal(safeAbsPath($file));
+            if ($file2 eq '') {
+                printWarning "$opt file '$file' is not readable -- it will be ignored", 1;
+            } else {
+                push @tempOpt, $file2;
+            }
+        }
+        # copy the temporary array back to the real one
+        $Opt{$opt} = \@tempOpt;
+    }
+
+    # Options 'include' and 'exclude' (and the contents of include-from and exclude-from
+    # files) are not checked at all, just passed to rsync
 
     # $Opt{specs} is checked later
 
@@ -2481,9 +2528,9 @@ Rsync options
 --[no]compress            ds enable rsync compression for remote transfers 
                               (default: compress) 
 --include      pattern   *ds rsync inclusion (see rsync documentation)
---include-from file      *ds rsync inclusions 
+--include-from filename  *ds rsync inclusions (can be remote) 
 --exclude      pattern   *ds rsync exclusion
---exclude-from file      *ds rsync exclusions 
+--exclude-from filename  *ds rsync exclusions (can be remote)
 --bwlimit-in   n          ds bandwidth limit for receiving in kbps (default: 0) 
                               (set to 0 for no limit) 
 --bwlimit-out  n          ds bandwidth limit for sending in kbps (default: 0) 
@@ -2771,7 +2818,9 @@ sub status ($\@) {
                     printlog "Snapshots no longer covered by specs\n", 1; 
                 } else {
                     printlog "Period covered by spec ${$Opt{pspecs}}[$pi]->{rawspec} is " .
-                    pair2range(${$Opt{pspecs}}[$pi]->{beg}, ${$Opt{pspecs}}[$pi]->{end}) . 
+                    strftime(    '%T %Z %a %d %b %Y', localtime(${$Opt{pspecs}}[$pi]->{beg})) .  
+                    strftime(' to %T %Z %a %d %b %Y', localtime(${$Opt{pspecs}}[$pi]->{end})) . 
+#                    pair2range(${$Opt{pspecs}}[$pi]->{beg}, ${$Opt{pspecs}}[$pi]->{end}) . 
                     "\n", 1;
                 }
             }
@@ -3048,6 +3097,7 @@ sub writeMetadata ($) {
     # Send the file via rsync
     my (@output, @errors);
     #my $remPath = $Opt{'remote-rsync-cmd'} ? "--rsync-path '$Opt{'remote-rsync-cmd'}'" : '';
+    # FIXME ? --chmod may only work with --perms -- is --perms needed here?
     my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'}, 
         stdArgs(1) . " --chmod=ug=rw,o=r '$tempfilename' '$dest/$mdfile'", 
         9,9, \@output, \@errors);    
@@ -3070,21 +3120,24 @@ sub readMetadata ($) {
     my $mdfile = "$Opt{template}.status"; 
 
     # Get the metadata file via rsync to a temporary file
-    # (note the hacky way we override the --dry-run option)
-    my $tempdir = tempdir(CLEANUP => 1);  
-    debug "tempdir is $tempdir\n", 'rM';
-    my (@output, @errors);
-    my $dryrun = $Opt{'dry-run'};
-    $Opt{'dry-run'} = 0;
-    my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'}, 
-        stdArgs(0) . " '$dest/$mdfile' '$tempdir/'", 
-        9,9, \@output, \@errors);
-    $Opt{'dry-run'} = $dryrun;
-    debug "rc=$rc output: '@output' errors: @errors\n", 'rM';
-    return $mdArrayRef if $rc;  # not readable -- carry on regardless
+#    # (note the hacky way we override the --dry-run option)
+#    my $tempdir = tempdir(CLEANUP => 1);  
+#    debug "tempdir is $tempdir\n", 'rM';
+#    my (@output, @errors);
+#    my $dryrun = $Opt{'dry-run'};
+#    $Opt{'dry-run'} = 0;
+#    my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'}, 
+#        stdArgs(0) . " '$dest/$mdfile' '$tempdir/'", 
+#        9,9, \@output, \@errors);
+#    $Opt{'dry-run'} = $dryrun;
+#    debug "rc=$rc output: '@output' errors: @errors\n", 'rM';
+#    return $mdArrayRef if $rc;  # not readable -- carry on regardless
+    $mdfile = rsyncMakeLocal("$dest/$mdfile");
+    return $mdArrayRef if $mdfile eq '';    # not readable -- carry on without it
 
     # Read the metadata file
-    if (open MDF, '<', "$tempdir/$mdfile") { 
+    #if (open MDF, '<', "$tempdir/$mdfile") { 
+    if (open MDF, '<', "$mdfile") { 
         my $json = ''; 
         while (<MDF>) { 
             $json .= $_; 
@@ -3120,7 +3173,7 @@ sub readMetadata ($) {
             debug "$md->{timestamp} / $md->{unfinished} / $md->{totbytes}\n", 'rM'; 
         } 
     } else { 
-        debug "Unable to read temporary metadata file '$tempdir/$mdfile'\n", 'rM';
+        debug "Unable to read temporary metadata file '$mdfile'\n", 'rM';
     }
     return $mdArrayRef; 
 }
@@ -4452,7 +4505,7 @@ sub newSnapshot ($$) {
 
     # Make sure that a snapshot with that name doesn't already exist
     # and create the directory for it.
-    while ($S{$snapshot} or rsyncExists($fullname)) { 
+    while ($S{$snapshot} or rsyncExistsTest($fullname)) { 
         # Yes, we could just add 1 to $snapshot,
         # but then we might end up in the future...
         sleep 1;
@@ -4560,7 +4613,7 @@ sub runRsync ($\@$) {
         # (see stripQuotes()).
         my $incExcOpts = '';
         foreach my $opt (qw(include include-from exclude exclude-from)) {
-            $incExcOpts .= join(' ', map {"--$opt \"$_\""} @{$Opt{$opt}});
+            $incExcOpts .= join(' ', map {"--$opt \"$_\""} @{$Opt{$opt}}) . ' ';
         }
 
         my $destDir = $S{$snapshot}{fullname};    
@@ -4625,113 +4678,138 @@ sub runRsync ($\@$) {
             $rsyncInterrupted = $Interrupted;
             debug "after rsync rc=$rc rc2='$rc2' rsyncInterrupted='$rsyncInterrupted'\n", 'rR';
             debug "source stats: " . Dumper($statsR), 'rR';
-            given ($rc) {
-                #* source is empty (or apparently so)
-                #  (note that we test this first, even if rc==0)
-                when ($statsR->{totbytes} <= 0) {
-                    printError "Source '$location' appears to be empty -- " . 
-                        "will continue with any other sources\n";
-                    $keepTrying = 0;    # don't try this source again
-                    $succeeded = 0;
-                    $srcInfo->{result} = 'source is empty';
-                }
-                #* success
-                when (0) {
-                #when ($_ == 0 and (!($location =~ /cache/) or rand()>0.5 ))  # for debugging!
-                    debug "success\n", 'rR';
-                    $keepTrying = 0;    # no need to try this source again
-                    $sourcesSucceeded += 1;
-                    $srcInfo->{result} = 'succeeded';
-                    addStats($S{$snapshot}, $statsR);
-                }
+            if (($rc == 23) and ($rc2 eq 'nofileordir')) {
                 #* source not found
-                when (($_ == 23) and ($rc2 eq 'nofileordir')) {
-                    printError "Source '$location' could not be read -- " . 
-                        "will continue with any other sources\n";
-                    $keepTrying = 0;    # don't try this source again
-                    $succeeded = 0;
-                    $srcInfo->{result} = 'source not found';
-                }
-                #* errors that can (usually) be ignored, treat as successful 
-                when ([22, 23, 24]) {   
-                    # Errors on some files such as problems with permissions,
-                    # or files that have vanished -- carry on
-                    printWarning "Some errors from rsync have been ignored\n";
-                    $keepTrying = 0;
-                    $sourcesSucceeded += 1;
-                    $srcInfo->{result} = 'succeeded (minor errors ignored)';
-                    addStats($S{$snapshot}, $statsR);
-                }
+                printError "Source '$location' could not be read -- " . 
+                    "will continue with any other sources\n";
+                $keepTrying = 0;    # don't try this source again
+                $succeeded = 0;
+                $srcInfo->{result} = 'source not found';
+            }
+            elsif ($rsyncInterrupted ne '' or $rc2 eq 'interrupted') {
                 #* interrupted
-                when ($rsyncInterrupted ne '' or $rc2 eq 'interrupted') {
-                    printWarning "rsync was interrupted with signal '$rsyncInterrupted' -- " .
-                        "the snapshot will be kept to allow restart\n";
-                    $keepTrying = 0;
-                    $succeeded = 0;
-                    $restartable = 1;
-                    $srcInfo->{result} = 'interrupted';
-                    last SOURCE;
-                }
+                printWarning "rsync was interrupted with signal '$rsyncInterrupted' -- " .
+                    "the snapshot will be kept to allow restart\n";
+                $keepTrying = 0;
+                $succeeded = 0;
+                $restartable = 1;
+                $srcInfo->{result} = 'interrupted';
+                last SOURCE;
+            }
+            elsif (($rc == 30) or ($rc2 eq 'timedout')) {
                 #* timed out -- continue with other sources/destinations
                 #               which may use a different route
-                when (($_ == 30) or ($rc2 eq 'timedout')) {
+                $keepTrying = 0;
+                $succeeded = 0;
+                $restartable = 1;
+                $srcInfo->{result} = 'timed out';
+                if ($remoteDest) {
+                    # lost connection to remote destination 
+                    printError "rsync timed out: probably lost connection to destination\n";
+                    $lostDest = 1;
+                    last SOURCE;
+                } elsif ($remoteSource) {
+                    printError "rsync timed out: probably lost connection to source\n";
+                } else {
+                    # local/local rsync timed out -- why would that happen?
+                    # - perhaps when using NFS, for example.
+                    printError "rsync timed out\n";
+                }
+            }
+            elsif (($rc == 30) or ($rc2 eq 'timedout')) {
+                #* timed out -- continue with other sources/destinations
+                #               which may use a different route
+                $keepTrying = 0;
+                $succeeded = 0;
+                $restartable = 1;
+                $srcInfo->{result} = 'timed out';
+                if ($remoteDest) {
+                    # lost connection to remote destination 
+                    printError "rsync timed out: probably lost connection to destination\n";
+                    $lostDest = 1;
+                    last SOURCE;
+                } elsif ($remoteSource) {
+                    printError "rsync timed out: probably lost connection to source\n";
+                } else {
+                    # local/local rsync timed out -- why would that happen?
+                    # - perhaps when using NFS, for example.
+                    printError "rsync timed out\n";
+                }
+            }
+            elsif (($rc == 12) and ($rc2 eq 'diskfull') and ($keepTrying > 0)) {
+                #* errors that can be recovered from -- i.e. lack of space (sometimes)
+                # Try to make some space before having another go
+                printWarning "Destination '$dest' is full -- " . 
+                    "will delete an old snapshot and try again\n";
+                debug "_=$_ rc=$rc rc2=$rc2 keepTrying=$keepTrying\n", 'rR';
+                my $deleted = deleteOldSnapshots(@expirableSnapshots, 1);
+                if ($deleted >= 1) {
+                    # More space freed, so try again
+                    printNote "Old snapshot deleted successfully -- continuing\n";
+                    $deletions += $deleted;
+                    $deletionsAllSources += $deleted;
+                    $keepTrying -= $deleted;
+                    $srcInfo->{result} = 'failed (will try again)';
+                } else {
+                    # No snapshots deleted, so stop trying
+                    printError "Unable to delete old snapshot to make space\n";
                     $keepTrying = 0;
                     $succeeded = 0;
-                    $restartable = 1;
-                    $srcInfo->{result} = 'timed out';
-                    if ($remoteDest) {
-                        # lost connection to remote destination 
-                        printError "rsync timed out: probably lost connection to destination\n";
-                        $lostDest = 1;
-                        last SOURCE;
-                    } elsif ($remoteSource) {
-                        printError "rsync timed out: probably lost connection to source\n";
-                    } else {
-                        # local/local rsync timed out -- why would that happen?
-                        # - perhaps when using NFS, for example.
-                        printError "rsync timed out\n";
-                    }
+                    $ExitCode = EXITRSYNC;
+                    $srcInfo->{result} = 'failed (not enough space)';
+                    last SOURCE;
                 }
-                #* errors that can be recovered from -- i.e. lack of space (sometimes)
-                when (($_ == 12) and ($rc2 eq 'diskfull') and ($keepTrying > 0)) {
-                    # Try to make some space before having another go
-                    printWarning "Destination '$dest' is full -- " . 
-                        "will delete an old snapshot and try again\n";
-                    debug "_=$_ rc=$rc rc2=$rc2 keepTrying=$keepTrying\n", 'rR';
-                    my $deleted = deleteOldSnapshots(@expirableSnapshots, 1);
-                    if ($deleted >= 1) {
-                        # More space freed, so try again
-                        printNote "Old snapshot deleted successfully -- continuing\n";
-                        $deletions += $deleted;
-                        $deletionsAllSources += $deleted;
-                        $keepTrying -= $deleted;
-                        $srcInfo->{result} = 'failed (will try again)';
-                    } else {
-                        # No snapshots deleted, so stop trying
-                        printError "Unable to delete old snapshot to make space\n";
-                        $keepTrying = 0;
-                        $succeeded = 0;
-                        $ExitCode = EXITRSYNC;
-                        $srcInfo->{result} = 'failed (not enough space)';
-                        last SOURCE;
-                    }
-                }
-                #* error that means rename/delete/abandon whole destination
+            }
+            elsif ($rsyncInterrupted ne '' or $rc2 eq 'interrupted') {
+                #* interrupted
+                printWarning "rsync was interrupted with signal '$rsyncInterrupted' -- " .
+                    "the snapshot will be kept to allow restart\n";
+                $keepTrying = 0;
+                $succeeded = 0;
+                $restartable = 1;
+                $srcInfo->{result} = 'interrupted';
+                last SOURCE;
+            }
+            elsif (!($rc ~~ [0, 23, 24])) {
+                #* any other error means rename/delete/abandon whole destination
                 # 11 e.g. include-from file not found
+                # 13 e.g. permission denied
                 # 12 with rc2 = 'nofileordir' i.e. bad destination
                 # 5 - failed to start rsyncd protocol
                 # 255, various, including wrong ssh password, 
                 # -1
                 # etc.
-                default {
-                    printError "rsync reported a serious problem ($rc / '$rc2')\n";
-                    $keepTrying = 0;
-                    $succeeded = 0;
-                    $ExitCode = $rc >= 1000 ? EXITINT : EXITRSYNC;
-                    $srcInfo->{result} = "failed (error $rc / '$rc2')";
-                    last SOURCE;
+                printError "rsync reported a serious problem ($rc / '$rc2')\n";
+                $keepTrying = 0;
+                $succeeded = 0;
+                $ExitCode = $rc >= 1000 ? EXITINT : EXITRSYNC;
+                $srcInfo->{result} = "failed (error $rc / '$rc2')";
+                last SOURCE;
+            }
+            elsif ($statsR->{totbytes} <= 0) {
+                #* source is empty (or apparently so) despite no serious error
+                # (test this before [22,23,24] to trap case where all files
+                #  have e.g. permission errors so the whole snapshot is empty)
+                printError "Source '$location' appears to be empty -- " . 
+                    "will continue with any other sources\n";
+                $keepTrying = 0;    # don't try this source again
+                $succeeded = 0;
+                $srcInfo->{result} = 'source is empty';
+            }
+            else {   
+                #* success (0) and errors that can be ignored (23, 24)
+                # FIXME used to include 22 here -- why?
+                # e.g. errors on some files such as problems with permissions,
+                # or files that have vanished -- carry on
+                $keepTrying = 0;
+                $sourcesSucceeded += 1;
+                $srcInfo->{result} = 'succeeded';
+                if ($rc != 0) {
+                    printWarning "Some errors from rsync have been ignored\n";
+                    $srcInfo->{result} += ' (minor errors ignored)';
                 }
-            } # given
+                addStats($S{$snapshot}, $statsR);
+            }
 
             debug "No more tries\n", 'rR' if $keepTrying <= 0;
         } # while keep trying for this source

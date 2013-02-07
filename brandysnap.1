@@ -124,7 +124,7 @@
 .\" ========================================================================
 .\"
 .IX Title "BRANDYSNAP 1"
-.TH BRANDYSNAP 1 "2013-02-04" "perl v5.16.2" "User Contributed Perl Documentation"
+.TH BRANDYSNAP 1 "2013-02-07" "perl v5.16.2" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -640,9 +640,24 @@ On some systems, you might need to set it to something else such as
 Enable rsync compression for remote transfers. Note that this only applies compression for transfer across the network: files are expanded again on the destination.  (default: \fBcompress\fR)
 .Sp
 Note that compression is used for any 'remote' transfer, i.e. when the source and destination are not on the same computer.  On a fast local network, you may want to use \fB\-\-nocompress\fR.
-.IP "\fBinclude\fR/\fBinclude-from\fR/\fBexclude\fR/\fBexclude-from \f(BIpattern-or-file\fB\fR *" 4
-.IX Item "include/include-from/exclude/exclude-from pattern-or-file *"
-These four options are passed through to rsync unchecked and unchanged.  '~' is \s-1NOT\s0 expanded to a home directory.  See the rsync documentation for details.  (default: none)
+.IP "\fBinclude\fR/<exclude>/ \fIpattern\fR> *" 4
+.IX Item "include/<exclude>/ pattern> *"
+These two options are passed through to rsync unchecked and unchanged.  
+See the rsync documentation for details.  (default: none)
+.IP "\fBinclude-from\fR/\fBexclude-from \f(BIfilename\fB\fR *" 4
+.IX Item "include-from/exclude-from filename *"
+The filenames are checked: if the file exists, the option is passed on to rsync (but
+the contents of the file are not checked).  
+\&'~' is \s-1NOT\s0 expanded to a home directory.  
+These files can be remote, so that they can be kept on the same computer
+as the source they refer to.  For example:
+.Sp
+.Vb 2
+\& source:        fred@host1:/home/fred
+\& exclude\-from:  fred@host1:/home/fred/brandysnap.exclusions
+.Ve
+.Sp
+See the rsync documentation for details.  (default: none)
 .IP "\fBbwlimit-in\fR <n>" 4
 .IX Item "bwlimit-in <n>"
 Band-width limit for receiving in kbps.  Set it to 0 for no limit.  (default: \fB0\fR)

@@ -550,9 +550,23 @@ Enable rsync compression for remote transfers. Note that this only applies compr
 
 Note that compression is used for any 'remote' transfer, i.e. when the source and destination are not on the same computer.  On a fast local network, you may want to use B<--nocompress>. 
 
-=item B<include>/B<include-from>/B<exclude>/B<exclude-from I<pattern-or-file>> *
+=item B<include>/<exclude>/ I<pattern>> *
 
-These four options are passed through to rsync unchecked and unchanged.  '~' is NOT expanded to a home directory.  See the rsync documentation for details.  (default: none)
+These two options are passed through to rsync unchecked and unchanged.  
+See the rsync documentation for details.  (default: none)
+
+=item B<include-from>/B<exclude-from I<filename>> *
+
+The filenames are checked: if the file exists, the option is passed on to rsync (but
+the contents of the file are not checked).  
+'~' is NOT expanded to a home directory.  
+These files can be remote, so that they can be kept on the same computer
+as the source they refer to.  For example:
+
+ source:        fred@host1:/home/fred
+ exclude-from:  fred@host1:/home/fred/brandysnap.exclusions
+
+See the rsync documentation for details.  (default: none)
 
 =item B<bwlimit-in> <n>
 
