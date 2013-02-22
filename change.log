@@ -1,6 +1,21 @@
 Changelog for brandysnap
 ========================
 
+0.2.13  22/02/2013
+* Empty (or apparently empty) sources are now treated as failures
+  (including sources containing only empty directories).
+* Don't count 'small' snapshots as good ones when setting up --link-dest
+  options (where 'small' means less than (currently) 30% of the average.
+* Rewrite status() to calculate totals and averages properly.
+* Changed order of testing for errors in runRsync.
+* --include-from and --exclude-from files are now tested and ignored if they
+  don't exist; they can also now be remote, so that they can be kept on the
+  same machine as the source that they apply to.
+* Better messages when deleting snapshots.
+* Minor bugs:
+  - mark destination as successful if it wasn't needed.
+  - tidied error messages for command line option errors.
+
 0.2.12
 * Check for and delete any completely empty snapshots
 * Change the way existing snapshots are counted: for example if the spec calls
