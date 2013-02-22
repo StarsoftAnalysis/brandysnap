@@ -578,6 +578,27 @@ sub stripQuotes ($) {
 
 #---------------------------------------------------------------------------------------------------
 
+sub empty ($) {
+    # Check whether something is 'empty'
+    my $item = shift;
+    return 1 if !defined($item);
+    if (ref($item) eq 'ARRAY') {
+        # not empty if any array element is not empty
+        my $rc = 1;
+        foreach (@$item) {
+            $rc = 0 if $_;
+        }
+        return $rc;
+    } elsif (ref($item) eq 'HASH') {
+        # not empty if there are any entries
+        return (scalar keys %$item == 0) ? 1 : 0;
+    } else {    # scalar
+        return 1 if $item;
+    }
+}
+
+#---------------------------------------------------------------------------------------------------
+
 sub dumpSnapshot ($) {
     # Return a printable version of a %S entry.
     my $s = shift;
@@ -857,10 +878,11 @@ sub fullName ($) {
 
 sub emailSend ($$) {
     # Minimal email sending process: all the modules I could find are either
-    # broken or too complex.    
+    # broken or too complex.  So this relies on the system having an email setup.
     my $subject = shift;
     my $body    = shift;
-    return 0 if !$Opt{'email-to'};
+    debug "emailSend -- no email-to", 'eS' if !$Opt{'email-to'};
+    return 0 if $Opt{'email-to'};
     debug "email-to=@{$Opt{'email-to'}} body=$body\n", 'eS';
     my $rc = 0;
     if (open MAIL, '|-', $Opt{'email-prog'}) {
@@ -870,7 +892,7 @@ sub emailSend ($$) {
         print MAIL "\n$body\n";
         close(MAIL);
     } else {
-        printError "Failed to run '$Opt{'email-prog'}' to send email\n";
+        printError "Failed to run '$Opt{'email-prog'}' to send email (rc=$rc)\n";
         $rc = 1;
     }
     return $rc;
@@ -900,7 +922,7 @@ sub emailConfigError ($$) {
     my $e    = shift;
     my $w    = shift;
     return if !($Opt{'email-to'});
-    my $text = "Ths is an error message from $Script, running on " . hostname . ".\n\n";
+    my $text = "This is an error message from $Script, running on " . hostname . ".\n\n";
     $text .= "There was a problem with the configuration, and $Script did not run.\n\n";
     $text .= $Messages;
     $text .= "\n($e errors, $w warnings)\n\n";
@@ -911,9 +933,9 @@ sub emailConfigError ($$) {
     # just command line, config file, and error messages
     my $rc = emailSend("brandysnap error on " . hostname, $text);
     if ($rc) {
-        printWarning "\nCould not send email to @{$Opt{'email-to'}}.\n";
+        printWarning "\nCould not send email to @{$Opt{'email-to'}}.\n", 1;
     } else {
-        printNote "\nEmail sent to @{$Opt{'email-to'}}\n";
+        printNote "\nEmail sent to @{$Opt{'email-to'}}\n", 1;
     }
 }
 
@@ -1995,6 +2017,11 @@ sub processOptions () {
             'delete-cp!',
             'destination=s@',
             'dry-run|dryrun!',
+            'email-from=s',
+            'email-if=s',
+            'email-prog=s',
+            'email-test!',
+            'email-to:s@',
             'exclude-from=s@',
             'exclude=s@',
             'expire-old!',
@@ -2027,11 +2054,6 @@ sub processOptions () {
             'wbest=i',
             'weekstart=i',
             'ybest=i',
-            'email-prog=s',
-            'email-to=s@',
-            'email-from=s',
-            'email-if=s',
-            'email-test!',
     );
 
     my $errorcount = 0;
@@ -2045,7 +2067,7 @@ sub processOptions () {
         my $GOok = GetOptions(\%cmdopt, @GOarray);
         if (!$GOok) {
             foreach my $error (@GOerrors) {
-                printError $error;
+                printError "On command line: " . $error;
             }
             $errorcount += @GOerrors;
         }
@@ -2054,7 +2076,7 @@ sub processOptions () {
                 join(', ', map {"'$_'"} @ARGV) . "\n";
             $errorcount += @ARGV;
         }
-#        return $errorcount if $errorcount;
+#        return ($errorcount, $warningcount) if $errorcount;
     }
 
     # Validate command-line options 
@@ -2067,8 +2089,13 @@ sub processOptions () {
         if ($msg) {
             printMsg "$msg (on command line)\n";
         }
+#        # TEMP
+#        if ($option eq 'email-to' and !$value) {
+#            print "email-to is blank -- delete it";
+#            ... no, we need to delete it from $Opt, not cmdopt
     }
-#    return $errorcount if $errorcount;
+    # FIXME if we return here, less chance of emailing errors etc.
+    #return ($errorcount, $warningcount) if $errorcount;
 
     # Tweak context options from command line to make them into config-file structures
     foreach my $context (keys %ValidContext) {
@@ -2086,10 +2113,10 @@ sub processOptions () {
         $cmdopt{config} = absPath($cmdopt{config});
         if (-f $cmdopt{config} && -r _) {
             (my $rc, %confopt) = readConfig($cmdopt{config}, \@GOarray);    
-            return $rc if $rc;
+            return (1,0) if $rc;
         } else {
             printError "Configuration file '$cmdopt{config}' can not be read\n";
-            return 1;
+            return (1,0);
         }
     }
 
@@ -2113,7 +2140,7 @@ sub processOptions () {
     # If user asked for help or version, or is running test mode,
     # don't do any more validation
     if ($Opt{help} or $Opt{version} or $Opt{test}) {
-        return 0;
+        return (0,0);
     }
 
     # Check for missing options at general level
@@ -2559,7 +2586,7 @@ Advanced options
                               (default: allow-restart)
 --[no]delete              d  delete no-longer-required snapshots (default: delete) 
 --[no]delete-cp           d  delete even in current period (default: delete-cp)
---[no]expire-old          d  delete oldest snapshots when disk is full (default: no-expire-old)
+--[no]expire-old          d  delete oldest snapshots when disk is full (default: noexpire-old)
 --ldcount      n          d  number of --link-dest options to create (default: 1, max: 20) 
 --[no]restart             ds continue snapshot(s) from previous run (default: norestart)
                               (implies --snapshot) 
@@ -2591,6 +2618,8 @@ sub deleteSnapshot ($) {
     # Delete a snapshot directory, returning the number of errors encountered.
     # Uses rsync to do the deleting, even for local snapshots, because that
     # avoids problems with permissions.
+    # NB This just does the deletion (unless --dry-run) -- the caller must
+    #    check for other reasons not to delete the snapshot
     my $snapshot = shift; 
     debug "doing $S{$snapshot}{fullname}\n", 'dS';
     if ($Opt{'dry-run'}) {
@@ -2598,14 +2627,14 @@ sub deleteSnapshot ($) {
         delete $S{$snapshot};   # really delete it from %S though
         return 0;
     }
-    if (!$Opt{delete}) {
-        printNote "Not deleting snapshot '$S{$snapshot}{name}' because of option 'delete=no'\n", 1;
-        return 0;
-    }
-    if ($S{$snapshot}{note}) {
-        printNote "Not deleting snapshot '$S{$snapshot}{name}' because it has a note\n", 1;
-        return 0;
-    }
+#    if (!$Opt{delete}) {
+#        printNote "Not deleting snapshot '$S{$snapshot}{name}' because of option 'delete=no'\n", 1;
+#        return 0;
+#    }
+#    if ($S{$snapshot}{note}) {
+#        printNote "Not deleting snapshot '$S{$snapshot}{name}' because it has a note\n", 1;
+#        return 0;
+#    }
     # Use some rsync trickery to delete the snapshot
     # (gleaned from http://lists.samba.org/archive/rsync/2010-October/025723.html)
     # This involves copying an empty directory onto the snapshot, and
@@ -2640,7 +2669,7 @@ sub deleteSnapshots (\@\@$) {
     my $ci = 0; # index into @cSpecs
     my $errors = 0;
     debug "list is: " . (join(' ', map {$S{$_}{name}} @D)) . "\n", 'dS';
-    return 0 if !$Opt{delete};
+    #return 0 if !$Opt{delete};
     foreach my $di (0..$#D) {
         my $d = $D[$di];
         # Find the cSpec matching this snapshot (just for the log message)
@@ -2653,12 +2682,22 @@ sub deleteSnapshots (\@\@$) {
         } else {
             my $unfinished = $S{$d}{unfinished} ? 'unfinished ' : '';
             if ($cSpecs[$ci]->{label} eq 'old') {
-                printNote "Deleting old ${unfinished}snapshot '$S{$d}{name}'\n", 1;
+                printNote "Old ${unfinished}snapshot '$S{$d}{name}' is due for deletion\n", 1;
             } else {
-                printNote "Deleting ${unfinished}snapshot '$S{$d}{name}'" . 
-                " because there are too many for spec '" . $cSpecs[$ci]->{label} . "'\n", 1;
+                printNote "\u${unfinished}snapshot '$S{$d}{name}'$unfinished is due for deletion\n" 
+                . "because there are too many for spec '" . $cSpecs[$ci]->{label} . "'\n", 1;
             }
-            $errors += deleteSnapshot($d);
+            if (!$Opt{delete}) {
+                printNote "Not deleting snapshot '$S{$d}{name}' because of " . 
+                "option 'delete=no'\n", 1;
+            } elsif ($S{$d}{note}) {
+                printNote "Not deleting snapshot '$S{$d}{name}' because it has a note\n", 1;
+            } else {
+                my $name = $S{$d}{name}; 
+                my $rc = deleteSnapshot($d);
+                printNote "Snapshot '$name' has been deleted\n", 1 if $rc == 0;
+                $errors += $rc;
+            }
         }
     }
     return $errors;
@@ -2709,13 +2748,6 @@ sub markOrDeleteSnapshot ($$$) {
             printNote "Some sources failed, will $action snapshot\n";
         }
     }
-
-    # don't need this because deleteSnapshot will honour the --delete option
-    #if ($Opt{'dry-run'} and ($action eq 'delete')) {
-    #    printlog "Dry run: would have deleted unfinished snapshot '$sName'\n", 1;
-    #    return;
-    #}
-
     if ($action eq 'delete') {
         my $rc = deleteSnapshot($snapshot);
         if ($rc == 0) {
@@ -2905,7 +2937,7 @@ sub displaySummary () {
     }
     printlog $text, 1;
     # Send email if any or all destinations failed.
-    if (exists $Opt{'email-to'} and 
+    if ($Opt{'email-to'} and 
         ($AllDestsFailed or ($Opt{'email-if'} eq 'any' and $AnyDestFailed))) {
         my $rc = emailSend("$Script error on " . hostname, 
             "This is an error message from $Script running on " . hostname . "." .
@@ -3157,16 +3189,16 @@ sub readMetadata ($) {
                 $md->{totfiles} = undef;
                 $md->{tfrfiles} = undef;
             }
-            # Temporary hack for metadata files that have 0 
-            # where they should have null
-            if (defined $md->{totfiles} and
-                $md->{tfrbytes} == 0 and
-                $md->{totfiles} == 0 and
-                $md->{tfrfiles} == 0     ) {
-                $md->{tfrbytes} = undef;
-                $md->{totfiles} = undef;
-                $md->{tfrfiles} = undef;
-            }
+            ## Temporary hack for metadata files that have 0 
+            ## where they should have null
+            #if (defined $md->{totfiles} and
+            #    $md->{tfrbytes} == 0 and
+            #    $md->{totfiles} == 0 and
+            #    $md->{tfrfiles} == 0     ) {
+            #    $md->{tfrbytes} = undef;
+            #    $md->{totfiles} = undef;
+            #    $md->{tfrfiles} = undef;
+            #}
             #
             delete $md->{size};
             $md->{unfinished} = 0 if !defined $md->{unfinished};
@@ -4672,7 +4704,7 @@ sub runRsync ($\@$) {
         while ($keepTrying and !$Interrupted) {
             $tries += 1;
             printlog " (try $tries of $maxTries)\n", 3 if $maxTries > 1;
-            printlog "Running rsync command: '$Opt{'rsync-cmd'} $args'\n", 1;
+            printlog "Running rsync command: $Opt{'rsync-cmd'} $args\n", 1;
             my $rsyncInterrupted = '';     # only true if interrupted during the main rsync  
             my ($rc, $rc2, $statsR) = systemCall($Opt{'rsync-cmd'}, $args, 4,1);
             $rsyncInterrupted = $Interrupted;
@@ -4806,7 +4838,7 @@ sub runRsync ($\@$) {
                 $srcInfo->{result} = 'succeeded';
                 if ($rc != 0) {
                     printWarning "Some errors from rsync have been ignored\n";
-                    $srcInfo->{result} += ' (minor errors ignored)';
+                    $srcInfo->{result} .= ' (minor errors ignored)';
                 }
                 addStats($S{$snapshot}, $statsR);
             }
@@ -4889,7 +4921,7 @@ sub processDestination ($) {
                 }
                 if ($s < @S and ($now - $S[$s]) < ($Opt{'min-interval'} * MINUTE)) {
                     printNote "\nIt has been less than $Opt{'min-interval'} minutes\n" . 
-                    "      since the last successful snapshot: skipping this destination\n", 1;
+                        "since the last successful snapshot: skipping this destination\n", 1;
                     $Summary{$dest}{result} = 'skipped';
                     $AllDestsFailed = 0;    # counts as successful
                     return;
@@ -5153,6 +5185,7 @@ checkInterruption('while checking options');
 if ($e > 0) {
     printError "Problems found in configuration -- stopping\n";
     printlog "Try '$Script --help' or 'man $Script' for help.\n", 1;
+    # FIXME if there were config options, email-to may not have been set...
     emailConfigError($e, $w);
     logit '-'x80 . "\n", 1;
     exit EXITCONFIG;
