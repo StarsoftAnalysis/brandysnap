@@ -759,7 +759,7 @@ that there are no 'Permission denied' messages.  If there are, you may need to r
 
 =head1 KNOWN ISSUES
 
-As of 28 November 2012 and version 0.2.9, the following issues and bugs are known.
+As of 1 March 2013 and version 0.2.14, the following issues and bugs are known.
 
 =over
 
