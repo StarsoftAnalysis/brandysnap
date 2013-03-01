@@ -1,6 +1,11 @@
 Changelog for brandysnap
 ========================
 
+0.2.14  01/03/2013
+* Add 'visualisation' of snapshots (at verbosity 3) when deleting them.
+* Bug fixes:
+  - was deleting the new snapshot twice when not required.
+
 0.2.13  22/02/2013
 * Empty (or apparently empty) sources are now treated as failures
   (including sources containing only empty directories).

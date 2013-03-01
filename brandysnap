@@ -82,9 +82,9 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-our $VERSION = '0.2.13';
+our $VERSION = '0.2.14';
 
-# A copy of @ARG before it gets shifted
+# A copy of @ARGV before it gets shifted
 my @ARGVcopy = @ARGV;
 
 # Exit codes
@@ -372,16 +372,21 @@ sub printit ($;$) {
 sub logit ($;$) {
     # Simple logging to a text file, preserving newlines in the text while adding a timestamp
     state $blanks = 0;  # keep track of blank lines
+    state $oldnow = 0;  # timestamp from last call
     return if !defined $Opt{validLogfile};
     my $text  = shift;
     my $level = shift // 1;
     return if $level > $Opt{loglevel};
     my $lnl = max(prechomps(\$text) - $blanks, 0);
     my $tnl = chomps(\$text);
-    $text =~ s/\n/\n                  /gs;
-    my $now  = strftime "%y/%m/%d %H:%M:%S ", localtime;
-    print LOGFILE "\n"x$lnl . "${now}${text}" . "\n"x$tnl;
+    my $spaces = ' 'x21;    # same length as strftime format below
+    $text =~ s/\n/\n$spaces/gs;
+    my $now = time();
+    my $tstamp = $spaces;
+    $tstamp = strftime "%Y-%m-%d %H:%M:%S  ", localtime($now) if $now > $oldnow;
+    print LOGFILE "\n"x$lnl . "${tstamp}${text}" . "\n"x$tnl;
     $blanks = $tnl - 1;
+    $oldnow = $now;
 }
 
 # --------------------------------------------------------------------------------------------------
@@ -2614,155 +2619,6 @@ EOT
 
 #---------------------------------------------------------------------------------------------------
 
-sub deleteSnapshot ($) {
-    # Delete a snapshot directory, returning the number of errors encountered.
-    # Uses rsync to do the deleting, even for local snapshots, because that
-    # avoids problems with permissions.
-    # NB This just does the deletion (unless --dry-run) -- the caller must
-    #    check for other reasons not to delete the snapshot
-    my $snapshot = shift; 
-    debug "doing $S{$snapshot}{fullname}\n", 'dS';
-    if ($Opt{'dry-run'}) {
-        printlog "(dry run: would have deleted '$S{$snapshot}{name}')\n", 1;
-        delete $S{$snapshot};   # really delete it from %S though
-        return 0;
-    }
-#    if (!$Opt{delete}) {
-#        printNote "Not deleting snapshot '$S{$snapshot}{name}' because of option 'delete=no'\n", 1;
-#        return 0;
-#    }
-#    if ($S{$snapshot}{note}) {
-#        printNote "Not deleting snapshot '$S{$snapshot}{name}' because it has a note\n", 1;
-#        return 0;
-#    }
-    # Use some rsync trickery to delete the snapshot
-    # (gleaned from http://lists.samba.org/archive/rsync/2010-October/025723.html)
-    # This involves copying an empty directory onto the snapshot, and
-    # removing the snapshot directory itself with filter cleverness.
-    my @output;
-    debug "deleting snapshot the new way\n", 'dS';
-    #my $remPath = $Opt{'remote-rsync-cmd'} ? "--rsync-path '$Opt{'remote-rsync-cmd'}'" : '';
-    my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'}, 
-        stdArgs(1) . " --dirs -f 'R /$S{$snapshot}{name}/**' -f '-!r /$S{$snapshot}{name}' " .
-        "--delete $EmptyDir/ $S{$snapshot}{path}", 
-        9,9, \@output); 
-    debug "rsync output: \n@output", 'dS';
-    debug "rsync returned $rc, '$rc2'\n", 'dS';
-    # This returns no error if the snapshot didn't exist, which is fine
-    if ($rc) {
-        printError "Failed to delete snapshot '$S{$snapshot}{name}' " .
-            "from '$S{$snapshot}{path}' (code $rc/'$rc2')";
-        return 1;
-    }
-    delete $S{$snapshot};   # delete it from %S too
-    return 0;
-}
-
-#---------------------------------------------------------------------------------------------------
-
-sub deleteSnapshots (\@\@$) {
-    # Delete the snapshots from the given list (latest first)
-    my @D         = @{(shift)}; # list of snapshots to delete
-    my @cSpecs    = @{(shift)};
-    my $deleteNew = shift;
-    return if !@D;
-    my $ci = 0; # index into @cSpecs
-    my $errors = 0;
-    debug "list is: " . (join(' ', map {$S{$_}{name}} @D)) . "\n", 'dS';
-    #return 0 if !$Opt{delete};
-    foreach my $di (0..$#D) {
-        my $d = $D[$di];
-        # Find the cSpec matching this snapshot (just for the log message)
-        while ($cSpecs[$ci]->{beg} > $d) { 
-            $ci += 1; 
-        }; 
-        if ($di == 0 and ($deleteNew)) {
-            # Delete the empty directory of the uncreated snapshot (quietly)
-            deleteSnapshot($d);
-        } else {
-            my $unfinished = $S{$d}{unfinished} ? 'unfinished ' : '';
-            if ($cSpecs[$ci]->{label} eq 'old') {
-                printNote "Old ${unfinished}snapshot '$S{$d}{name}' is due for deletion\n", 1;
-            } else {
-                printNote "\u${unfinished}snapshot '$S{$d}{name}'$unfinished is due for deletion\n" 
-                . "because there are too many for spec '" . $cSpecs[$ci]->{label} . "'\n", 1;
-            }
-            if (!$Opt{delete}) {
-                printNote "Not deleting snapshot '$S{$d}{name}' because of " . 
-                "option 'delete=no'\n", 1;
-            } elsif ($S{$d}{note}) {
-                printNote "Not deleting snapshot '$S{$d}{name}' because it has a note\n", 1;
-            } else {
-                my $name = $S{$d}{name}; 
-                my $rc = deleteSnapshot($d);
-                printNote "Snapshot '$name' has been deleted\n", 1 if $rc == 0;
-                $errors += $rc;
-            }
-        }
-    }
-    return $errors;
-}
-
-#---------------------------------------------------------------------------------------------------
-
-sub deleteOldSnapshots (\@;$) {
-    # Delete $n snapshots from the list of old ones (oldest ones first)
-    my $expirablesR = shift;      # use ref, don't copy array, so that it gets popped
-    my $n           = shift // 1;
-    my $deleted = 0;
-    debug "n=$n  expirables=@$expirablesR\n", 'dOS';
-    while (@$expirablesR and $n > 0) {
-        my $e = pop @$expirablesR;
-        $n -= 1;
-        printNote "Expiring old snapshot $S{$e}{name}\n";
-        if (deleteSnapshot($e) == 0) {  
-            $deleted += 1;
-        } else {
-            debug "Failed to delete snapshot $S{$e}{name}\n", 'dOS';
-        }
-    }
-    debug "deleted $deleted oldest snapshots\n", 'dOS';
-    return $deleted;
-}
-
-#---------------------------------------------------------------------------------------------------
-
-sub markOrDeleteSnapshot ($$$) {
-    # Mark or delete a snapshot, depending on options and errors.
-    my $snapshot         = shift; 
-    my $sourcesCompleted = shift;
-    my $restartable      = shift;
-
-    my $sName = $S{$snapshot}{name};   # for convenience
-
-    my $action; # 'delete' or 'keep'
-    if ($restartable and $Opt{'allow-restart'}) {
-        # Don't delete if we want to restart
-        $action = 'keep';
-    } else {
-        if ($sourcesCompleted == 0) {
-            $action = $Opt{'all-failed'};
-            printNote "All sources failed, will $action snapshot\n";
-        } else {
-            $action = $Opt{'some-failed'};
-            printNote "Some sources failed, will $action snapshot\n";
-        }
-    }
-    if ($action eq 'delete') {
-        my $rc = deleteSnapshot($snapshot);
-        if ($rc == 0) {
-            printNote "Snapshot deleted\n";
-        } else {
-            printWarning "Snapshot could not be deleted (error $rc)\n";
-        }
-    } else {
-        # Mark it as unfinished
-        $S{$snapshot}{unfinished} = 1;
-    }
-}
-
-#---------------------------------------------------------------------------------------------------
-
 sub longestName () {
     # Return the length of the longest snapshot name (including any notes)
     my $l = 0;
@@ -3212,6 +3068,308 @@ sub readMetadata ($) {
 
 #===================================================================================================
 
+sub visualise ($$$$$$@) {
+    # Draw a pretty picture of the actual and ideal snapshots given pairs of (label, array).
+    # Doesn't distinguish good and bad snapshots -- the caller
+    # should visualise bad snapshots separately.
+    my $beg        = shift;
+    my $end        = shift;
+    my $showPeriod = shift;
+    my $plevel     = shift;
+    my $llevel     = shift;
+    my $best       = shift; 
+    # If plevel/llevel mean there will be no output, just return
+    return if $plevel > $Opt{verbose} and $llevel > $Opt{loglevel};
+    my $labelwidth = 8;
+    #my ($columns, $rows) = Term::Size::chars *STDOUT{IO};
+    #$columns = max($columns, 132); # minimum, and also if there's no tty
+    my $columns = 80;
+    my $size = $columns - $labelwidth - 3;  # - 18; # -18 for log timestamp
+    my $scale = ceil(($end - $beg) / $size);    
+    debug "beg=$beg end=$end (" . fmtRange($beg,$end) . ") size=$size scale=$scale\n", 'visualise';
+    my $period = '';
+    $period = fmtRange($beg, $end) if $showPeriod;
+
+    while (@_ > 1) {
+        my $label = pack("A$labelwidth", shift);    # force label to specified width
+        my @a     = @{(shift)};
+        debug "label=$label\n", 'vis';
+        my @points = (0) x ($size+1);
+        A: foreach my $a (@a) {
+            my $pos = floor(($a - $beg) / $scale);
+            if ($pos < 0 or $pos > $size) {
+                debug "out of range: $pos should be >= 0 and <= $size, a=$a (" . 
+                    time2stamp($a) . ")\n", 'vis';
+                next A;
+            }   
+            if ($label eq 'Ideal' and !$points[$pos] and $best == $a) {
+                $points[$pos] = 'B';  # this is a nasty hack! what if it later does 'B'+1 ?
+            }
+            else {
+                $points[$pos] += 1;
+            }
+        }
+        printlog "$label|" . join('', 
+            map {
+                !defined($_) ? '.' : 
+                ($_ eq 'B')  ? 'B' :            # 'best' if label is 'Ideal' 
+                ($_ < 1)     ? '.' : 
+                ($_ > 9)     ? '*' : 
+                               $_
+            } 
+            @points) . "| $period\n", $plevel,$llevel;
+        $period = ''; # only show it once
+    }
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub arrayDiff (\@\@) {
+    # Return elements of X that aren't in Y.
+    # This doesn't work if there are duplicates in either array!
+    # (That's OK, 'cos we're only using it for arrays of snapshot
+    # timestamps which are required to be unique.)
+    my @X = @{(shift)};
+    my @Y = @{(shift)};
+    my %Y = map {$_=>1} @Y; # hash version of @Y
+    return grep(!defined $Y{$_}, @X);
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub snapshotBefore ($) {
+    # Return the snapshot before the one given (if any)
+    # For good snapshots, only consider the previous good one.
+    # For bad snapshots, any previous one will do.
+    my $this = shift;   # the snapshot to compare 
+    foreach my $s (rsort keys %S) {
+        # skip the bad ones if this one is good:
+        next if !$S{$this}{unfinished} and $S{$s}{unfinished}; 
+        return $s if $s < $this;
+    }
+    return 0;   # None found, return 0 which will test as false
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub snapshotAfter ($) {
+    # Return the good snapshot after the one given (if any)
+    my $this = shift;   # the snapshot to compare 
+    my $prevs = 0; # If none found, return 0 which will test as false
+    foreach my $s (rsort keys %S) {
+        # skip the bad ones if this one is good:
+        next if !$S{$this}{unfinished} and $S{$s}{unfinished}; 
+        return $prevs if $s <= $this;
+        $prevs = $s;
+    }
+    return $S{$prevs}{unfinished} ? 0 : $prevs; # all snapshots are after the date given, 
+                                                # so return the first one (if it's good)
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub snapshotsInPeriod (\@$$;$) {
+    # Given a list of snapshot dates in descending order,
+    # and a period (beginning and end dates),
+    # return the number of snapshots in the period
+    # or an array of said snapshots, depending on the last parameter.
+    # (Can't use wantarray, because this often gets
+    # called in list context even when just the count is needed)
+    my @S           = @{(shift)};
+    my $beg         = shift;
+    my $end         = shift;
+    my $returnArray = shift // 0;
+    my $count = 0;
+    my @SIP;
+    foreach my $s (@S) {
+        last if $s < $beg;
+        if ($s < $end) {
+            $count += 1;
+            push @SIP, $s;
+        }
+    }
+    debug "$beg..$end " . time2stamp($beg) . '..' . time2stamp($end) . " = $count\n", 'sIP';
+    return @SIP if $returnArray;
+    return $count;
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub nextOldestSnapshot ($\@) {
+    # Return the first snapshot before the given date
+    # or 'undef' if there is no such snapshot
+    my $time = shift;
+    my @S    = @{(shift)};
+    my $nextOldest;
+    foreach my $s (@S) {
+        debug "(" . time2stamp($time) . ") returning " . time2stamp($s) . "\n", 'nOS' if $s < $time;
+        return $s if $s < $time;
+    }
+    debug "(" . time2stamp($time) . ") returning undef\n", 'nOS';
+    return undef;
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub deleteSnapshot ($) {
+    # Delete a snapshot directory, returning the number of errors encountered.
+    # Uses rsync to do the deleting, even for local snapshots, because that
+    # avoids problems with permissions.
+    # NB This just does the deletion (unless --dry-run) -- the caller must
+    #    check for other reasons not to delete the snapshot
+    my $snapshot = shift; 
+    debug "doing $S{$snapshot}{fullname}\n", 'dS';
+    if ($Opt{'dry-run'}) {
+        printlog "(dry run: would have deleted '$S{$snapshot}{name}')\n", 1;
+        delete $S{$snapshot};   # really delete it from %S though
+        return 0;
+    }
+#    if (!$Opt{delete}) {
+#        printNote "Not deleting snapshot '$S{$snapshot}{name}' because of option 'delete=no'\n", 1;
+#        return 0;
+#    }
+#    if ($S{$snapshot}{note}) {
+#        printNote "Not deleting snapshot '$S{$snapshot}{name}' because it has a note\n", 1;
+#        return 0;
+#    }
+    # Use some rsync trickery to delete the snapshot
+    # (gleaned from http://lists.samba.org/archive/rsync/2010-October/025723.html)
+    # This involves copying an empty directory onto the snapshot, and
+    # removing the snapshot directory itself with filter cleverness.
+    my @output;
+    debug "deleting snapshot the new way\n", 'dS';
+    #my $remPath = $Opt{'remote-rsync-cmd'} ? "--rsync-path '$Opt{'remote-rsync-cmd'}'" : '';
+    my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'}, 
+        stdArgs(1) . " --dirs -f 'R /$S{$snapshot}{name}/**' -f '-!r /$S{$snapshot}{name}' " .
+        "--delete $EmptyDir/ $S{$snapshot}{path}", 
+        9,9, \@output); 
+    debug "rsync output: \n@output", 'dS';
+    debug "rsync returned $rc, '$rc2'\n", 'dS';
+    # This returns no error if the snapshot didn't exist, which is fine
+    if ($rc) {
+        printError "Failed to delete snapshot '$S{$snapshot}{name}' " .
+            "from '$S{$snapshot}{path}' (code $rc/'$rc2')";
+        return 1;
+    }
+    delete $S{$snapshot};   # delete it from %S too
+    return 0;
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub deleteSnapshots (\@\@) {
+    # Delete the snapshots from the given list (latest first)
+    my @D         = @{(shift)}; # list of snapshots to delete
+    my @cSpecs    = @{(shift)};
+    return if !@D;
+    my $ci = 0; # index into @cSpecs
+    my $oldci = $ci-1;
+    my $errors = 0;
+    my @S = rsort keys %S;
+    debug "list is: " . (join(' ', map {$S{$_}{name}} @D)) . "\n", 'dS';
+    #return 0 if !$Opt{delete};
+    foreach my $d (@D) {
+        # Find the cSpec matching this snapshot (just for the log message)
+        while ($cSpecs[$ci]->{beg} > $d) { 
+            $ci += 1; 
+        }; 
+        my $cs = $cSpecs[$ci];
+        debug "ci=$ci  oldci=$oldci\n", 'dS';
+        if ($ci > $oldci and $cs->{label} ne 'old') {
+            # Visualise the period containing the snapshots-to-be-deleted
+            my @s = snapshotsInPeriod(@S, $cs->{beg}, $cs->{end}, 1);
+            my @d = snapshotsInPeriod(@D, $cs->{beg}, $cs->{end}, 1);
+            debug "\@s=@s  \@d=@d\n", 'dS';
+            if (@d) {
+                printlog "Snapshots for deletion in " . fmtRange($cs->{beg}, $cs->{end}) . "\n", 3;
+                visualise($cs->{beg}, $cs->{end}, 0, 3,3, $cs->{best}, 
+                    'All S\'s' => \@s, 
+                    'Deleting' => \@d);
+            }
+        }
+        my $unfinished = $S{$d}{unfinished} ? 'unfinished ' : '';
+        if ($cs->{label} eq 'old') {
+            printNote "Old ${unfinished}snapshot '$S{$d}{name}' is due for deletion\n", 1;
+        } else {
+            printNote "\u${unfinished}snapshot '$S{$d}{name}'$unfinished is due for deletion\n" 
+            . "because there are too many for spec '" . $cs->{label} . "'\n", 1;
+        }
+        if (!$Opt{delete}) {
+            printNote "Not deleting snapshot '$S{$d}{name}' because of " . 
+            "option 'delete=no'\n", 1;
+        } elsif ($S{$d}{note}) {
+            printNote "Not deleting snapshot '$S{$d}{name}' because it has a note\n", 1;
+        } else {
+            my $name = $S{$d}{name}; 
+            my $rc = deleteSnapshot($d);
+            printNote "Snapshot '$name' has been deleted\n", 1 if $rc == 0;
+            $errors += $rc;
+        }
+        $oldci = $ci;
+    }
+    return $errors;
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub deleteOldSnapshots (\@;$) {
+    # Delete $n snapshots from the list of old ones (oldest ones first)
+    my $expirablesR = shift;      # use ref, don't copy array, so that it gets popped
+    my $n           = shift // 1;
+    my $deleted = 0;
+    debug "n=$n  expirables=@$expirablesR\n", 'dOS';
+    while (@$expirablesR and $n > 0) {
+        my $e = pop @$expirablesR;
+        $n -= 1;
+        printNote "Expiring old snapshot $S{$e}{name}\n";
+        if (deleteSnapshot($e) == 0) {  
+            $deleted += 1;
+        } else {
+            debug "Failed to delete snapshot $S{$e}{name}\n", 'dOS';
+        }
+    }
+    debug "deleted $deleted oldest snapshots\n", 'dOS';
+    return $deleted;
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub markOrDeleteSnapshot ($$$) {
+    # Mark or delete a snapshot, depending on options and errors.
+    my $snapshot         = shift; 
+    my $sourcesCompleted = shift;
+    my $restartable      = shift;
+
+    my $sName = $S{$snapshot}{name};   # for convenience
+
+    my $action; # 'delete' or 'keep'
+    if ($restartable and $Opt{'allow-restart'}) {
+        # Don't delete if we want to restart
+        $action = 'keep';
+    } else {
+        if ($sourcesCompleted == 0) {
+            $action = $Opt{'all-failed'};
+            printNote "All sources failed, will $action snapshot\n";
+        } else {
+            $action = $Opt{'some-failed'};
+            printNote "Some sources failed, will $action snapshot\n";
+        }
+    }
+    if ($action eq 'delete') {
+        my $rc = deleteSnapshot($snapshot);
+        if ($rc == 0) {
+            printNote "Snapshot deleted\n";
+        } else {
+            printWarning "Snapshot could not be deleted (error $rc)\n";
+        }
+    } else {
+        # Mark it as unfinished
+        $S{$snapshot}{unfinished} = 1;
+    }
+}
+
+#---------------------------------------------------------------------------------------------------
+
 sub getSnapshotList ($) {
     # Read in the existing snapshots, storing their details in global hash %S.
     # Uses rsync in case the destination is remote.
@@ -3329,148 +3487,6 @@ sub getSnapshotList ($) {
         }
     }
     debug "Snapshots: \n" . dumpSnapshotFullnames(), 'gSL';
-}
-
-#---------------------------------------------------------------------------------------------------
-
-sub visualise ($$$$$$@) {
-    # Draw a pretty picture of the actual and ideal snapshots given pairs of (label, array).
-    # Doesn't distinguish good and bad snapshots -- the caller
-    # should visualise bad snapshots separately.
-    my $beg        = shift;
-    my $end        = shift;
-    my $showPeriod = shift;
-    my $plevel     = shift;
-    my $llevel     = shift;
-    my $best       = shift; 
-    # If plevel/llevel mean there will be no output, just return
-    return if $plevel > $Opt{verbose} and $llevel > $Opt{loglevel};
-    my $labelwidth = 8;
-    #my ($columns, $rows) = Term::Size::chars *STDOUT{IO};
-    #$columns = max($columns, 132); # minimum, and also if there's no tty
-    my $columns = 80;
-    my $size = $columns - $labelwidth - 3;  # - 18; # -18 for log timestamp
-    my $scale = ceil(($end - $beg) / $size);    
-    debug "beg=$beg end=$end (" . fmtRange($beg,$end) . ") size=$size scale=$scale\n", 'visualise';
-
-    while (@_ > 1) {
-        my $label = pack("A$labelwidth", shift);    # force label to specified width
-        my @a     = @{(shift)};
-        debug "label=$label\n", 'vis';
-        my @points = (0) x ($size+1);
-        A: foreach my $a (@a) {
-            my $pos = floor(($a - $beg) / $scale);
-            if ($pos < 0 or $pos > $size) {
-                debug "out of range: $pos should be >= 0 and <= $size, a=$a (" . 
-                    time2stamp($a) . ")\n", 'vis';
-                next A;
-            }   
-            if ($label eq 'Ideal' and !$points[$pos] and $best == $a) {
-                $points[$pos] = 'B';  # this is a nasty hack! what if it later does 'B'+1 ?
-            }
-            else {
-                $points[$pos] += 1;
-            }
-        }
-        my $period = '';
-        $period = fmtRange($beg, $end) if $showPeriod;
-        printlog "$label|" . join('', 
-            map {
-                !defined($_) ? '.' : 
-                ($_ eq 'B')  ? 'B' :            # 'best' if label is 'Ideal' 
-                ($_ < 1)     ? '.' : 
-                ($_ > 9)     ? '*' : 
-                               $_
-            } 
-            @points) . "| $period\n", $plevel,$llevel;
-    }
-}
-
-#---------------------------------------------------------------------------------------------------
-
-sub arrayDiff (\@\@) {
-    # Return elements of X that aren't in Y.
-    # This doesn't work if there are duplicates in either array!
-    # (That's OK, 'cos we're only using it for arrays of snapshot
-    # timestamps which are required to be unique.)
-    my @X = @{(shift)};
-    my @Y = @{(shift)};
-    my %Y = map {$_=>1} @Y; # hash version of @Y
-    return grep(!defined $Y{$_}, @X);
-}
-
-#---------------------------------------------------------------------------------------------------
-
-sub snapshotBefore ($) {
-    # Return the snapshot before the one given (if any)
-    # For good snapshots, only consider the previous good one.
-    # For bad snapshots, any previous one will do.
-    my $this = shift;   # the snapshot to compare 
-    foreach my $s (rsort keys %S) {
-        # skip the bad ones if this one is good:
-        next if !$S{$this}{unfinished} and $S{$s}{unfinished}; 
-        return $s if $s < $this;
-    }
-    return 0;   # None found, return 0 which will test as false
-}
-
-#---------------------------------------------------------------------------------------------------
-
-sub snapshotAfter ($) {
-    # Return the good snapshot after the one given (if any)
-    my $this = shift;   # the snapshot to compare 
-    my $prevs = 0; # If none found, return 0 which will test as false
-    foreach my $s (rsort keys %S) {
-        # skip the bad ones if this one is good:
-        next if !$S{$this}{unfinished} and $S{$s}{unfinished}; 
-        return $prevs if $s <= $this;
-        $prevs = $s;
-    }
-    return $S{$prevs}{unfinished} ? 0 : $prevs; # all snapshots are after the date given, 
-                                                # so return the first one (if it's good)
-}
-
-#---------------------------------------------------------------------------------------------------
-
-sub snapshotsInPeriod (\@$$;$) {
-    # Given a list of snapshot dates in descending order,
-    # and a period (beginning and end dates),
-    # return the number of snapshots in the period
-    # or an array of said snapshots, depending on the last parameter.
-    # (Can't use wantarray, because this often gets
-    # called in list context even when just the count is needed)
-    my @S           = @{(shift)};
-    my $beg         = shift;
-    my $end         = shift;
-    my $returnArray = shift // 0;
-    my $count = 0;
-    my @SIP;
-    foreach my $s (@S) {
-        last if $s < $beg;
-        if ($s < $end) {
-            $count += 1;
-            push @SIP, $s;
-        }
-    }
-    debug "$beg..$end " . time2stamp($beg) . '..' . time2stamp($end) . " = $count\n", 'sIP';
-    return @SIP if $returnArray;
-    return $count;
-}
-
-#---------------------------------------------------------------------------------------------------
-
-sub nextOldestSnapshot ($\@) {
-    # Return the first snapshot before the given date
-    # or 'undef' if there is no such snapshot
-    my $time = shift;
-    my @S    = @{(shift)};
-    my $nextOldest;
-    foreach my $s (@S) {
-        debug "(" . time2stamp($time) . ") returning " . time2stamp($s) . "\n", 'nOS' if $s < $time;
-        return $s if $s < $time;
-    }
-        debug "(" . time2stamp($time) . ") returning undef\n", 'nOS';
-    return undef;
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -4983,7 +4999,7 @@ sub processDestination ($) {
                 "so rsync will NOT be run for this destination\n", 1;
             # Tidy up the empty directory we created for it
             deleteSnapshot($S[0]);
-            $Summary{$dest->{location}}{result} = 'not needed';
+            $Summary{$dest}{result} = 'not needed';
             # note that it's not marked as failed
             $AllDestsFailed = 0;
         } else {
@@ -5006,7 +5022,7 @@ sub processDestination ($) {
             # may not be complete (or may not have been created)
             @D = getDeleteList(@cSpecs) if $Opt{snapshot};
             # Now we can actually delete things
-            deleteSnapshots(@D, @cSpecs, $deleteNew);
+            deleteSnapshots(@D, @cSpecs);
         } else {
             printNote "Option 'no-delete' given, so no existing snapshots will be deleted\n", 1;
         }
