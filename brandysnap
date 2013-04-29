@@ -82,7 +82,9 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-our $VERSION = '0.2.14';
+#chomp(my $md5sum = `md5sum $0`);
+#$md5sum = ' [' . $md5sum . ']';
+our $VERSION = "0.2.15-next4";
 
 # A copy of @ARGV before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -213,7 +215,7 @@ my @AllOpt = qw(
     rsync-cmd rsync-opts rsync-xopts remote-rsync-cmd
     include include-from exclude exclude-from
     expire-old
-    bwlimit-in bwlimit-out
+    bwlimit
     status compress restart
     allow-restart ldcount
     all-failed some-failed
@@ -242,7 +244,7 @@ my %StringOpt = (map {$_ => 1} @StringOpt);
 # Numeric options
 my @NumericOpt = qw(verbose loglevel test
     hbest dbest wbest mbest ybest 
-    weekstart bwlimit-in bwlimit-out 
+    weekstart bwlimit 
     ldcount min-interval);
 my %NumericOpt = (map {$_ => 1} @NumericOpt);
 # Level options (take values 0..9)
@@ -279,7 +281,7 @@ my %Matrix = (
         weekstart
         rsync-cmd rsync-opts rsync-xopts remote-rsync-cmd
         expire-old
-        bwlimit-in bwlimit-out
+        bwlimit
         compress restart
         allow-restart ldcount
         all-failed some-failed
@@ -291,7 +293,7 @@ my %Matrix = (
     source => {map {$_ => 1} qw(
         rsync-cmd rsync-opts rsync-xopts remote-rsync-cmd
         include include-from exclude exclude-from
-        bwlimit-in bwlimit-out
+        bwlimit
         compress restart
         allow-restart 
         min-interval
@@ -356,44 +358,65 @@ sub prechomps ($) {
 # --------------------------------------------------------------------------------------------------
 
 sub printit ($;$) {
-    # Print depending on the level of --verbose
-    # (trailing newline to be supplied)
-    state $blanks = 0;  # keep track of blank lines
+    # Print depending on the level of verbosity
+    # (trailing newline to be supplied if required)
+    state $prevnl = 0;  # no. of newlines at end of previous line
+    state $buffer = '';
     my $text  = shift;
     my $level = shift // 1;
     return if $level > $Opt{verbose};
-    my $newblanks = max(prechomps(\$text) - $blanks, 0);
-    print "\n"x$newblanks . $text;
-    $blanks = chomps(\$text) - 1;
+    my $lnl = prechomps(\$text);    # no. of leading newlines
+    my $tnl = chomps(\$text);       # no. of trailing newlines
+    $lnl -= max($prevnl-1, 0);      # merge newlines from previous line
+    if ($tnl == 0) {
+        # text is not complete -- just buffer it
+        $buffer .= "\n"x$lnl . $text;
+        $prevnl = 0;
+    } else {
+        print $buffer . "\n"x$lnl . $text . "\n"x$tnl;
+        $buffer = '';
+        $prevnl = $tnl;
+    }
 }
 
 # --------------------------------------------------------------------------------------------------
 
 sub logit ($;$) {
     # Simple logging to a text file, preserving newlines in the text while adding a timestamp
-    state $blanks = 0;  # keep track of blank lines
+    # (trailing newline to be supplied if required)
+    state $prevnl = 0;  # no. of newlines at end of previous line
+    state $buffer = '';
     state $oldnow = 0;  # timestamp from last call
     return if !defined $Opt{validLogfile};
     my $text  = shift;
     my $level = shift // 1;
     return if $level > $Opt{loglevel};
-    my $lnl = max(prechomps(\$text) - $blanks, 0);
-    my $tnl = chomps(\$text);
-    my $spaces = ' 'x21;    # same length as strftime format below
-    $text =~ s/\n/\n$spaces/gs;
-    my $now = time();
-    my $tstamp = $spaces;
-    $tstamp = strftime "%Y-%m-%d %H:%M:%S  ", localtime($now) if $now > $oldnow;
-    print LOGFILE "\n"x$lnl . "${tstamp}${text}" . "\n"x$tnl;
-    $blanks = $tnl - 1;
-    $oldnow = $now;
+    my $lnl = prechomps(\$text);    # no. of leading newlines
+    my $tnl = chomps(\$text);       # no. of trailing newlines
+    $lnl -= max($prevnl-1, 0);      # merge newlines from previous line
+    if ($tnl == 0) {
+        # text is not complete -- just buffer it
+        $buffer .= "\n"x$lnl . $text;
+        $prevnl = 0;
+    } else {
+        my $spaces = ' 'x21;    # same length as strftime format below
+        $text = $buffer . $text;
+        $text =~ s/\n/\n$spaces/gs;
+        my $now = time();
+        my $tstamp = $spaces;
+        $tstamp = strftime "%Y-%m-%d %H:%M:%S  ", localtime($now) if $now > $oldnow;
+        print LOGFILE "\n"x$lnl . "${tstamp}${text}" . "\n"x$tnl;
+        $buffer = '';
+        $prevnl = $tnl;
+        $oldnow = $now;
+    }
 }
 
 # --------------------------------------------------------------------------------------------------
 
 sub printlog ($;$$); 
 sub printlog ($;$$) {
-    # Print and log depending on the level of verbose
+    # Print and log depending on the level of verbosity
     my $text   = shift;
     my $plevel = shift // 1;
     my $llevel = shift // $plevel;
@@ -520,20 +543,24 @@ sub bytes ($) {
     return '0 B' if $n <= 0;
     my $base = 1024;
     my $mult = 0;
+    #debug "n=$n mult=$mult\n", 'bytes';
     while ($n >= $base) { 
         $n /= $base;
         $mult += 1;
+        #debug "n=$n mult=$mult\n", 'bytes';
     }
     my $dp = 0;
     if ($mult > 0) {
         # minimal code for displaying 3 significant figures:
-        if ($n >= 100) {
+        my $intn = int($n + 0.5);   # $n is always positive
+        if ($intn >= 100) {
             $dp = 0;
-        } elsif ($n >= 10) {
+        } elsif ($intn >= 10) {
             $dp = 1;
         } else {
             $dp = 2;
         }
+        #debug "intn=$intn   dp=$dp\n", 'bytes';
     }
     return sprintf ("%4.*f %s", $dp, $n, $Suffix[$mult]);
 }
@@ -1027,16 +1054,16 @@ sub sourceDir ($) {
 
 sub stdArgs ($) {
     # Return the standard arguments for rsync calls
-    my $sending = shift;  # True for sending, false for receiving
+    my $sending = shift;  # True for sending, false for receiving  !! not used at present
     my $args = '';
     if ($Opt{'remote-rsync-cmd'}) {
         $args .= "--rsync-path '$Opt{'remote-rsync-cmd'}' ";
     }
-    if ($sending) {
-        $args .= "--bwlimit=$Opt{'bwlimit-out'} ";
-    } else {
-        $args .= "--bwlimit=$Opt{'bwlimit-in'} ";
-    }
+    #if ($sending) {
+    #    $args .= "--bwlimit=$Opt{'bwlimit-out'} ";
+    #} else {
+    #    $args .= "--bwlimit=$Opt{'bwlimit-in'} ";
+    #}
     return $args;
 }
 
@@ -1646,8 +1673,9 @@ sub checkOptionSingle ($$) {
                     $w += 1;
                 }
             }
-            # Band-width limits (0 = unlimited)
-            when (['bwlimit-in', 'bwlimit-out']) {
+            # Band-width limit (0 = unlimited)
+            #when (['bwlimit-in', 'bwlimit-out']) {
+            when ('bwlimit') {
                 if (!looks_like_number($value) or $value < 0) {
                     $msg .= "ERROR: Invalid option: '$option' must be zero or a positive whole" . 
                         " number (in kbps), not '$value'\n";
@@ -1973,8 +2001,7 @@ sub processOptions () {
     # 
     $defopt{'all-failed'}   = 'delete';
     $defopt{'allow-restart'} = 1;   
-    $defopt{'bwlimit-in'}   = 0;        
-    $defopt{'bwlimit-out'}  = 0;
+    $defopt{bwlimit}        = 0;
     $defopt{calendar}       = 1;
     $defopt{compress}       = 1;
     $defopt{delete}         = 1;
@@ -2011,8 +2038,7 @@ sub processOptions () {
     my @GOarray = (     # array to pass to GetOptions and GetOptionsFromArray
             'all-failed=s',
             'allow-restart!',
-            'bwlimit-in=f',
-            'bwlimit-out=f',
+            'bwlimit=f',
             'calendar!',
             'compress!',
             'config=s',
@@ -2471,7 +2497,7 @@ sub displayContext ($$$) {
 sub formatOptions () {
     # Return the options nicely formatted
     my $text = '';
-    $text .= "\nConfiguration file: '" . hostname . ":$Opt{config}'\n\n" if $Opt{config};
+    $text .= "\nConfiguration file: '" . hostname . ":$Opt{config}'\n" if $Opt{config};
     $text .= "\nOptions Summary:\n";
     foreach my $opt (sort keys %Opt) {
         next if $opt eq 'validLogfile'; # for internal use only
@@ -2563,9 +2589,7 @@ Rsync options
 --include-from filename  *ds rsync inclusions (can be remote) 
 --exclude      pattern   *ds rsync exclusion
 --exclude-from filename  *ds rsync exclusions (can be remote)
---bwlimit-in   n          ds bandwidth limit for receiving in kbps (default: 0) 
-                              (set to 0 for no limit) 
---bwlimit-out  n          ds bandwidth limit for sending in kbps (default: 0) 
+--bwlimit      n          ds bandwidth limit in kbps (default: 0) 
                               (set to 0 for no limit) 
 --rsync-opts   options    ds standard options to pass to rsync 
                               (default: -aHx --numeric-ids) 
@@ -2679,14 +2703,17 @@ sub status ($\@) {
         # Average:                            123 MiB       0 B     234234    234234 
         # <-------- $nameLength -------->
         my $nameLength = max(longestName()+4, 32); # +4 to allow for ' (u)'
-        printlog sprintf("%-*s   ------ Size ------   ----- Files ------", $nameLength, ''), 
+        printlog sprintf("%-*s   ------ Size ------   ----- Files ------\n", $nameLength, ''), 
             $plevel,$llevel;
-        printlog sprintf("%-*s   %8s  %8s   %8s  %8s   %s\n", $nameLength, 
+        printlog sprintf("%-*s   %8s  %8s   %8s  %8s   %-19s", $nameLength, 
             'Snapshots (most recent first)', 'Total', 'New', 'Total', 'New', 'Spec'), 
             $plevel,$llevel;
-        printlog sprintf("%-*s   %8s--%8s   %8s--%8s   %s\n", $nameLength, '-'x$nameLength, 
-            '-'x8, '-'x8, '-'x8, '-'x8, '-'x12), 
+        printlog '   Period', max($plevel,3),max($llevel,3);
+        printlog sprintf("\n%-*s   %8s--%8s   %8s--%8s   %-12s", 
+            $nameLength, '-'x$nameLength, '-'x8, '-'x8, '-'x8, '-'x8, '-'x19), 
             $plevel,$llevel;
+        printlog '   '.'-'x33, max($plevel,3),max($llevel,3);
+        printlog "\n", $plevel,$llevel;
         # Totals and counts for each column
         my (%total, %count, %value, %avrag);
         my @cols = qw(totbytes tfrbytes totfiles tfrfiles);
@@ -2706,14 +2733,16 @@ sub status ($\@) {
                     printlog "Snapshots no longer covered by specs\n", 1; 
                 } else {
                     printlog "Period covered by spec ${$Opt{pspecs}}[$pi]->{rawspec} is " .
-                    strftime(    '%T %Z %a %d %b %Y', localtime(${$Opt{pspecs}}[$pi]->{beg})) .  
-                    strftime(' to %T %Z %a %d %b %Y', localtime(${$Opt{pspecs}}[$pi]->{end})) . 
-#                    pair2range(${$Opt{pspecs}}[$pi]->{beg}, ${$Opt{pspecs}}[$pi]->{end}) . 
-                    "\n", 1;
+                        fmtRange(${$Opt{pspecs}}[$pi]->{beg}, ${$Opt{pspecs}}[$pi]->{end}) . 
+#                    strftime(    '%T %Z %a %d %b %Y', localtime(${$Opt{pspecs}}[$pi]->{beg})) .  
+#                    strftime(' to %T %Z %a %d %b %Y', localtime(${$Opt{pspecs}}[$pi]->{end})) . 
+##                    pair2range(${$Opt{pspecs}}[$pi]->{beg}, ${$Opt{pspecs}}[$pi]->{end}) . 
+                        "\n", 1;
                 }
             }
             my $name = $S{$s}{name};
             my $label = '';
+            my $period = '';
             if ($S{$s}{unfinished}) {
                 $name .= ' (u)';
                 $ucount += 1;
@@ -2722,8 +2751,12 @@ sub status ($\@) {
                 # Find which cSpec applies (complete snapshots only)
                 while ($cSpecs[$ci]->{beg} > $s) { 
                     $ci += 1; 
-                }; 
-                $label = $cSpecs[$ci]->{label};
+                };
+                if ($ci <= $#cSpecs) { 
+                    $label = $cSpecs[$ci]->{label};
+                    $label = '' if $label eq 'old';
+                    $period = fmtRange($cSpecs[$ci]->{beg}, $cSpecs[$ci]->{fullend}) if $label;
+                }
             }
             # Get values for each column and add to totals
             foreach my $col (@cols) {
@@ -2734,10 +2767,16 @@ sub status ($\@) {
                     $count{$col} += 1;
                 }
             }
-            printlog sprintf("%-*s   %8s  %8s   %8s  %8s   %s\n", $nameLength, $name, 
+            #printlog sprintf("%-*s   %8s  %8s   %8s  %8s   %s\n", $nameLength, $name, 
+            #    bytes($value{totbytes}), bytes($value{tfrbytes}),
+            #    $value{totfiles}, $value{tfrfiles}, $label), 
+            #    $plevel, $llevel;
+            printlog sprintf("%-*s   %8s  %8s   %8s  %8s   %-19s", $nameLength, $name, 
                 bytes($value{totbytes}), bytes($value{tfrbytes}),
-                $value{totfiles}, $value{tfrfiles}, $label), 
+                $value{totfiles}, $value{tfrfiles}, $label),
                 $plevel, $llevel;
+            printlog "   $period", max($plevel,3),max($llevel,3);
+            printlog "\n", $plevel,$llevel;
         }
         # --------------------------------   ------------------   ------------------
         #   Total:  (+999 unfinished) 9999   28.0 MiB  28.0 GiB   12345678  12345678   
@@ -2907,32 +2946,48 @@ sub fullPeriod ($$$) {
 
 #---------------------------------------------------------------------------------------------------
 
-sub fmtRange ($$) {
+sub fmtRange ($$;$) {
     # Format a timestamp range to make it readable
+    # using Date::Manip objects to cope with DST and leap years
     my $beg = shift;
     my $end = shift;
+    my $modeOverride = shift;    # optional
     my $range = $end - $beg;
     my $begStamp = time2stamp($beg);
-    debug "range is " . pair2range($beg, $end) . "\n", 'fR';
-    if ($range == HOUR) {
-        return "hour from " . $begStamp;
-    } elsif ($range == DAY) {
-        return "day from " . $begStamp;
-    } elsif ($range == WEEK) {
-        return "week from " . $begStamp;
-    }
-    # DST/leap years: won't get the whole periods we expect,
-    # but that's just cosmetic.  TODO check for error from DateCalc
-    my $delta = DateCalc(time2date($beg), time2date($end), 1); # (1 = approx mode)
-    debug "delta is $delta\n", 'fR';
-    if ($delta eq '+0:1:+0:0:0:0:0') {
-        return "month from " . $begStamp;
-    } elsif ($delta eq '+1:0:+0:0:0:0:0') {
-        return "year from " . $begStamp;
+    my $err = 0;
+    my $begdate = new Date::Manip::Date;
+    my $enddate = new Date::Manip::Date;
+    $err = $begdate->secs_since_1970_GMT($beg);
+    debug "beg: " . $begdate->printf("%Y-%m-%d %H:%M:%S %Z"), 'fR';
+    $err = $enddate->secs_since_1970_GMT($end);
+    debug "end: " . $enddate->printf("%Y-%m-%d %H:%M:%S %Z"), 'fR';
+    # NB: 'semi' and 'exact' modes are not available in older versions of
+    #     Date::Manip, so we trap the error and default to printing the range.
+    my $mode = 'semi';                      # 'semi' works mostly...
+    $mode = 'exact' if ($range <= HOUR);    # ...but not for hours
+    $mode = $modeOverride if $modeOverride;
+    debug "mode: '$mode'\n", 'fR';
+    my $delta = $begdate->calc($enddate, $mode);
+    my $deltaerr = $delta->err();
+    debug "deltaerr: $deltaerr\n", 'fR';
+    my $deltastring = $delta->value();  
+    $deltastring = 'broken' if !$deltastring;
+    debug "delta: $deltastring\n", 'fR';
+    if      ($deltastring eq '0:0:0:0:0:0:0')     {
+        return "";
+    } elsif ($deltastring =~ /(\d+):0:0:0:0:0:0/) {
+        return "$1 year(s) from " . $begStamp;
+    } elsif ($deltastring =~ /0:(\d+):0:0:0:0:0/) {
+        return "$1 month(s) from " . $begStamp;
+    } elsif ($deltastring =~ /0:0:(\d+):0:0:0:0/) {
+        return "$1 week(s) from " . $begStamp;
+    } elsif ($deltastring =~ /0:0:0:(\d+):0:0:0/) {
+        return "$1 day(s) from " . $begStamp;
+    } elsif ($deltastring =~ /0:0:0:0:(\d+):0:0/) {
+        return "$1 hour(s) from " . $begStamp;
     } else {
-        return "period " . time2stamp($beg) . " to " . time2stamp($end);
+        return time2stamp($beg) . ' - ' . time2stamp($end);
     }
-    # TODO expand this for multiple periods? e.g. if $delta =~ /\+(\d+):0:\+0:0:0:0:0/ -> $1 years
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -3277,12 +3332,12 @@ sub deleteSnapshots (\@\@) {
         debug "ci=$ci  oldci=$oldci\n", 'dS';
         if ($ci > $oldci and $cs->{label} ne 'old') {
             # Visualise the period containing the snapshots-to-be-deleted
-            my @s = snapshotsInPeriod(@S, $cs->{beg}, $cs->{end}, 1);
-            my @d = snapshotsInPeriod(@D, $cs->{beg}, $cs->{end}, 1);
+            my @s = snapshotsInPeriod(@S, $cs->{beg}, $cs->{fullend}, 1);
+            my @d = snapshotsInPeriod(@D, $cs->{beg}, $cs->{fullend}, 1);
             debug "\@s=@s  \@d=@d\n", 'dS';
             if (@d) {
-                printlog "Snapshots for deletion in " . fmtRange($cs->{beg}, $cs->{end}) . "\n", 3;
-                visualise($cs->{beg}, $cs->{end}, 0, 3,3, $cs->{best}, 
+                printlog "Snapshots for deletion in ".fmtRange($cs->{beg},$cs->{fullend})."\n", 3;
+                visualise($cs->{beg}, $cs->{fullend}, 0, 3,3, $cs->{best}, 
                     'All S\'s' => \@s, 
                     'Deleting' => \@d);
             }
@@ -3806,7 +3861,7 @@ sub getDeleteList (\@;$) {
             . pair2range($beg, $end) . " fullend " . time2stamp($c->{fullend}) . "\n", 'gDL';
 
         # Find candidate snapshots in that period
-        # NOTE: $fullend is that same as $end for a full period,
+        # NOTE: $fullend is the same as $end for a full period,
         #       but later than $end for a partial period.
         #       Snapshots in full period are considered when looking for matches
         #       but only those within $beg-$end will actually be deleted
@@ -4140,7 +4195,16 @@ sub compileSpecs ($$) {
     my $firstSpec = 1;  # first spec applies to the current period
     my @cSpecs; # compile specs
 
-    my $end = $now + 1; # +1 to ensure 'now' is within the current period
+    #my $end = $now + 1; # +1 to ensure 'now' is within the current period
+    my $end;
+    # Experimental: set end to end of period containing now
+    if ($Opt{calendar}) {
+        # end of period containing now
+        (undef, $end) = getPeriod($now, $$specsR[0]->{periodn});
+    } else {
+        $end = $now + 1; # +1 to ensure 'now' is within the current period
+    }
+    
     debug "starting with oldestS=" . time2stamp($oldestS) . 
         ", end=" . time2stamp($end) . "\n", 'cS';
     debug "specsR: " . Dumper($specsR), 'cS';
@@ -4153,8 +4217,10 @@ sub compileSpecs ($$) {
         my $gpCount = 0;
 
         if ($Opt{calendar}) {
-            # beginning of period containing (end-1)
+            # beginning of period containing (end-1)   FIXME check -- was end-1 until change above
             ($beg, undef) = getPeriod($end - 1, $spec->{periodn});
+            # experimental 27/3/13 -- use whole period containing 'now'  FIXME
+            # WRONG!!! ($beg, $end) = getPeriod($end - 1, $spec->{periodn});
         } else {
             # period that ends now
             ($beg, undef) = prevPeriod($end, $spec->{periodn});
@@ -4234,7 +4300,7 @@ sub compileSpecs ($$) {
                     count   => $pCount,   # may be fractional
                     best    => 0,
                     rawspec => $spec->{rawspec}, 
-                    label   => $LevelName[$spec->{periodn}] . '(s) with too few snapshots',   
+                    label   => 'incomplete ' . $LevelName[$spec->{periodn}] . '(s)',   
                     sgood   => $sip,
                     sbad    => snapshotsInPeriod(@Sbad, $beg, $end), 
                     #partial => 0,
@@ -4387,17 +4453,17 @@ sub displayCSpecs (\@) {
     printlog   "---------------\n", 3;
 
     # e.g.  From              To              Spec / Comment       Ss    Us    Ds
-    #       20080101-111122 - 20090101-221111 6d7.............37 9999  9999  9999
-    printlog sprintf("%-15s - %-15s  %-37s  %4s  %4s  %4s\n",
+    #       20080101-111122 - 20090101-221111 6d7.............23 9999  9999  9999
+    printlog sprintf("%-15s - %-15s  %-23s  %4s  %4s  %4s\n",
         'From', 'To', 'Spec / Comment', 'Ss', 'Us', 'Ds'), 3;
-    printlog sprintf("%-15s - %-15s  %-37s  %4s  %4s  %4s\n",
-        '-'x15, '-'x15, '-'x37, '----', '----', '----'), 3;
+    printlog sprintf("%-15s - %-15s  %-23s  %4s  %4s  %4s\n",
+        '-'x15, '-'x15, '-'x23, '----', '----', '----'), 3;
     my $totalS = 0;
     my $totalX = 0;
     my $totalD = 0;
     foreach my $c (@cSpecs) { 
         my $excess = max($c->{sgood} + $c->{sbad} - $c->{freqmax}, 0); # how many to delete
-        printlog sprintf("%s - %s  %-37s  %4d  %4d  %4.0d\n",
+        printlog sprintf("%s - %s  %-23s  %4d  %4d  %4.0d\n",
             time2stamp($c->{beg}), 
             time2stamp($c->{end}),
             ($c->{count} eq '' ? '' : sprintf("%g ", $c->{count})) . $c->{label}, 
@@ -4409,9 +4475,9 @@ sub displayCSpecs (\@) {
         $totalX += $c->{sbad};
         $totalD += $excess;
     }
-    printlog sprintf("%-15s   %-15s  %37s  %4s  %4s  %4s\n",
-        '', '', '-'x37, '----', '----', '----'), 3;
-    printlog sprintf("%-15s   %-15s  %37s  %4d  %4d  %4d\n\n",
+    printlog sprintf("%-15s   %-15s  %23s  %4s  %4s  %4s\n",
+        '', '', '-'x23, '----', '----', '----'), 3;
+    printlog sprintf("%-15s   %-15s  %23s  %4d  %4d  %4d\n\n",
         '', '', 'Totals:', $totalS, $totalX, $totalD), 3;
 
     # Visualise each cSpec period
@@ -4679,26 +4745,28 @@ sub runRsync ($\@$) {
         # files, but don't count towards the total.
         # Experimental: snapshots less than a % of the average size are linked but not counted
         # Note that rsync limits the number of link-dests to 20.
-        my $ld    = 0; # number of 'good' link-dests created
-        my $s = 1;  # start at snapshot 1 (i.e. skip the 0th one that we're creating now)
+        # But don't do any of this in --dry-run mode because the new directory won't
+        # have been created from which we're creating the relative path.
         my $linkdest = '';
-        while ($ld < $Opt{ldcount} and $s <= min($#S, 20)) {
-            debug "linking: s=$s S[s]=$S[$s] S{S[s]}{name}=$S{$S[$s]}{name}\n", 'rR';
-            $linkdest .= "--link-dest='../../$S{$S[$s]}{name}/$subDir' ";
-            debug "sAvBytes=$sAvBytes   this s=$S{$S[$s]}{totbytes}\n", 'rR';
-            $ld += 1 if !$S{$S[$s]}{unfinished} and ($S{$S[$s]}{totbytes} > $sAvBytes*0.3);
-            $s += 1;
+        if (!$Opt{'dry-run'}) {
+            my $ld = 0; # number of 'good' link-dests created
+            my $s = 1;  # start at snapshot 1 (i.e. skip the 0th one that we're creating now)
+            while ($ld < $Opt{ldcount} and $s <= min($#S, 20)) {
+                debug "linking: s=$s S[s]=$S[$s] S{S[s]}{name}=$S{$S[$s]}{name}\n", 'rR';
+                $linkdest .= "--link-dest='../../$S{$S[$s]}{name}/$subDir' ";
+                debug "sAvBytes=$sAvBytes   this s=$S{$S[$s]}{totbytes}\n", 'rR';
+                $ld += 1 if !$S{$S[$s]}{unfinished} and ($S{$S[$s]}{totbytes} > $sAvBytes*0.3);
+                $s += 1;
+            }
         }
 
         # Set compression option
         my $compression = '';
         $compression = '--compress' if $Opt{compress} and ($remoteSource or $remoteDest);
 
-        # Set bandwidth limit, depending on the direction
-        # (or none if dest and source are both local)
+        # Set bandwidth limit unless dest and source are both local
         my $bwlimit = '';
-        $bwlimit = "--bwlimit=$Opt{'bwlimit-in'}"  if $remoteSource;
-        $bwlimit = "--bwlimit=$Opt{'bwlimit-out'}" if $remoteDest;
+        $bwlimit = "--bwlimit=$Opt{bwlimit}" if $remoteSource or $remoteDest;
 
         # Set remote rsync option
         my $rsyncPath = '';
@@ -4706,7 +4774,7 @@ sub runRsync ($\@$) {
             if ($Opt{'remote-rsync-cmd'} and ($remoteSource or $remoteDest));
 
         printlog "Running rsync from source '$location' to destination '$destDir'\n", 2;
-        # Note that rsync-opts is put first -- 
+        # Note that rsync-opts and rsync-xopts are put first -- 
         # our own required options will override the user's
         my $args = "$Opt{'rsync-opts'} $Opt{'rsync-xopts'} " .
             "$verbose $linkdest $incExcOpts $compression " . 
@@ -5217,24 +5285,28 @@ if ($Opt{help}) {
     showHelp;
     exit EXITOK;
 }
+delete $Opt{help};  # no longer needed
 
 # Version requested - display and exit
 if ($Opt{version}) {
     showLicence;
     exit EXITOK;
 }
+delete $Opt{version};  # no longer needed
 
 # Just run the test suite if required 
 if ($Opt{test}) {
     testSuite();
     exit;
 }
+delete $Opt{test};  # no longer needed
 
 # Just send a test email if required
 if ($Opt{'email-test'}) {
     emailTest();
     exit;
 }
+delete $Opt{'email-test'};  # no longer needed
 
 displayOptions();
 
