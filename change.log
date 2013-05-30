@@ -1,6 +1,18 @@
 Changelog for brandysnap
 ========================
 
+0.2.15	30/05/2013
+* Replace 'bwlimit-in' and 'bwlimit-out' options with single 'bwlimit' --
+  possible now that options can be specified per source or destination.
+* Added period covered by each spec to the status listing at level 3 or
+  greater.
+* Bug fixes:
+  - use full range when visualising partial periods
+  - set end of current period to proper end, not now+1
+  - better fmtRange() that copes with DST changes
+  - better bytes() that deals with edge cases
+  - better printit() and logit()
+
 0.2.14  01/03/2013
 * Add 'visualisation' of snapshots (at verbosity 3) when deleting them.
 * Bug fixes:

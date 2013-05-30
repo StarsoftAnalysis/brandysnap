@@ -84,7 +84,7 @@ my $Script = 'brandysnap';
 # Version of this script
 #chomp(my $md5sum = `md5sum $0`);
 #$md5sum = ' [' . $md5sum . ']';
-our $VERSION = "0.2.15-next4";
+our $VERSION = "0.2.15";
 
 # A copy of @ARGV before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -2693,11 +2693,11 @@ sub status ($\@) {
     if (!%S) {
         printlog "No snapshots found\n", $plevel,$llevel;
     } else {
-        # Report layout:
+        # Report layout: (plus the 'Period' column at level 3)
         #                                    ------ Size ------   ----- Files ------
         # Snapshots (most recent first)         Total       New      Total       New   Spec
-        # --------------------------------   ------------------   ------------------   ------------
-        # template-20121024-123456-note      1.23 MiB  1023 MiB    9999999      9999   1-4h23:21
+        # --------------------------------   ------------------   ------------------   -----------
+        # template-20121024-123456-note      1.23 MiB  1023 MiB    9999999      9999   98-99h23:21
         # --------------------------------   ------------------   ------------------
         #   Total:  (+999 unfinished) 9999   28.0 MiB  28.0 GiB   12345678  12345678   
         # Average:                            123 MiB       0 B     234234    234234 
@@ -2705,12 +2705,12 @@ sub status ($\@) {
         my $nameLength = max(longestName()+4, 32); # +4 to allow for ' (u)'
         printlog sprintf("%-*s   ------ Size ------   ----- Files ------\n", $nameLength, ''), 
             $plevel,$llevel;
-        printlog sprintf("%-*s   %8s  %8s   %8s  %8s   %-19s", $nameLength, 
+        printlog sprintf("%-*s   %8s  %8s   %8s  %8s   %-11s", $nameLength, 
             'Snapshots (most recent first)', 'Total', 'New', 'Total', 'New', 'Spec'), 
             $plevel,$llevel;
         printlog '   Period', max($plevel,3),max($llevel,3);
-        printlog sprintf("\n%-*s   %8s--%8s   %8s--%8s   %-12s", 
-            $nameLength, '-'x$nameLength, '-'x8, '-'x8, '-'x8, '-'x8, '-'x19), 
+        printlog sprintf("\n%-*s   %8s--%8s   %8s--%8s   %-11s", 
+            $nameLength, '-'x$nameLength, '-'x8, '-'x8, '-'x8, '-'x8, '-'x11), 
             $plevel,$llevel;
         printlog '   '.'-'x33, max($plevel,3),max($llevel,3);
         printlog "\n", $plevel,$llevel;
@@ -2734,9 +2734,6 @@ sub status ($\@) {
                 } else {
                     printlog "Period covered by spec ${$Opt{pspecs}}[$pi]->{rawspec} is " .
                         fmtRange(${$Opt{pspecs}}[$pi]->{beg}, ${$Opt{pspecs}}[$pi]->{end}) . 
-#                    strftime(    '%T %Z %a %d %b %Y', localtime(${$Opt{pspecs}}[$pi]->{beg})) .  
-#                    strftime(' to %T %Z %a %d %b %Y', localtime(${$Opt{pspecs}}[$pi]->{end})) . 
-##                    pair2range(${$Opt{pspecs}}[$pi]->{beg}, ${$Opt{pspecs}}[$pi]->{end}) . 
                         "\n", 1;
                 }
             }
@@ -2754,8 +2751,12 @@ sub status ($\@) {
                 };
                 if ($ci <= $#cSpecs) { 
                     $label = $cSpecs[$ci]->{label};
+                    # 'old' snapshots (only kept if there's a note) belong
+                    # to neither spec nor period
                     $label = '' if $label eq 'old';
                     $period = fmtRange($cSpecs[$ci]->{beg}, $cSpecs[$ci]->{fullend}) if $label;
+                    # snapshots in incomplete periods belong to a period but not to a spec
+                    $label = '' if $label =~ /incomplete/;
                 }
             }
             # Get values for each column and add to totals
@@ -2767,11 +2768,7 @@ sub status ($\@) {
                     $count{$col} += 1;
                 }
             }
-            #printlog sprintf("%-*s   %8s  %8s   %8s  %8s   %s\n", $nameLength, $name, 
-            #    bytes($value{totbytes}), bytes($value{tfrbytes}),
-            #    $value{totfiles}, $value{tfrfiles}, $label), 
-            #    $plevel, $llevel;
-            printlog sprintf("%-*s   %8s  %8s   %8s  %8s   %-19s", $nameLength, $name, 
+            printlog sprintf("%-*s   %8s  %8s   %8s  %8s   %-11s", $nameLength, $name, 
                 bytes($value{totbytes}), bytes($value{tfrbytes}),
                 $value{totfiles}, $value{tfrfiles}, $label),
                 $plevel, $llevel;
@@ -5279,6 +5276,12 @@ if ($e > 0) {
 if (keys %{$Opt{debug}} == 0) {
     $SIG{__DIE__} = 'DEFAULT';  
 } 
+
+# If user has specifically requested output, 
+# make sure that --verbosity is at least 1
+if ($Opt{help} or $Opt{version} or $Opt{status} or $Opt{test} or $Opt{'email-test'}) {
+    $Opt{verbose} = max($Opt{verbose}, 1);
+}
 
 # Help requested - display and exit
 if ($Opt{help}) {
