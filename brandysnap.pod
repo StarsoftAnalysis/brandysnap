@@ -87,7 +87,7 @@ and then run
  brandysnap --dry-run --conf brandysnap-test1.conf
 
 The B<dry-run> option will mean that nothing will actually be done.  
-Once you're happy than the script won't break anything, try it without the B<dry-run>.    
+Once you're happy that the script won't break anything, try it without the B<dry-run>.    
 
 For more options, run B<brandysnap --help>.
 
@@ -139,7 +139,7 @@ It creates a new snapshot every time (usually).
 What is more interesting is how many snapshots are KEPT.  
 This is determined by a series of specifications, or 'specs', such as
 
- 4d5,3w3,1d11
+ 4d5,3w3,1m11
 
 which is a concise way of saying 'keep four snapshots a day from the last five days, 
 then three a week for three weeks, then one a month for eleven months.  
@@ -199,6 +199,8 @@ will be interpreted as B<4d7,2w4>.  The 'day' specification is expanded to a wee
 
 If the last spec has no count, it will be padded 'forever'.  The number of snapshots will only be limited by the available disk space.  And when the disk is full, the oldest snapshots will be deleted.
 
+Snapshots also get deleted as time passes.  If a day with four snapshots gets to be old enough to fall within a B<2w4> spec, then the extra snapshots will be deleted.
+
 More spec examples:
 
 =over
@@ -218,8 +220,6 @@ B<0-6d5,2-5w3,4m12> - keep up to 6 snapshots a day for five days, but consider d
 =item * 
 
 =back
-
-Snapshots also get deleted as time passes.  If a day with four snapshots gets to be old enough to fall within a B<3w> spec, then the extra snapshots will be deleted.
 
 =head2 Managing Snapshots Manually
 
@@ -318,29 +318,33 @@ C</home/ann> (excluding C<.cache>) will be copied to C</backups/two>.
 
 Only certain options are valid within each context.  A destination context can contain these options:
 
- hbest dbest wbest mbest ybest
- safe calendar strict
- source template spec
- snapshot delete delete-cp
- weekstart
- rsync-cmd rsync-opts rsync-xopts remote-rsync-cmd
- expire-old
- bwlimit
- compress restart
- allow-restart ldcount
- all-failed some-failed
- min-interval
- verbose loglevel debug 
+        hbest dbest wbest mbest ybest
+        safe calendar strict
+        source template specs
+        include include-from exclude exclude-from   
+        snapshot delete delete-cp
+        weekstart
+        rsync-cmd rsync-opts rsync-xopts remote-rsync-cmd
+        expire-old
+        bwlimit latest
+        compress restart
+        allow-restart ldcount timeout-retries
+        all-failed some-failed
+        min-interval hostname
+        verbose loglevel debug
 
 A source context can contain these options:
 
- rsync-cmd rsync-opts rsync-xopts remote-rsync-cmd
- include include-from exclude exclude-from
- bwlimit
- compress restart
- allow-restart 
- min-interval
- verbose loglevel debug
+        rsync-cmd rsync-opts rsync-xopts remote-rsync-cmd
+        include include-from exclude exclude-from
+        bwlimit
+        compress restart
+        allow-restart timeout-retries
+        min-interval hostname
+        verbose loglevel debug
+
+
+=head1 OPTIONS
 
 =over
 
@@ -353,9 +357,6 @@ Options marked with '!' in the following list are required.
 Options marked with '*' in the following list can be specified more than once.
 
 =back
-
-=head1 OPTIONS
-
 
 =head2 Main options
 
@@ -424,7 +425,8 @@ The directory name of each snapshot is of the form
 
  <template>-<timestamp>
 
-See the [Snapshot Names section](#snapshotNames) for more details.
+See the L<Snapshot names section|"Snapshot names"> for more details.
+
 Example:
 
  template docs
@@ -592,8 +594,13 @@ Options to pass to rsync, in addition to those that brandysnap will always use (
 
 =item B<rsync-xopts I<options>>
 
-Extra options to pass to rsync.  This is a convenience option to all you to add to or override
+Extra options to pass to rsync.  This is a convenience option to allow you to add to or override
 the standard options without having to remember what the standard options are.  (default: none)
+
+=item B<timeout-retries I<n>>
+
+The number of times to retry rsync after a time-out error.  This may be useful if the connection
+between the source and destination is unreliable.  (default: 0)
 
 =back
 
@@ -655,6 +662,33 @@ Include the 'current period' when considering which snapshots to delete.  See th
 Consider _all_ snapshots (oldest first) as expirable to make room when the destination is full. 
 (default: B<noexpire-old>)
 
+=item B<hostname>
+
+Override the hostname or fully-qualified domain name that is used in the snapshot path.
+Normally, this is the host name of the computer running brandysnap if the source is local, or the FQDN of the source if it's remote.
+
+This option is only useful if, for example, brandysnap 
+is running from a live CD to backup files from a non-functioning machine: you would
+then supply the hostname of the dead computer along with the configuration file from it so
+that the snapshot matches the existing ones (and so that --link-dest works properly).
+
+(default: the hostname of the source computer)
+
+=item B<[no]latest>
+
+If this option specified, an additional hard-linked copy of the new snapshot
+will be created called <template>-latest.  This is designed for use with, for example,
+and online backup service which is configured to upload just the latest snapshot.
+
+Note: if the destination is remote, brandysnap has to use ssh to run rsnapshot
+remotely: this may require extra configuration of permissions and ssh keys
+in order to allow brandysnap to run without prompting for passwords.
+
+Note: latest snapshots can NOT be created on remote destinations when connecting
+via an rsync daemon.
+
+(default: B<nolatest>)
+
 =item B<ldcount I<n>>
 
 Specify the number of previous snapshots that rsync will search looking for identical 
@@ -705,38 +739,46 @@ Run test case 'n'.
 
 =head1 FURTHER DETAILS
 
-=head2 <a name="calendarMode">Calendar mode</a>
+=head2 Calendar mode
 
 In 'calendar mode', which is the default, brandysnap works in terms of real weeks and months.  
 Days always start at midnight, weeks at midnight on Sunday etc. (but see the B<--weekstart> option).
+
 In non-calendar mode, the specs are interpreted more simply, 
 working backwards from the moment when brandysnap is run.  
 There will be no gap between periods: days and weeks can start at any time, 
 depending on when the previous spec ran out.
 
-=head2 <a name="safeMode">Safe mode</a>
+=head2 Safe mode
 
-In 'safe mode', which the default, specs will only match against the list of existing snapshots if there are enough snapshots to satisfy the spec's definition.  Incomplete specs will be skipped.  This has the result that brandysnap is less likely to delete snapshots.  This is designed to cater for situations when brandysnap has not run successfully as often as it should have, for whatever reason.  For example, because of weekends or holidays, or because the destination wasn't available because an external USB drive wasn't connected (or two or more USB drives are being used in rotation).  e.g if the spec is B<4d5>, it's now Monday and brandysnap did not run at the weekend, then the days with fewer than 4 snapshots (i.e. Saturday and Sunday) will be skipped; counting the 5 days will start on Friday and work backwards from there.  Safe mode can be turned off via the B<--safe> option.
+In 'safe mode', which is the default, specs will only match against the list of existing snapshots 
+if there are enough snapshots to satisfy the spec's definition.  Incomplete specs will be skipped.  
+This has the result that brandysnap is less likely to delete snapshots.  
+This is designed to cater for situations when brandysnap has not run successfully 
+as often as it should have, for whatever reason.  For example, because of weekends or holidays, 
+or because the destination wasn't available because an external USB drive wasn't connected 
+(or two or more USB drives are being used in rotation).  e.g if the spec is B<4d5>, it's now 
+Monday and brandysnap did not run at the weekend, then the days with fewer than 4 snapshots 
+(i.e. Saturday and Sunday) will be skipped; counting the 5 days will start on Friday and 
+work backwards from there.  Safe mode can be turned off via the B<--safe> option.
 
 =head2 Strict mode
 
-In 'strict mode', which is not the default, brandysnap will not run if there are minor problems with the specs.  Normally, it will display information about how it has interpreted the specs, and carry on.
+In 'strict mode', which is not the default, brandysnap will not run if there are minor problems with the specs.  
+Normally, it will display information about how it has interpreted the specs, and carry on.
 
 =head2 Weeks and months and years
 
 The fact that months and years do not have whole or fixed numbers of 
 weeks makes counting periods awkward.  Brandysnap deals with this by 
-skipping over the extra days, and not deleting any of their snapshots. 
+skipping over the extra days, and only deleting their snapshots if
+they would have been deleted in a complete period. 
 
 =head2 Status report
 
 Brandysnap displays a status report on all existing snapshots at the end of each run.
 
-However, if the destination is on a remote computer, the status report does include details of the disk space used by each snapshot because of the process of retrieving that information is slow.
-
-The full status report can be seen for remote destinations by running brandysnap with the B<--status> option in addition to the usual configuration.  And even then, can only display 'Real size', not 'Delete size', because rsync doesn't give information about the number of hard links.
-
-=head2 <a name="snapshotNames">Snapshot names</a>
+=head2 Snapshot names
 
 Each snapshot is a separate directory within the destination, with a name of the form
 

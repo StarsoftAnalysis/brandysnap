@@ -82,9 +82,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-#chomp(my $md5sum = `md5sum $0`);
-#$md5sum = ' [' . $md5sum . ']';
-our $VERSION = "0.2.15";
+our $VERSION = "0.2.16";
 
 # A copy of @ARGV before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -170,6 +168,8 @@ use constant HOUR   => MINUTE * 60;
 use constant DAY    => HOUR * 24;
 use constant WEEK   => DAY * 7;
 # months and years aren't fixed in terms of seconds!
+use constant MONTH  => DAY * 28;    # shortest possible month
+use constant YEAR   => DAY * 365;   # non-leap year
 
 # Error codes trapped in systemCall()
 my %ErrorCodes = (
@@ -215,11 +215,12 @@ my @AllOpt = qw(
     rsync-cmd rsync-opts rsync-xopts remote-rsync-cmd
     include include-from exclude exclude-from
     expire-old
-    bwlimit
+    bwlimit latest
     status compress restart
     allow-restart ldcount
     all-failed some-failed
-    min-interval
+    min-interval hostname
+    timeout-retries
     email-prog email-to email-from email-if email-test
     );
 my %AllOpt = (map {$_ => 1} @AllOpt);
@@ -231,20 +232,20 @@ my %ReqOpt = (map {$_ => 1} @ReqOpt);
 my %MultiOpt = (map {$_ => 1} qw(source include include-from
     exclude exclude-from destination debug email-to));
 # Boolean options
-my @BoolOpt  = qw(safe calendar snapshot delete delete-cp dry-run help strict 
+my @BoolOpt = qw(safe calendar snapshot delete delete-cp dry-run help strict 
     version expire-old status compress restart allow-restart
-    email-test);
+    email-test latest);
 my %BoolOpt = (map {$_ => 1} @BoolOpt);
 # String options (NOT the multi-value ones, which are dealt with separately)
 my @StringOpt = qw(config lockfile logfile template
     rsync-cmd rsync-opts rsync-xopts remote-rsync-cmd
-    all-failed some-failed
+    all-failed some-failed hostname
     email-from email-prog);
 my %StringOpt = (map {$_ => 1} @StringOpt);
 # Numeric options
 my @NumericOpt = qw(verbose loglevel test
     hbest dbest wbest mbest ybest 
-    weekstart bwlimit 
+    weekstart bwlimit timeout-retries 
     ldcount min-interval);
 my %NumericOpt = (map {$_ => 1} @NumericOpt);
 # Level options (take values 0..9)
@@ -281,11 +282,11 @@ my %Matrix = (
         weekstart
         rsync-cmd rsync-opts rsync-xopts remote-rsync-cmd
         expire-old
-        bwlimit
+        bwlimit latest
         compress restart
-        allow-restart ldcount
+        allow-restart ldcount timeout-retries
         all-failed some-failed
-        min-interval
+        min-interval hostname
         verbose loglevel debug
     )},
     # some dest-related options can be specified per-source
@@ -295,8 +296,8 @@ my %Matrix = (
         include include-from exclude exclude-from
         bwlimit
         compress restart
-        allow-restart 
-        min-interval
+        allow-restart timeout-retries
+        min-interval hostname
         verbose loglevel debug
     )},
 );
@@ -527,7 +528,8 @@ sub max ($$) {
 sub round ($) {
     # Simplistic integer rounding
     my $float = shift;
-    return int($float + $float/abs($float*2));
+    return int($float - 0.5) if $float < 0;
+    return int($float + 0.5);
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -539,8 +541,8 @@ sub bytes ($) {
     # Return '0 B' if size is zero or less
     # (it could be -1 for a new snapshot during a dry-run)
     my $n = shift;
-    return '' if (!defined $n) or ($n eq '');
-    return '0 B' if $n <= 0;
+    return '' if (!defined $n) or ($n eq '') or ($n < 0);
+    return '0 B' if $n == 0;
     my $base = 1024;
     my $mult = 0;
     #debug "n=$n mult=$mult\n", 'bytes';
@@ -697,9 +699,7 @@ sub fmtSpec ($$$$) {
 sub diskSpace ($) {
     # Convert a file size to the space used on the disk
     # by rounding it up to a multiple of the block size
-    # NOTE: we assume a blocksize of 512 -- that's good enough, as this is only for displaying
-    #       the approximate space used by a snapshot, and getting the real blocksize
-    #       is probably impossible since we want to use rsync for everything.
+    # NOTE: we assume a blocksize of 512 -- see 'man 2 stat'
     my $size = shift;
     my $blocksize = 512;
     return ceil($size / $blocksize) * $blocksize; 
@@ -713,6 +713,25 @@ sub checkInterruption ($) {
     if ($Interrupted) {
         printError "\nInterrupted with signal '$Interrupted' $msg\n", 1;
         exit EXITINT;
+    }
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub isHostOrFQDN {
+    # Returns 1 if the given string is a simple hostname (e.g. 'fred') or
+    # a fully-qualified domain name (e.g. 'fred.co.uk')
+    # It does NOT allow internationalised domain names.
+    # And it doesn't check that each segment is 63 chars or less.  etc.  Not my problem.
+    # From http://www.perlmonks.org/index.pl?node_id=33357
+    my $name = shift;                                
+    if ($name =~ m/
+        ^(([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\-]*[A-Za-z0-9]+)\.)*   # 0 or more bits ending with '.'
+          ([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\-]*[A-Za-z0-9])$       # final bit with no '.'
+        /x) {
+        return 1;
+    } else {
+        return 0;
     }
 }
 
@@ -1037,15 +1056,23 @@ sub sourceDir ($) {
     # would both put files into /home on the destination without this.
     #
     # rsync deals with remote sources in the following formats:
-    #   [USER@]HOST:SRC                 
-    #   [USER@]HOST::SRC                
-    #   rsync://[USER@]HOST[:PORT]/SRC  
-    # In each case, the enclosing directory will just be HOST
+    #   [USER@]HOST::MODULE/SRC
+    #   rsync://[USER@]HOST[:PORT]/MODULE/SRC
+    #   [USER@]HOST:SRC
+    # The enclosing directory will be HOST[-MODULE]
     my $source = shift;
     return '' if !remote($source);
-    my $dir;
-    if ($source =~ m{^(rsync://|)((?<u>[^@]*)@)?(?<h>[^:/]+)}) {  
-        $dir = "$+{h}";
+    my $dir = '';
+    if (($source =~ m{^((?<u>[^@]*)@)?(?<h>[^:/]+)::(?<m>[^/]+)}) or 
+        ($source =~ m{^rsync://((?<u>[^@]*)@)?(?<h>[^:/]+)(:(?<p>\d+))?/(?<m>[^/]+)})) {
+        # daemon
+        $dir = "$+{h}-$+{m}";
+    } elsif ($source =~ m{^((?<u>[^@]*)@)?(?<h>[^:/]+):}) {
+        # non-daemon
+        $dir = $+{h};
+    } else {
+        # shouldn't happen -- return ''
+        printWarning "Unparseable source '$source'", 1,1;
     }
     return $dir;
 }
@@ -1461,10 +1488,10 @@ sub parseSpecs ($) {
             # This is done even if --calendar is false.
             if ($i == $#specs) {
                 # last spec -- can't pad, so set count to lots
-                printNote "Last spec padded forever\n";
+                #printNote "Last spec padded forever\n";
                 $spec->{count} = UNLIMITED; 
             } elsif ($specs[$i+1]->{periodn} <= $spec->{periodn}) {
-                #printWarning "Can not pad spec $spec->{rawspec} because next spec is " .
+                #printWarning "Cannot pad spec $spec->{rawspec} because next spec is " .
                 #    "not at a higher level; count set to 1\n";
                 #$warningcount += 1;
                 $spec->{count} = 1;
@@ -1539,6 +1566,7 @@ sub parseSpecs ($) {
     # Return the rawspecs (with padding) to put back into the %Opt hash
     $rawspecs = join(',', map {$_->{rawspec}} @specs);
     debug "returning w=$warningcount e=$errorcount specs=@specs rawspecs=$rawspecs\n", 'pS';
+    debug "specs: " . Dumper(\@specs), 'pS';
 
     return $warningcount, $errorcount, $rawspecs, @specs;  
 }
@@ -1614,118 +1642,119 @@ sub checkOptionSingle ($$) {
 
     if ($e == 0) {
         # Do option-specific checks
-        for ($option) {
-            # 'Best' options
-            when ('hbest') {
-                if (!($value >= 0 and $value <= 59)) {
-                    $msg .=  "ERROR: Invalid option: 'hbest' must be a whole number between" . 
-                        " 0 and 59, not '$value'\n";
-                    $e += 1;
-                }
+        # 'Best' options
+        if ($option eq 'hbest') {
+            if (!($value >= 0 and $value <= 59)) {
+                $msg .=  "ERROR: Invalid option: 'hbest' must be a whole number between" . 
+                " 0 and 59, not '$value'\n";
+                $e += 1;
             }
-            when ('dbest') {
-                if (!($value >= 0 and $value < 24.0)) {
-                    $msg .=  "ERROR: Invalid option: 'dbest' must be a number between 0 and" . 
-                        " 23.9, not '$value'\n";
-                    $e += 1;
-                }
+        } elsif ($option eq 'dbest') {
+            if (!($value >= 0 and $value < 24.0)) {
+                $msg .=  "ERROR: Invalid option: 'dbest' must be a number between 0 and" . 
+                " 23.9, not '$value'\n";
+                $e += 1;
             }
-            when ('wbest') {
-                if (!($value >= 1 and $value <= 7)) {
-                    $msg .=  "ERROR: Invalid option: 'wbest' must be a whole number between" . 
-                        " 1 and 7 (1=Sunday, 7=Saturday), not '$value'\n";
-                    $e += 1;
-                }
+        } elsif ($option eq 'wbest') {
+            if (!($value >= 1 and $value <= 7)) {
+                $msg .=  "ERROR: Invalid option: 'wbest' must be a whole number between" . 
+                " 1 and 7 (1=Sunday, 7=Saturday), not '$value'\n";
+                $e += 1;
             }
-            when ('mbest') { 
-                if (!($value >= 1 and $value <= 31)) {
-                    # (31 gives the last day of any month)
-                    $msg .= "ERROR: Invalid option: 'mbest' must be a whole number between" . 
-                        " 1 and 31, not '$value'\n";
-                    $e += 1;
-                }
+        } elsif ($option eq 'mbest') { 
+            if (!($value >= 1 and $value <= 31)) {
+                # (31 gives the last day of any month)
+                $msg .= "ERROR: Invalid option: 'mbest' must be a whole number between" . 
+                " 1 and 31, not '$value'\n";
+                $e += 1;
             }
-            when ('ybest') { 
-                if (!($value >= 1 and $value <= 366)) {
-                    # (366 gives the last day of the year, whether a leap year or not)
-                    $msg .= "ERROR: Invalid option: 'ybest' must be a whole number between" .
-                        " 1 and 366, not '$value'\n";
-                    $e += 1;
-                }
+        } elsif ($option eq 'ybest') { 
+            if (!($value >= 1 and $value <= 366)) {
+                # (366 gives the last day of the year, whether a leap year or not)
+                $msg .= "ERROR: Invalid option: 'ybest' must be a whole number between" .
+                " 1 and 366, not '$value'\n";
+                $e += 1;
             }
+        } elsif ($option eq 'weekstart') {
             # Week start - an integer from 1=Sunday to 7=Saturday
             # (which is the same as $Opt{wbest} but different from localtime's $wday)
-            when ('weekstart') {
-                $value = 1 if !defined $value;
-                $value = int($value);
-                $value = (($value-1) % 7) + 1;  # force it into range
-            }
+            $value = 1 if !defined $value;
+            $value = int($value);
+            $value = (($value-1) % 7) + 1;  # force it into range
+        } elsif ($option eq 'ldcount') {
             # Link-dest count -- max 20 says rsync
-            when ('ldcount') {
-                $value = int($value);
-                if ($value < 0 or $value > 20) {
-                    $msg .= "ERROR: Invalid option: 'ldcount' must be a number from 1 to 20, " .
-                        "not '$value'\n";
-                    $e += 1;
-                } elsif ($value == 0) {
-                    $msg .= "WARNING: Option 'ldcount' is zero -- no hard-linking will be done,\n"
-                    . "and the snapshot created may be much larger than expected\n";
-                    $w += 1;
-                }
+            $value = int($value);
+            if ($value < 0 or $value > 20) {
+                $msg .= "ERROR: Invalid option: 'ldcount' must be a number from 1 to 20, " .
+                "not '$value'\n";
+                $e += 1;
+            } elsif ($value == 0) {
+                $msg .= "WARNING: Option 'ldcount' is zero -- no hard-linking will be done,\n"
+                . "and the snapshot created may be much larger than expected\n";
+                $w += 1;
             }
+        } elsif ($option eq 'bwlimit') {
             # Band-width limit (0 = unlimited)
-            #when (['bwlimit-in', 'bwlimit-out']) {
-            when ('bwlimit') {
-                if (!looks_like_number($value) or $value < 0) {
-                    $msg .= "ERROR: Invalid option: '$option' must be zero or a positive whole" . 
-                        " number (in kbps), not '$value'\n";
-                    $e += 1;
-                } else {
-                    $value = floor($value);
-                }
+            # when (['bwlimit-in', 'bwlimit-out']) {
+            if (!looks_like_number($value) or $value < 0) {
+                $msg .= "ERROR: Invalid option: '$option' must be zero or a positive whole" . 
+                " number (in kbps), not '$value'\n";
+                $e += 1;
+            } else {
+                $value = floor($value);
             }
+        } elsif ($option eq 'timeout-retries') {
+            if (!looks_like_number($value) or $value < 0) {
+                $msg .= "ERROR: Invalid option: '$option' must be zero or a positive whole" . 
+                " number, not '$value'\n";
+                $e += 1;
+            } else {
+                $value = floor($value);
+            }
+        } elsif ($option eq 'all-failed' or $option eq 'some-failed') {
             # Actions to take if some or all sources are not backed up
-            when (['all-failed', 'some-failed']) {
-                if (index('keep', lc($value)) == 0) {   # allow abbreviations
-                    $value = 'keep';
-                } elsif (index('delete', lc($value)) == 0) {    # ditto
-                    $value = 'delete';
-                } else {
-                    $msg .= "ERROR: Invalid option: '$option' must be either 'keep' or" . 
-                        " 'delete', not '$value'\n";
-                    $e += 1;
-                }
+            if (index('keep', lc($value)) == 0) {   # allow abbreviations
+                $value = 'keep';
+            } elsif (index('delete', lc($value)) == 0) {    # ditto
+                $value = 'delete';
+            } else {
+                $msg .= "ERROR: Invalid option: '$option' must be either 'keep' or" . 
+                " 'delete', not '$value'\n";
+                $e += 1;
             }
+        } elsif ($option eq 'min-interval') {
             # Minimum interval between snapshots (in minutes)
-            when ('min-interval') {
-                if (!looks_like_number($value) or $value < 0) {
-                    $msg .= "ERROR: Invalid option: 'min-interval' must be a positive number" . 
-                        " of minutes, not '$value'\n";
-                    $e += 1;
-                }
+            if (!looks_like_number($value) or $value < 0) {
+                $msg .= "ERROR: Invalid option: 'min-interval' must be a positive number" . 
+                " of minutes, not '$value'\n";
+                $e += 1;
             }
+        } elsif ($option eq 'hostname') {
+            # Source hostname (can be an FQDN) 
+            if (!isHostOrFQDN($value)) {
+                $msg .= "ERROR: hostname '$value' is not valid\n";
+                $e += 1;
+            }
+        } elsif ($option eq 'specs') {
             # Specs -- just check syntax
-            when ('specs') {
-                if (!($value =~ /^$specRegex(,$specRegex)*$/x)) {
-                    $msg .= "ERROR: Spec '$value' is not valid\n";
-                    $e += 1;
-                }
+            if (!($value =~ /^$specRegex(,$specRegex)*$/x)) {
+                $msg .= "ERROR: Spec '$value' is not valid\n";
+                $e += 1;
             }
+        } elsif ($option eq 'email-if') {
             # Email condition -- failure of any or all destinations
-            when ('email-if') {
-                $value = lc($value);
-                if ($value ne 'any' and $value ne 'all') {
-                    $msg .= "ERROR: Invalid option: '$option' must be either 'any' or" . 
-                        " 'all', not '$value'\n";
-                    $e += 1;
-                }
+            $value = lc($value);
+            if ($value ne 'any' and $value ne 'all') {
+                $msg .= "ERROR: Invalid option: '$option' must be either 'any' or" . 
+                " 'all', not '$value'\n";
+                $e += 1;
             }
-
-            # Source and destination are done later
-
-            # Options 'include', 'include-from', 'exclude', 'exclude-from'
-            # - these are not checked at all at this stage
         }
+
+        # Source and destination are done later
+
+        # Options 'include', 'include-from', 'exclude', 'exclude-from'
+        # - these are not checked at all at this stage
     }
 
     chomp($msg);
@@ -1919,7 +1948,6 @@ sub readConfig ($$) {
                     $rc += $newrc;
                     #}
                 }
- # got to here  FIXME
             } elsif (/^\s*<\/\s*(?<option>[[:alpha:]]*)[^>]*>/) {
                 # End of context: ignore the name -- just match on any </...>
                 if ($context eq 'general') {
@@ -2009,6 +2037,7 @@ sub processOptions () {
     $defopt{'dry-run'}      = 0;
     $defopt{'expire-old'}   = 0;          # expire oldest S's to make room, even when not unlimited
     $defopt{help}           = 0;
+    $defopt{latest}         = 0;
     $defopt{ldcount}        = 1;          # no. of link-dest options to create
     $defopt{'min-interval'} = 0;          # minutes between snapshots
     $defopt{restart}        = 0;
@@ -2020,6 +2049,7 @@ sub processOptions () {
     $defopt{'some-failed'}  = 'keep';
     $defopt{status}         = 0;
     $defopt{strict}         = 0;
+    $defopt{'timeout-retries'} = 0;
     $defopt{version}        = 0;
     $defopt{weekstart}      = 1;          # 1=Sunday
     $defopt{'email-to'}     = '';
@@ -2030,7 +2060,7 @@ sub processOptions () {
     # The following deliberately do not have defaults:
     #   template   source  logfile   config  destination  specs
     #   include include-from exclude exclude-from
-    #   remote-rsync-cmd
+    #   remote-rsync-cmd  hostname
 
     my %confopt = ();   # config file options
     my %cmdopt = ();    # command line options
@@ -2058,8 +2088,10 @@ sub processOptions () {
             'expire-old!',
             'hbest=i',
             'help!',
+            'hostname=s',
             'include-from=s@',
             'include=s@',
+            'latest!',
             'ldcount=i',
             'lockfile=s',
             'logfile=s',
@@ -2080,6 +2112,7 @@ sub processOptions () {
             'strict!',
             'template=s',
             'test=i',
+            'timeout-retries=i',
             'verbose|verbosity=s',
             'version',
             'wbest=i',
@@ -2125,7 +2158,7 @@ sub processOptions () {
 #            print "email-to is blank -- delete it";
 #            ... no, we need to delete it from $Opt, not cmdopt
     }
-    # FIXME if we return here, less chance of emailing errors etc.
+    # FIXME if we return here, less chance of emailing errors etc.  So should we?
     #return ($errorcount, $warningcount) if $errorcount;
 
     # Tweak context options from command line to make them into config-file structures
@@ -2146,7 +2179,7 @@ sub processOptions () {
             (my $rc, %confopt) = readConfig($cmdopt{config}, \@GOarray);    
             return (1,0) if $rc;
         } else {
-            printError "Configuration file '$cmdopt{config}' can not be read\n";
+            printError "Configuration file '$cmdopt{config}' cannot be read\n";
             return (1,0);
         }
     }
@@ -2200,13 +2233,13 @@ sub processOptions () {
                 $| = 1;
                 select $oldfh;
             } else {
-                printit "\nCan not lock logfile '$Opt{logfile}'.\n" .
+                printit "\nCannot lock logfile '$Opt{logfile}'.\n" .
                     "$Script is probably already running with that logfile.\n\n", 1;
                 close LOGFILE;
                 exit EXITNOLOCK;
             } 
         } else {
-            printError "Logfile '$Opt{logfile}' (option 'logfile') can not be written\n";
+            printError "Logfile '$Opt{logfile}' (option 'logfile') cannot be written\n";
             $Opt{loglevel} = 0;
             $errorcount += 1;
         }
@@ -2264,7 +2297,7 @@ sub processOptions () {
                 $readableSources += 1; 
                 $src->{readable} = 1;
             } else {
-                printWarning "Source '$src->{location} can not be read" .
+                printWarning "Source '$src->{location} cannot be read" .
                     ($rrrc2 eq '' ? '' : " ($ErrorCodes{$rrrc2})") .
                     "\n";
                 $warningcount += 1;
@@ -2294,7 +2327,7 @@ sub processOptions () {
                 if ($rrrc == 0) {
                     $readableSubSources += 1; 
                 } else {
-                    printWarning "Source '$src->{location}' can not be read" .
+                    printWarning "Source '$src->{location}' cannot be read" .
                         ($rrrc2 eq '' ? '' : " ($ErrorCodes{$rrrc2})") .
                         "\n";
                     $warningcount += 1;
@@ -2320,7 +2353,7 @@ sub processOptions () {
         if ($rwrc == 0) {
             if ($readableSubSources) {
                 $writableDests += 1;
-                # It's a good destination, so parse any specs
+                # It's a good destination, so parse any destination-specific specs
                 if ($options->{specs}) {
                     my ($w, $e, $rawspecs, @pspecs) = processSpecs($options->{specs});
                     $errorcount += $e;
@@ -2385,7 +2418,7 @@ sub processOptions () {
         }
         if (!$somethingToDo) {
             printError "All destination/source combinations are remote/remote -- " . 
-                "can not continue\n";
+                "cannot continue\n";
             $errorcount += 1;
         }
     }
@@ -2530,6 +2563,8 @@ sub displayOptions () {
 
 sub showLicence () {
     printit <<EOT;
+$Script version $VERSION
+
 rsync-based backup snapshot creation and management        
 Copyright (C) 2011,2012 Chris Dennis, chris\@starsoftanalysis.co.uk        
                                                                        
@@ -2593,10 +2628,11 @@ Rsync options
                               (set to 0 for no limit) 
 --rsync-opts   options    ds standard options to pass to rsync 
                               (default: -aHx --numeric-ids) 
---rsync-xopts options     ds extra options for rsync (in addition to --rsync-opts)
+--rsync-xopts  options    ds extra options for rsync (in addition to --rsync-opts)
                               (default: none)
 --remote-rsync-cmd file   ds location of the rsync programme on the remote
                                computer (optional, no default) 
+--timeout-retries n       ds number of times to retry rsync after a time-out error (default: 0)
 Email options.  --email-to is required for any emails to be sent
 --email-to     address   *   email recipient for error messages (no default)
 --email-from   address       email address for From: header of email (default: current user)
@@ -2616,6 +2652,8 @@ Advanced options
 --[no]delete              d  delete no-longer-required snapshots (default: delete) 
 --[no]delete-cp           d  delete even in current period (default: delete-cp)
 --[no]expire-old          d  delete oldest snapshots when disk is full (default: noexpire-old)
+--hostname     host/FQDN  ds hostname or FQDN to use in snapshot path (default: source computer)
+--[no]latest              d  create a <template>-latest snapshot (default: nolatest)
 --ldcount      n          d  number of --link-dest options to create (default: 1, max: 20) 
 --[no]restart             ds continue snapshot(s) from previous run (default: norestart)
                               (implies --snapshot) 
@@ -2671,11 +2709,11 @@ sub averageSnapshotBytes () {
 #---------------------------------------------------------------------------------------------------
 
 sub status ($\@) {
-    
     # Print a status report on existing snapshots for a single destination
     my $dest   = shift;
     my @cSpecs = @{(shift)};
 
+    my $fcount = 0; # finished snapshots
     my $ucount = 0; # unfinished snapshots
     my $ci = 0;     # index into @cSpecs
     my $pi = -1;    # index into $Opt{pspecs}
@@ -2701,7 +2739,7 @@ sub status ($\@) {
         # --------------------------------   ------------------   ------------------
         #   Total:  (+999 unfinished) 9999   28.0 MiB  28.0 GiB   12345678  12345678   
         # Average:                            123 MiB       0 B     234234    234234 
-        # <-------- $nameLength -------->
+        # <-------- $nameLength --------->
         my $nameLength = max(longestName()+4, 32); # +4 to allow for ' (u)'
         printlog sprintf("%-*s   ------ Size ------   ----- Files ------\n", $nameLength, ''), 
             $plevel,$llevel;
@@ -2726,7 +2764,7 @@ sub status ($\@) {
             # Print period details if we've got to a new spec
             #debug "pi=$pi", 'status';
             while ($pi < 0 or 
-                ($pi <= $#{$Opt{pspecs}} and ${$Opt{pspecs}}[$pi]->{beg} > $s)) {
+                   ($pi <= $#{$Opt{pspecs}} and ${$Opt{pspecs}}[$pi]->{beg} > $s)) {
                 $pi += 1;
                 if ($pi > $#{$Opt{pspecs}}) {
                     # no more parsed specs -- we're dealing 'old' snapshots
@@ -2743,10 +2781,14 @@ sub status ($\@) {
             if ($S{$s}{unfinished}) {
                 $name .= ' (u)';
                 $ucount += 1;
+            } else {
+                $fcount += 1;
             }
-            if (@cSpecs) {
-                # Find which cSpec applies (complete snapshots only)
-                while ($cSpecs[$ci]->{beg} > $s) { 
+            # Find which cSpec applies (finished snapshots only)
+            if (@cSpecs and !$S{$s}{unfinished}) {
+                while ($cSpecs[$ci]->{beg} > $s and $ci < $#cSpecs) {
+                    # (The second test is necessary for case where oldest spec is unfinished 
+                    # and therefore not counted as part of a period.)
                     $ci += 1; 
                 };
                 if ($ci <= $#cSpecs) { 
@@ -2762,7 +2804,7 @@ sub status ($\@) {
             # Get values for each column and add to totals
             foreach my $col (@cols) {
                 $value{$col} = '';
-                if (defined $S{$s}{$col}) {
+                if (defined $S{$s}{$col} and $S{$s}{$col} >= 0) {
                     $value{$col}  = $S{$s}{$col};
                     $total{$col} += $S{$s}{$col};
                     $count{$col} += 1;
@@ -2784,7 +2826,7 @@ sub status ($\@) {
         my $unfinished = '';
         $unfinished = "(+$ucount unfinished)" if $ucount;
         printlog sprintf("%8s %s %17s %4d   %8s  %8s   %8s  %8s\n", 
-            'Total:', ' 'x($nameLength-32), $unfinished, $count{totbytes}, 
+            'Total:', ' 'x($nameLength-32), $unfinished, $fcount, 
             bytes($total{totbytes}), bytes($total{tfrbytes}), 
             $total{totfiles}, $total{tfrfiles}), 
             $plevel,$llevel;
@@ -2864,37 +2906,30 @@ sub getPeriod ($$) {
     my ($beg, $end);
     debug "periodn=$periodn moment=$moment (" . time2stamp($moment) . ")\n", 'gP';
     my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime($moment);
-    given ($periodn) {
-        when (0) {
-            $beg = timelocal(0,0,$hour,$mday,$mon,$year+1900);
-            $end = $beg + HOUR;
-        } 
-        when (1) {
-            $beg = timelocal(0,0,0,$mday,$mon,$year+1900);
-            $end = $beg + DAY;
-        } 
-        when (2) {
-            # localtime() returns weekday as 0=Sunday, 6=Saturday
-            # $opt{weekstart} is 1..7
-            $beg = timelocal(0,0,0,$mday,$mon,$year+1900);  # beginning of today
-            my $beg1 = $beg; # for debugging only
-            $beg -= (($wday- ($Opt{weekstart}-1) + 7) % 7) * DAY;   # adjust for weekday
-            $end = $beg + DAY*7;
-            debug "mday=$mday mon=$mon year=$year wday=$wday ws=$Opt{weekstart} beg1=$beg1/" . 
-                time2stamp($beg1) . " beg=$beg/" . time2stamp($beg) . 
-                " end=$end/" . time2stamp($end) ."\n", 'gP';
-        } 
-        when (3) {
-            $beg = timelocal(0,0,0,1,$mon,$year+1900);
-            $end = date2time(DateCalc(time2date($beg), '0:1:0:0:0:0:0')); # +1month
-        } 
-        when (4) {
-            $beg = timelocal(0,0,0,1,0,$year+1900);
-            $end = timelocal(0,0,0,1,0,$year+1901);
-        } 
-        default {
-            die "Invalid period number '$periodn' passed to getPeriod";
-        }
+    if ($periodn == 0) {
+        $beg = timelocal(0,0,$hour,$mday,$mon,$year+1900);
+        $end = $beg + HOUR;
+    } elsif ($periodn == 1) {
+        $beg = timelocal(0,0,0,$mday,$mon,$year+1900);
+        $end = $beg + DAY;
+    } elsif ($periodn == 2) {
+        # localtime() returns weekday as 0=Sunday, 6=Saturday
+        # $opt{weekstart} is 1..7
+        $beg = timelocal(0,0,0,$mday,$mon,$year+1900);  # beginning of today
+        my $beg1 = $beg; # for debugging only
+        $beg -= (($wday- ($Opt{weekstart}-1) + 7) % 7) * DAY;   # adjust for weekday
+        $end = $beg + DAY*7;
+        debug "mday=$mday mon=$mon year=$year wday=$wday ws=$Opt{weekstart} beg1=$beg1/" . 
+            time2stamp($beg1) . " beg=$beg/" . time2stamp($beg) . 
+            " end=$end/" . time2stamp($end) ."\n", 'gP';
+    } elsif ($periodn == 3) {
+        $beg = timelocal(0,0,0,1,$mon,$year+1900);
+        $end = date2time(DateCalc(time2date($beg), '0:1:0:0:0:0:0')); # +1month
+    } elsif ($periodn == 4) {
+        $beg = timelocal(0,0,0,1,0,$year+1900);
+        $end = timelocal(0,0,0,1,0,$year+1901);
+    } else {
+        die "Invalid period number '$periodn' passed to getPeriod";
     }
     return ($beg, $end);
 }
@@ -2961,7 +2996,8 @@ sub fmtRange ($$;$) {
     # NB: 'semi' and 'exact' modes are not available in older versions of
     #     Date::Manip, so we trap the error and default to printing the range.
     my $mode = 'semi';                      # 'semi' works mostly...
-    $mode = 'exact' if ($range <= HOUR);    # ...but not for hours
+    $mode = 'exact' if ($range <= HOUR);    # ...but not for hours...
+    $mode = 'approx' if ($range >= MONTH);  # ...nor months and years
     $mode = $modeOverride if $modeOverride;
     debug "mode: '$mode'\n", 'fR';
     my $delta = $begdate->calc($enddate, $mode);
@@ -3060,18 +3096,6 @@ sub readMetadata ($) {
     my $mdfile = "$Opt{template}.status"; 
 
     # Get the metadata file via rsync to a temporary file
-#    # (note the hacky way we override the --dry-run option)
-#    my $tempdir = tempdir(CLEANUP => 1);  
-#    debug "tempdir is $tempdir\n", 'rM';
-#    my (@output, @errors);
-#    my $dryrun = $Opt{'dry-run'};
-#    $Opt{'dry-run'} = 0;
-#    my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'}, 
-#        stdArgs(0) . " '$dest/$mdfile' '$tempdir/'", 
-#        9,9, \@output, \@errors);
-#    $Opt{'dry-run'} = $dryrun;
-#    debug "rc=$rc output: '@output' errors: @errors\n", 'rM';
-#    return $mdArrayRef if $rc;  # not readable -- carry on regardless
     $mdfile = rsyncMakeLocal("$dest/$mdfile");
     return $mdArrayRef if $mdfile eq '';    # not readable -- carry on without it
 
@@ -3097,17 +3121,6 @@ sub readMetadata ($) {
                 $md->{totfiles} = undef;
                 $md->{tfrfiles} = undef;
             }
-            ## Temporary hack for metadata files that have 0 
-            ## where they should have null
-            #if (defined $md->{totfiles} and
-            #    $md->{tfrbytes} == 0 and
-            #    $md->{totfiles} == 0 and
-            #    $md->{tfrfiles} == 0     ) {
-            #    $md->{tfrbytes} = undef;
-            #    $md->{totfiles} = undef;
-            #    $md->{tfrfiles} = undef;
-            #}
-            #
             delete $md->{size};
             $md->{unfinished} = 0 if !defined $md->{unfinished};
             debug "$md->{timestamp} / $md->{unfinished} / $md->{totbytes}\n", 'rM'; 
@@ -3333,7 +3346,8 @@ sub deleteSnapshots (\@\@) {
             my @d = snapshotsInPeriod(@D, $cs->{beg}, $cs->{fullend}, 1);
             debug "\@s=@s  \@d=@d\n", 'dS';
             if (@d) {
-                printlog "Snapshots for deletion in ".fmtRange($cs->{beg},$cs->{fullend})."\n", 3;
+                printlog "Snapshots for deletion from $cs->{label},  " . 
+                    fmtRange($cs->{beg},$cs->{fullend}) . "\n", 3;
                 visualise($cs->{beg}, $cs->{fullend}, 0, 3,3, $cs->{best}, 
                     'All S\'s' => \@s, 
                     'Deleting' => \@d);
@@ -3343,7 +3357,7 @@ sub deleteSnapshots (\@\@) {
         if ($cs->{label} eq 'old') {
             printNote "Old ${unfinished}snapshot '$S{$d}{name}' is due for deletion\n", 1;
         } else {
-            printNote "\u${unfinished}snapshot '$S{$d}{name}'$unfinished is due for deletion\n" 
+            printNote "\u${unfinished}snapshot '$S{$d}{name}' is due for deletion\n" 
             . "because there are too many for spec '" . $cs->{label} . "'\n", 1;
         }
         if (!$Opt{delete}) {
@@ -3557,7 +3571,13 @@ sub getMatchingSnapshots ($$$$\@) {
 
     my $range  = $end - $beg;   # the length of the period in seconds
     debug "beg=$beg end=$end range=$range best=$best freqmax=$freqmax\n", 'gMS';
+    debug "period: " . fmtRange($beg, $end) . "  range: " . fmtSeconds($range) . 
+        "  best time: " . time2stamp($beg + $best) . "\n", 'gMS'; 
     debug " (first S = $S[0]    last S = $S[-1]  -- in descending order)\n", 'gMS' if @S;
+    debug "snapshots: \n", 'gMS';
+    foreach my $s (@S) {
+        debug "\t$s\t" . time2stamp($s) . "\n", 'gMS';
+    }
 
     # Special case: if freqmax is zero, delete all snapshots (i.e. keep none)
     if ($freqmax == 0) {
@@ -3723,6 +3743,7 @@ sub getMatchingSnapshots ($$$$\@) {
     # and choose the one with the best score
     # (maybe we should leave first and last fixed if they're already aligned?)
     my @combs = combinations(scalar @I, 0..$#S); 
+    #debug "\@combs(orig): " . Dumper(\@combs), 'gMS';
     my $minct = MAXTIME;    # smallest combination total so far
     my $mincti = 0;         # index of smallest combination so far 
     for my $ci (0..$#combs) {
@@ -3752,7 +3773,7 @@ sub getMatchingSnapshots ($$$$\@) {
                 # No note -- include badness score
                 $score += $badoffset[$c];
             }
-            debug "i=$i comb[i]=$c I[i]=$I[$i] S[c]=$S[$c] I-S=". abs($I[$i]-$S[$c]) .
+            debug "ci=$ci i=$i comb[i]=$c I[i]=$I[$i] S[c]=$S[$c] I-S=". abs($I[$i]-$S[$c]) .
                 " clo=$closeness[$c] bo=$badoffset[$c] score=$score\n", 'gMS';
             $combtotal += $score;
         }
@@ -3760,13 +3781,16 @@ sub getMatchingSnapshots ($$$$\@) {
             $minct = $combtotal;
             $mincti = $ci;
         }
+        debug "ci=$ci combtotal=$combtotal\n", 'gMS';
     }
+    #debug "\@combs(later): " . Dumper(\@combs), 'gMS';
     debug "" . @combs . " combinations tested\n", 'gMS';
-    debug "best combination, with total $minct, is " . 
+    debug "best combination: mincti=$mincti minct=$minct snapshot indexes: " . 
         join(' ', sort {$b <=> $a} @{$combs[$mincti]}) . "\n", 'gMS';
+    #debug "combs[mincti]: " . Dumper($combs[$mincti]), 'gMS';
     my @bestMatches = sort(map {$S[$_]} @{$combs[$mincti]});    # convert indexes back to snapshots 
-    debug "best matches: @bestMatches total: " . @bestMatches . "\n", 'gMS';
-    debug "closeness (old to new): " . 
+    debug "best matches: @bestMatches count=" . @bestMatches . "\n", 'gMS';
+    debug "closenesses (oldest first): " . 
         join(' ', (map {sprintf("%.2f", $_)} reverse @closeness)) . 
         ", average: $averageC\n", 'gMS';
     visualise($oldBeg, $oldEnd, 1, 1,1, $bestTime, 
@@ -4173,8 +4197,8 @@ sub compileSpecs ($$) {
     # 'Compile' the specs into a list that takes into account
     # the current date and existing snapshots.
     # Works backwards in time from 'now'.
-    my $now        = shift;
-    my $specsR     = shift; # array ref
+    my $now    = shift;
+    my $specsR = shift; # array ref to $Opt{pspecs}
 
     my $oldestS = $now; # Will be the time of the oldest snapshot
     # List good and bad snapshots separately
@@ -4228,7 +4252,7 @@ sub compileSpecs ($$) {
 
         if (!fullPeriod($beg, $end, $spec->{periodn})) { 
             # This is a partial period -- either the current period (if it's the first spec),
-            # or because of a change of period
+            # or because of a change of period type (day to week, for example)
             my $sip = snapshotsInPeriod(@Sgood, $beg, $end);
             if ($firstSpec and $sip >= $spec->{freqmin}) {  
                 # This partial period can count as a good one -- do nothing here
@@ -4287,7 +4311,7 @@ sub compileSpecs ($$) {
         foreach my $gpRef (@goodPeriods) {
             ($beg, $end, my $good, my $sip, my $pCount) = @$gpRef;
             if (!$good) { # there's a gap -- either 1 or more incomplete periods, 
-                # or (in no-calendar mode) a fractional number of incomplete periods
+                # or (in nocalendar mode) a fractional number of incomplete periods
                 push @cSpecs, {
                     beg     => $beg,
                     end     => $end,
@@ -4386,7 +4410,7 @@ sub compileSpecs ($$) {
         # that's fine, we're working back from that end, so
         # we don't even need now = end -- leave end as it is for next time round loop.
         
-        # Store details of complete original spec
+        # Store details of complete original spec (into $Opt{pspec})
         $spec->{beg} = $end;
         $spec->{end} = $sEnd;
         debug "status spec=$spec->{rawspec} beg/end " .pair2range($spec->{beg},$spec->{end}), 'cS';
@@ -4584,9 +4608,9 @@ sub newSnapshot ($$) {
                 $delay = ($end - $snapshot);
             }
             debug "calendar: snapshot=" . time2stamp($snapshot) . 
-            " last=" . time2stamp($lastSnapshot) . 
-            " periodn=$periodn beg/end=" . pair2range($beg, $end) . 
-            " delay=$delay\n", 'nS';
+                " last=" . time2stamp($lastSnapshot) . 
+                " periodn=$periodn beg/end=" . pair2range($beg, $end) . 
+                " delay=$delay\n", 'nS';
         } else {
             # Non-calendar mode - if the last snapshot was slightly less than a period ago,
             # delay the new one until slightly more than a period since the last one.
@@ -4598,9 +4622,9 @@ sub newSnapshot ($$) {
                 $delay = ($lastSnapshot + $periodSecs) - $snapshot;
             }
             debug "non-calendar: snapshot=" . time2stamp($snapshot) . 
-            " last=" . time2stamp($lastSnapshot) . 
-            " periodn=$periodn periodSecs=$periodSecs" . 
-            " sinceLast=$sinceLast delay=$delay\n", 'nS';
+                " last=" . time2stamp($lastSnapshot) . 
+                " periodn=$periodn periodSecs=$periodSecs" . 
+                " sinceLast=$sinceLast delay=$delay\n", 'nS';
         }
     }
     if ($delay) {
@@ -4657,6 +4681,19 @@ sub addStats ($$) {
 }
 
 #---------------------------------------------------------------------------------------------------
+            
+sub fixStats ($) {
+    # Work-around for an apparent bug in rsync: with --dry-run, the number and size of
+    # files transferred is reported as ALL the files, even if fewer (or none) would
+    # really be transferred without --dry-run.  So unset the stats if --dry-run is used.
+    my $statsR = shift;
+    if ($Opt{'dry-run'}) {
+        $statsR->{tfrfiles} = -1;
+        $statsR->{tfrbytes} = -1;
+    }
+}
+
+#---------------------------------------------------------------------------------------------------
 
 sub runRsync ($\@$) {
     # Run rsync to create the snapshot.
@@ -4693,11 +4730,11 @@ sub runRsync ($\@$) {
             next SOURCE;
         }
 
-        # Source and destination can not both be remote (rsync limitation)
+        # Source and destination cannot both be remote (rsync limitation)
         my $remoteSource = remote($location);
         if ($remoteDest and $remoteSource) {
             printWarning "Source '$location' and destination '$dest' are both remote.\n" . 
-                "rsync can not do that -- the combination has been skipped\n";
+                "rsync cannot do that -- the combination has been skipped\n";
             $succeeded = 0;
             next SOURCE;
         }
@@ -4717,7 +4754,6 @@ sub runRsync ($\@$) {
         # Set up verbosity option
         my $verbose = '';
         $verbose = '--verbose' if $Opt{verbose} > 3;
-        $verbose .= ' --verbose --stats' if $Opt{verbose} > 4;  
 
         # Add the include/exclude options -- there may be several of each
         # Note that each file/directory is double-quoted to allow escapes to work
@@ -4728,8 +4764,12 @@ sub runRsync ($\@$) {
         }
 
         my $destDir = $S{$snapshot}{fullname};    
+        # Sub-directory within snapshot path is FQDN of remote source or
+        # local hostname for a local source, unless overridden by --hostname
         my $subDir;
-        if ($remoteSource) {
+        if ($Opt{hostname}) {
+            $subDir = $Opt{hostname};
+        } elsif ($remoteSource) {
             $subDir = sourceDir($location);
         } else {
             $subDir = hostname;
@@ -4777,20 +4817,22 @@ sub runRsync ($\@$) {
             "$verbose $linkdest $incExcOpts $compression " . 
             "$bwlimit --relative --stats $rsyncPath '$location' '$destDir'";
 
-        my $maxTries = @expirableSnapshots + 1; 
-        my $keepTrying = $maxTries;  
+        my $retriesD = @expirableSnapshots;        # retries after deleting to make space 
+        my $retriesT = $Opt{'timeout-retries'};    # retries after time-outs
+        my $keepTrying = 1; 
         my $deletions = 0;
-        my $tries = 0;
         # Run rsync, dealing with various types of error
         while ($keepTrying and !$Interrupted) {
-            $tries += 1;
-            printlog " (try $tries of $maxTries)\n", 3 if $maxTries > 1;
+
             printlog "Running rsync command: $Opt{'rsync-cmd'} $args\n", 1;
+                      #####################
             my $rsyncInterrupted = '';     # only true if interrupted during the main rsync  
-            my ($rc, $rc2, $statsR) = systemCall($Opt{'rsync-cmd'}, $args, 4,1);
+            my ($rc, $rc2, $statsR) = systemCall($Opt{'rsync-cmd'}, $args, 4,4);
             $rsyncInterrupted = $Interrupted;
             debug "after rsync rc=$rc rc2='$rc2' rsyncInterrupted='$rsyncInterrupted'\n", 'rR';
             debug "source stats: " . Dumper($statsR), 'rR';
+            fixStats($statsR);
+
             if (($rc == 23) and ($rc2 eq 'nofileordir')) {
                 #* source not found
                 printError "Source '$location' could not be read -- " . 
@@ -4799,6 +4841,7 @@ sub runRsync ($\@$) {
                 $succeeded = 0;
                 $srcInfo->{result} = 'source not found';
             }
+
             elsif ($rsyncInterrupted ne '' or $rc2 eq 'interrupted') {
                 #* interrupted
                 printWarning "rsync was interrupted with signal '$rsyncInterrupted' -- " .
@@ -4809,13 +4852,10 @@ sub runRsync ($\@$) {
                 $srcInfo->{result} = 'interrupted';
                 last SOURCE;
             }
+
             elsif (($rc == 30) or ($rc2 eq 'timedout')) {
                 #* timed out -- continue with other sources/destinations
                 #               which may use a different route
-                $keepTrying = 0;
-                $succeeded = 0;
-                $restartable = 1;
-                $srcInfo->{result} = 'timed out';
                 if ($remoteDest) {
                     # lost connection to remote destination 
                     printError "rsync timed out: probably lost connection to destination\n";
@@ -4828,51 +4868,49 @@ sub runRsync ($\@$) {
                     # - perhaps when using NFS, for example.
                     printError "rsync timed out\n";
                 }
-            }
-            elsif (($rc == 30) or ($rc2 eq 'timedout')) {
-                #* timed out -- continue with other sources/destinations
-                #               which may use a different route
-                $keepTrying = 0;
-                $succeeded = 0;
-                $restartable = 1;
-                $srcInfo->{result} = 'timed out';
-                if ($remoteDest) {
-                    # lost connection to remote destination 
-                    printError "rsync timed out: probably lost connection to destination\n";
-                    $lostDest = 1;
-                    last SOURCE;
-                } elsif ($remoteSource) {
-                    printError "rsync timed out: probably lost connection to source\n";
+                if ($retriesT > 0) {
+                    # try again
+                    printNote "Will try again $retriesT more time(s)\n", 1;
+                    $retriesT -= 1;
                 } else {
-                    # local/local rsync timed out -- why would that happen?
-                    # - perhaps when using NFS, for example.
-                    printError "rsync timed out\n";
+                    $keepTrying = 0;
+                    $succeeded = 0;
+                    $restartable = 1;
                 }
+                $srcInfo->{result} = 'timed out';
             }
-            elsif (($rc == 12) and ($rc2 eq 'diskfull') and ($keepTrying > 0)) {
-                #* errors that can be recovered from -- i.e. lack of space (sometimes)
+
+            elsif (($rc == 12) and ($rc2 eq 'diskfull')) {
+                #* disk full
                 # Try to make some space before having another go
-                printWarning "Destination '$dest' is full -- " . 
-                    "will delete an old snapshot and try again\n";
-                debug "_=$_ rc=$rc rc2=$rc2 keepTrying=$keepTrying\n", 'rR';
-                my $deleted = deleteOldSnapshots(@expirableSnapshots, 1);
-                if ($deleted >= 1) {
-                    # More space freed, so try again
-                    printNote "Old snapshot deleted successfully -- continuing\n";
-                    $deletions += $deleted;
-                    $deletionsAllSources += $deleted;
-                    $keepTrying -= $deleted;
-                    $srcInfo->{result} = 'failed (will try again)';
+                printError "Destination '$dest' is full!\n";
+                if ($retriesD > 0) { 
+                    printNote "Will try to delete an old snapshot to make space\n", 1;
+                    my $deleted = deleteOldSnapshots(@expirableSnapshots, 1);
+                    if ($deleted >= 1) {
+                        # More space freed, so try again
+                        printNote "Old snapshot deleted successfully, will try again\n", 1;
+                        $deletions += $deleted;
+                        $deletionsAllSources += $deleted;
+                        $retriesD -= 1;
+                    } else {
+                        # No snapshots deleted, so stop trying
+                        printError "Unable to delete old snapshot to make space\n";
+                        $keepTrying = 0;
+                        $succeeded = 0;
+                        $ExitCode = EXITRSYNC;
+                        last SOURCE;
+                    }
                 } else {
-                    # No snapshots deleted, so stop trying
-                    printError "Unable to delete old snapshot to make space\n";
+                    printNote "No old snapshots can be deleted\n", 1;
                     $keepTrying = 0;
                     $succeeded = 0;
                     $ExitCode = EXITRSYNC;
-                    $srcInfo->{result} = 'failed (not enough space)';
                     last SOURCE;
                 }
+                $srcInfo->{result} = 'failed (not enough space)';
             }
+
             elsif ($rsyncInterrupted ne '' or $rc2 eq 'interrupted') {
                 #* interrupted
                 printWarning "rsync was interrupted with signal '$rsyncInterrupted' -- " .
@@ -4883,7 +4921,9 @@ sub runRsync ($\@$) {
                 $srcInfo->{result} = 'interrupted';
                 last SOURCE;
             }
-            elsif (!($rc ~~ [0, 23, 24])) {
+
+            elsif ($rc != 0 and $rc != 23 and $rc != 24) {
+            #elsif (!($rc ~~ [0, 23, 24])) {
                 #* any other error means rename/delete/abandon whole destination
                 # 11 e.g. include-from file not found
                 # 13 e.g. permission denied
@@ -4899,6 +4939,7 @@ sub runRsync ($\@$) {
                 $srcInfo->{result} = "failed (error $rc / '$rc2')";
                 last SOURCE;
             }
+
             elsif ($statsR->{totbytes} <= 0) {
                 #* source is empty (or apparently so) despite no serious error
                 # (test this before [22,23,24] to trap case where all files
@@ -4909,6 +4950,7 @@ sub runRsync ($\@$) {
                 $succeeded = 0;
                 $srcInfo->{result} = 'source is empty';
             }
+
             else {   
                 #* success (0) and errors that can be ignored (23, 24)
                 # FIXME used to include 22 here -- why?
@@ -4940,6 +4982,7 @@ sub runRsync ($\@$) {
         printlog "\nSuccessfully created new snapshot '$S{$snapshot}{fullname}'" .   
             ($Opt{'dry-run'} ? "\n(dry run: no snapshot actually created)" : '') . "\n\n", 1;
         if ($deletionsAllSources) {
+           
             printNote "$deletionsAllSources expirable snapshots were deleted" . 
                 " from destination '$dest'\n";
             printlog "(dry run: no snapshots actually deleted)\n", 3 if $Opt{'dry-run'};
@@ -4959,6 +5002,50 @@ sub runRsync ($\@$) {
     }
 
     return ($succeeded, $lostDest);
+}
+
+#---------------------------------------------------------------------------------------------------
+
+sub createLatest () {
+    # Create a 'latest' copy of the most recent snapshot.
+    # i.e. a snapshot with the fixed name '<template>-latest' that can be used for
+    # offsite copies or whatever.
+    # Prints note/warning/errors messages, but does not return any error code.
+    my @S = rsort keys %S;
+    my $new = $S{$S[0]};
+    my $template = $Opt{template};
+    debug "path=$new->{path}  name=$new->{name}, remote=$new->{remote}", 'cL';
+    if ($new->{daemon}) {
+        printWarning "\nCannot create 'latest' snapshot copy on rsync daemon destination\n\n", 1;
+        return;
+    }
+    my $cmd = '';
+    my $args = '';
+    if ($new->{remote}) {
+        # ssh to remote destination, and run rsync there
+        my ($server, $dir) = split(':', $new->{path}, 2);
+        $cmd = "ssh";
+        my $rsync = $Opt{'remote-rsync-cmd'} || 'rsync';
+        my $dryrun = $Opt{'dry-run'} ? '--dry-run' : '';
+        $args = "$server $rsync -aHx --numeric-ids $dryrun --delete --link-dest ../$new->{name} " .
+            "$dir/$new->{name}/ $dir/$template-latest";
+    } else {
+        # local destination -- just run rsync as usual (dry-run option will be applied later)
+        $cmd = $Opt{'rsync-cmd'};
+        $args = "-aHx --numeric-ids --delete --link-dest ../$new->{name} $new->{fullname}/ " .
+            "$new->{path}/$template-latest";
+    }
+    debug "cmd is '$cmd'", 'cL';
+    debug "args are '$args'", 'cL';
+    my (@items, @errors);
+    my ($rc, $rc2) = systemCall($cmd, $args, 9,9, \@items, \@errors);
+    debug "items: @items",   'cL' if @items;
+    debug "errors: @errors", 'cL' if @errors;
+    if ($rc) {
+        printError "\nUnable to create 'latest' snapshot copy ($rc / '$rc2')\n\n";
+    } else {
+        printlog "\nSuccessfully created 'latest' snapshot copy\n\n", 1;
+    }
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -4986,7 +5073,7 @@ sub processDestination ($) {
     if ($Opt{snapshot}) {
         # Check when the last successful snapshot was run
         if ($Opt{'min-interval'} > 0 and @S > 1) {
-            # If the last snapshot was unsuccessful and within min-interval, just restart it
+            # If the last snapshot was unfinished and within min-interval, just restart it
             if ($Opt{'allow-restart'} and 
                 $S{$S[0]}{unfinished} and 
                 ($now - $S[0]) < ($Opt{'min-interval'} * MINUTE)) {
@@ -4996,16 +5083,18 @@ sub processDestination ($) {
                 }
             } else {
                 # No auto-restart -- don't run if successful recently
-                my $s = 0;
-                while ($s < @S and $S{$S[$s]}{unfinished}) {
-                    $s += 1;
-                }
-                if ($s < @S and ($now - $S[$s]) < ($Opt{'min-interval'} * MINUTE)) {
-                    printNote "\nIt has been less than $Opt{'min-interval'} minutes\n" . 
-                        "since the last successful snapshot: skipping this destination\n", 1;
-                    $Summary{$dest}{result} = 'skipped';
-                    $AllDestsFailed = 0;    # counts as successful
-                    return;
+                if (!$Opt{'dry-run'}) {     # (ignore this check if dry-running)
+                    my $s = 0;
+                    while ($s < @S and $S{$S[$s]}{unfinished}) {
+                        $s += 1;
+                    }
+                    if ($s < @S and ($now - $S[$s]) < ($Opt{'min-interval'} * MINUTE)) {
+                        printNote "\nIt has been less than $Opt{'min-interval'} minutes\n" . 
+                            "since the last successful snapshot: skipping this destination\n", 1;
+                        $Summary{$dest}{result} = 'skipped';
+                        $AllDestsFailed = 0;    # counts as successful
+                        return;
+                    }
                 }
             }
         }
@@ -5073,12 +5162,16 @@ sub processDestination ($) {
             (my $rsyncOK, $lostDest) = runRsync($dest, @expirableSnapshots, $now);  
             if ($rsyncOK) { 
                 $AllDestsFailed = 0;
+                # Create a 'latest' snapshot if required
+                if (!$lostDest and !$Opt{'dry-run'} and $Opt{latest}) {
+                    createLatest();
+                }
             } else {
                 $AnyDestFailed = 1;
             }
         }
     } else {
-        printNote "Option 'no-snapshot' given, so no new snapshot will be created\n", 1;
+        printNote "Option 'nosnapshot' given, so no new snapshot will be created\n", 1;
     }
 
     if (!$Interrupted) {
@@ -5089,7 +5182,7 @@ sub processDestination ($) {
             # Now we can actually delete things
             deleteSnapshots(@D, @cSpecs);
         } else {
-            printNote "Option 'no-delete' given, so no existing snapshots will be deleted\n", 1;
+            printNote "Option 'nodelete' given, so no existing snapshots will be deleted\n", 1;
         }
     }
 
@@ -5097,14 +5190,17 @@ sub processDestination ($) {
         # Complete and store the metadata
         updateSnapshotSizes();
         writeMetadata($dest);
-        # Clear the destination lock
-        # (there's no point trying to unlock it if we've lost the connection
-        # to the destination, so this is done here)
-        rsyncUnlockDest($dest);
     }
+
     # Display the current situation after recompiling the specs to allow for changes
     @cSpecs = compileSpecs($now, $Opt{pspecs});  
     status($dest, @cSpecs);
+
+    if (!$lostDest) {
+        # Clear the destination lock
+        # (there's no point trying to unlock it if we've lost the connection to the destination)
+        rsyncUnlockDest($dest);
+    }
 
     $Summary{$dest}{stop} = time();
 }
@@ -5123,7 +5219,7 @@ sub systemCall ($$$$;$$) {
     my $stdoutRef   = shift;    # if specified, it's an array reference that will receive lines 
                                 # from stdout OR a file handle to store stdout lines in
     my $stderrRef   = shift;    # ditto for stderr
-    # FIXME ?? combine levels and refs?
+    # TODO ?? combine levels and refs?
     my $rc = 0;
     my $rc2 = '';
     my %stats;
@@ -5152,16 +5248,26 @@ sub systemCall ($$$$;$$) {
             # intercept rsync's stats
             # (Is there a better way?  I don't want to put all of a possibly
             # huge rsync output into an array.  But this is becoming a bit hacky  FIXME)
-            if (/Number of files: (\d+)/) {
-                $stats{totfiles} = $1;
-            } elsif (/Number of files transferred: (\d+)/) {
-                $stats{tfrfiles} = $1;
-            } elsif (/Total file size: (\d+)/) {
-                $stats{totbytes} = $1;
+            # As of rsync 3.1.0, the numbers are displayed with commas, so strip them,
+            # and the number of files is split into 'regular files' and directories
+            # e.g. Number of files: 745 (reg: 674, dir: 71) 
+            if (/Number of files: ([\d,]+) \(reg: ([\d,]+), dir: ([\d,]+)\)/) {  # rsync >= 3.1.0
+                ($stats{totfiles} = $2) =~ tr/,//d;
+                debug "totfiles=$stats{totfiles} (new)\n", 'sC';
+            } elsif (/Number of files: ([\d,]+)/) { # rsync <= 3.0.9
+                ($stats{totfiles} = $1) =~ tr/,//d;
+                debug "totfiles=$stats{totfiles} (old)\n", 'sC';
+            } elsif (/Number of (regular |)files transferred: ([\d,]+)/) {
+                ($stats{tfrfiles} = $2) =~ tr/,//d;
+                debug "tfrfiles=$stats{tfrfiles}\n", 'sC';
+            } elsif (/Total file size: ([\d,]+)/) {
+                ($stats{totbytes} = $1) =~ tr/,//d;
+                debug "totbytes=$stats{totbytes}\n", 'sC';
             # 'Literal data' is apparently how much is actually sent
             #} elsif (/Total transferred file size: (\d+)/) {
-            } elsif (/Literal data: (\d+)/) {
-                $stats{tfrbytes} = $1;
+            } elsif (/Literal data: ([\d,]+)/) {
+                ($stats{tfrbytes} = $1) =~ tr/,//d;
+                debug "tfrbytes=$stats{tfrbytes}\n", 'sC';
             }
             # direct the output as required
             if (ref($stdoutRef) eq 'ARRAY') {
@@ -5197,7 +5303,7 @@ sub systemCall ($$$$;$$) {
                 $rc2 = 'nohost';
             } elsif (/received SIGINT/i) {
                 $rc2 = 'interrupted';
-            } elsif (/Connection timed out/i) {
+            } elsif (/timed out/i or /timeout/i) {
                 $rc2 = 'timedout';
             } elsif (/Permission denied/i) {
                 $rc2 = 'permission';

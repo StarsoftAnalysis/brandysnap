@@ -43,12 +43,12 @@
   </li>
   <li><a href="#FURTHER-DETAILS">FURTHER DETAILS</a>
     <ul>
-      <li><a href="#a-name-calendarModeCalendar-mode-a">&lt;a name=&quot;calendarMode&quot;&gt;Calendar mode&lt;/a&gt;</a></li>
-      <li><a href="#a-name-safeModeSafe-mode-a">&lt;a name=&quot;safeMode&quot;&gt;Safe mode&lt;/a&gt;</a></li>
+      <li><a href="#Calendar-mode">Calendar mode</a></li>
+      <li><a href="#Safe-mode">Safe mode</a></li>
       <li><a href="#Strict-mode">Strict mode</a></li>
       <li><a href="#Weeks-and-months-and-years">Weeks and months and years</a></li>
       <li><a href="#Status-report">Status report</a></li>
-      <li><a href="#a-name-snapshotNamesSnapshot-names-a">&lt;a name=&quot;snapshotNames&quot;&gt;Snapshot names&lt;/a&gt;</a></li>
+      <li><a href="#Snapshot-names">Snapshot names</a></li>
       <li><a href="#Interrupt-handling">Interrupt handling</a></li>
       <li><a href="#Other-notes">Other notes</a></li>
     </ul>
@@ -112,7 +112,7 @@
 
 <pre><code> brandysnap --dry-run --conf brandysnap-test1.conf</code></pre>
 
-<p>The <b>dry-run</b> option will mean that nothing will actually be done. Once you&#39;re happy than the script won&#39;t break anything, try it without the <b>dry-run</b>.</p>
+<p>The <b>dry-run</b> option will mean that nothing will actually be done. Once you&#39;re happy that the script won&#39;t break anything, try it without the <b>dry-run</b>.</p>
 
 <p>For more options, run <b>brandysnap --help</b>.</p>
 
@@ -150,7 +150,7 @@
 
 <p>What is more interesting is how many snapshots are KEPT. This is determined by a series of specifications, or &#39;specs&#39;, such as</p>
 
-<pre><code> 4d5,3w3,1d11</code></pre>
+<pre><code> 4d5,3w3,1m11</code></pre>
 
 <p>which is a concise way of saying &#39;keep four snapshots a day from the last five days, then three a week for three weeks, then one a month for eleven months. If brandysnap has run successfully for the last year, then there will be at least 4x5 + 3x3 + 1x11 = 40 snapshots.</p>
 
@@ -201,6 +201,8 @@
 
 <p>If the last spec has no count, it will be padded &#39;forever&#39;. The number of snapshots will only be limited by the available disk space. And when the disk is full, the oldest snapshots will be deleted.</p>
 
+<p>Snapshots also get deleted as time passes. If a day with four snapshots gets to be old enough to fall within a <b>2w4</b> spec, then the extra snapshots will be deleted.</p>
+
 <p>More spec examples:</p>
 
 <ul>
@@ -218,8 +220,6 @@
 
 </li>
 </ul>
-
-<p>Snapshots also get deleted as time passes. If a day with four snapshots gets to be old enough to fall within a <b>3w</b> spec, then the extra snapshots will be deleted.</p>
 
 <h2 id="Managing-Snapshots-Manually">Managing Snapshots Manually</h2>
 
@@ -292,29 +292,32 @@
 
 <p>Only certain options are valid within each context. A destination context can contain these options:</p>
 
-<pre><code> hbest dbest wbest mbest ybest
- safe calendar strict
- source template spec
- snapshot delete delete-cp
- weekstart
- rsync-cmd rsync-opts rsync-xopts remote-rsync-cmd
- expire-old
- bwlimit-in bwlimit-out
- compress restart
- allow-restart ldcount
- all-failed some-failed
- min-interval
- verbose loglevel debug </code></pre>
+<pre><code>        hbest dbest wbest mbest ybest
+        safe calendar strict
+        source template specs
+        include include-from exclude exclude-from   
+        snapshot delete delete-cp
+        weekstart
+        rsync-cmd rsync-opts rsync-xopts remote-rsync-cmd
+        expire-old
+        bwlimit latest
+        compress restart
+        allow-restart ldcount timeout-retries
+        all-failed some-failed
+        min-interval hostname
+        verbose loglevel debug</code></pre>
 
 <p>A source context can contain these options:</p>
 
-<pre><code> rsync-cmd rsync-opts rsync-xopts remote-rsync-cmd
- include include-from exclude exclude-from
- bwlimit-in bwlimit-out
- compress restart
- allow-restart 
- min-interval
- verbose loglevel debug</code></pre>
+<pre><code>        rsync-cmd rsync-opts rsync-xopts remote-rsync-cmd
+        include include-from exclude exclude-from
+        bwlimit
+        compress restart
+        allow-restart timeout-retries
+        min-interval hostname
+        verbose loglevel debug</code></pre>
+
+<h1 id="OPTIONS">OPTIONS</h1>
 
 <ul>
 
@@ -326,19 +329,17 @@
 </li>
 </ul>
 
-<h1 id="OPTIONS">OPTIONS</h1>
-
 <h2 id="Main-options">Main options</h2>
 
 <dl>
 
-<dt id="config-file-"><b>config <i>file</i></b> !</dt>
+<dt id="config-file"><b>config <i>file</i></b> !</dt>
 <dd>
 
 <p>The name of a file to look in for further options. Configuration file options will be overridden by command-line ones, irrespective of where the <b>config</b> option appears on the command line.</p>
 
 </dd>
-<dt id="source-file-dir-"><b>source <i>file/dir</i></b> *!</dt>
+<dt id="source-file-dir"><b>source <i>file/dir</i></b> *!</dt>
 <dd>
 
 <p>A local or remote file or directory to add to the snapshot. Examples:</p>
@@ -366,7 +367,7 @@
 <p>By default, brandysnap uses the rsync options <b>--hard-links --numeric-ids --archive --one-file-system --timeout=300</b>, so the whole of each source will be copied recursively without following symbolic links. See the <b>rsync-opts</b> and <b>rsync-xopts</b> options for ways to change this.</p>
 
 </dd>
-<dt id="destination-dir-"><b>destination <i>dir</i></b> *!</dt>
+<dt id="destination-dir"><b>destination <i>dir</i></b> *!</dt>
 <dd>
 
 <p>A local or remote directory for use as the snapshot destination. Examples:</p>
@@ -379,7 +380,7 @@
 <p>Destinations can be given specific options (including sources) with the following syntax:</p>
 
 <pre><code> &lt;destination chris@example.com:/backups&gt;
-     bwlimit-out = 2000
+     bwlimit = 2000
      remote-rsync-cmd = sudo rsync
  &lt;/destination&gt;</code></pre>
 
@@ -388,19 +389,21 @@
 <p>See the section on remote authorisation.</p>
 
 </dd>
-<dt id="template-name-"><b>template <i>name</i></b> !</dt>
+<dt id="template-name"><b>template <i>name</i></b> !</dt>
 <dd>
 
 <p>The directory name of each snapshot is of the form</p>
 
 <pre><code> &lt;template&gt;-&lt;timestamp&gt;</code></pre>
 
-<p>See the [Snapshot Names section](#snapshotNames) for more details. Example:</p>
+<p>See the <a href="#Snapshot-names">Snapshot names section</a> for more details.</p>
+
+<p>Example:</p>
 
 <pre><code> template docs</code></pre>
 
 </dd>
-<dt id="specs-string-"><b>specs <i>string</i></b> !</dt>
+<dt id="specs-string"><b>specs <i>string</i></b> !</dt>
 <dd>
 
 <p>The snapshot-keeping specifications. See the Keeping Snapshots section for full details.</p>
@@ -467,7 +470,7 @@
 <p>Determines the favoured day within a year. In leap years, the value <b>366</b> is automatically changed to <b>365</b>, so <b>366</b> always means &#39;the last day of the year&#39;. For example, to prefer yearly snapshots in the middle of the year, use <b>ybest 180</b>. (default: <b>366</b>)</p>
 
 </dd>
-<dt id="min-interval-0.."><b>min-interval <i>0..</i></b></dt>
+<dt id="min-interval-0"><b>min-interval <i>0..</i></b></dt>
 <dd>
 
 <p>Sets the minimum interval between snapshots, in minutes. This is useful on a client, such as a laptop, that is not running or not connected to the network all the time: cron can be used to schedule brandysnap frequently, and this option used to make sure that snapshots are only created every hour, say.</p>
@@ -539,13 +542,13 @@
 <p>Note that compression is used for any &#39;remote&#39; transfer, i.e. when the source and destination are not on the same computer. On a fast local network, you may want to use <b>--nocompress</b>.</p>
 
 </dd>
-<dt id="include-exclude-pattern-"><b>include</b>/&lt;exclude&gt;/ <i>pattern</i>&gt; *</dt>
+<dt id="include-exclude-pattern"><b>include</b>/&lt;exclude&gt;/ <i>pattern</i>&gt; *</dt>
 <dd>
 
 <p>These two options are passed through to rsync unchecked and unchanged. See the rsync documentation for details. (default: none)</p>
 
 </dd>
-<dt id="include-from-exclude-from-filename-"><b>include-from</b>/<b>exclude-from <i>filename</i></b> *</dt>
+<dt id="include-from-exclude-from-filename"><b>include-from</b>/<b>exclude-from <i>filename</i></b> *</dt>
 <dd>
 
 <p>The filenames are checked: if the file exists, the option is passed on to rsync (but the contents of the file are not checked). &#39;~&#39; is NOT expanded to a home directory. These files can be remote, so that they can be kept on the same computer as the source they refer to. For example:</p>
@@ -556,16 +559,21 @@
 <p>See the rsync documentation for details. (default: none)</p>
 
 </dd>
-<dt id="bwlimit-in-n"><b>bwlimit-in</b> &lt;n&gt;</dt>
+<dt id="bwlimit-n"><b>bwlimit</b> &lt;n&gt;</dt>
 <dd>
 
-<p>Band-width limit for receiving in kbps. Set it to 0 for no limit. (default: <b>0</b>)</p>
+<p>Band-width limit in kbps. Set it to 0 for no limit. (default: <b>0</b>)</p>
 
-</dd>
-<dt id="bwlimit-out-n"><b>bwlimit-out</b> &lt;n&gt;</dt>
-<dd>
+<p>This option can be set per destination or per source/destination combination to allow for each transfer being made by a different route. For example:</p>
 
-<p>Band-width limit for sending in kbps. Set it to 0 for no limit. (default: <b>0</b>)</p>
+<pre><code>  &lt;destination: /local/dir&gt;
+        &lt;source: /local/source&gt;
+                # no band-width limit
+        &lt;/source&gt;
+        &lt;source: rsync://remote/source&gt;
+                bwlimit: 1000
+        &lt;/source&gt;
+  &lt;destination&gt;</code></pre>
 
 <p>Tip: keep the value low (e.g. 200) if connecting over wifi to avoid swamping the connection.</p>
 
@@ -579,7 +587,13 @@
 <dt id="rsync-xopts-options"><b>rsync-xopts <i>options</i></b></dt>
 <dd>
 
-<p>Extra options to pass to rsync. This is a convenience option to all you to add to or override the standard options without having to remember what the standard options are. (default: none)</p>
+<p>Extra options to pass to rsync. This is a convenience option to allow you to add to or override the standard options without having to remember what the standard options are. (default: none)</p>
+
+</dd>
+<dt id="timeout-retries-n"><b>timeout-retries <i>n</i></b></dt>
+<dd>
+
+<p>The number of times to retry rsync after a time-out error. This may be useful if the connection between the source and destination is unreliable. (default: 0)</p>
 
 </dd>
 </dl>
@@ -588,7 +602,7 @@
 
 <dl>
 
-<dt id="email-to-address-Email-recipient-for-error-messages-no-default-.-Multiple-email-to-options-can-be-given-or-a-comma-separated-list-of-email-addresses-can-be-specified-on-a-single-option.-email-to-is-required-for-any-emails-to-be-sent."><b>email-to <i>address</i></b> Email recipient for error messages (no default). Multiple <b>email-to</b> options can be given, or a comma-separated list of email addresses can be specified on a single option. <b>email-to</b> is required for any emails to be sent.</dt>
+<dt id="email-to-address-Email-recipient-for-error-messages-no-default-.-Multiple-email-to-options-can-be-given-or-a-comma-separated-list-of-email-addresses-can-be-specified-on-a-single-option.-email-to-is-required-for-any-emails-to-be-sent"><b>email-to <i>address</i></b> Email recipient for error messages (no default). Multiple <b>email-to</b> options can be given, or a comma-separated list of email addresses can be specified on a single option. <b>email-to</b> is required for any emails to be sent.</dt>
 <dd>
 
 </dd>
@@ -644,6 +658,28 @@
 <dd>
 
 <p>Consider _all_ snapshots (oldest first) as expirable to make room when the destination is full. (default: <b>noexpire-old</b>)</p>
+
+</dd>
+<dt id="hostname"><b>hostname</b></dt>
+<dd>
+
+<p>Override the hostname or fully-qualified domain name that is used in the snapshot path. Normally, this is the host name of the computer running brandysnap if the source is local, or the FQDN of the source if it&#39;s remote.</p>
+
+<p>This option is only useful if, for example, brandysnap is running from a live CD to backup files from a non-functioning machine: you would then supply the hostname of the dead computer along with the configuration file from it so that the snapshot matches the existing ones (and so that --link-dest works properly).</p>
+
+<p>(default: the hostname of the source computer)</p>
+
+</dd>
+<dt id="no-latest"><b>[no]latest</b></dt>
+<dd>
+
+<p>If this option specified, an additional hard-linked copy of the new snapshot will be created called &lt;template&gt;-latest. This is designed for use with, for example, and online backup service which is configured to upload just the latest snapshot.</p>
+
+<p>Note: if the destination is remote, brandysnap has to use ssh to run rsnapshot remotely: this may require extra configuration of permissions and ssh keys in order to allow brandysnap to run without prompting for passwords.</p>
+
+<p>Note: latest snapshots can NOT be created on remote destinations when connecting via an rsync daemon.</p>
+
+<p>(default: <b>nolatest</b>)</p>
 
 </dd>
 <dt id="ldcount-n"><b>ldcount <i>n</i></b></dt>
@@ -706,13 +742,15 @@
 
 <h1 id="FURTHER-DETAILS">FURTHER DETAILS</h1>
 
-<h2 id="a-name-calendarModeCalendar-mode-a">&lt;a name=&quot;calendarMode&quot;&gt;Calendar mode&lt;/a&gt;</h2>
+<h2 id="Calendar-mode">Calendar mode</h2>
 
-<p>In &#39;calendar mode&#39;, which is the default, brandysnap works in terms of real weeks and months. Days always start at midnight, weeks at midnight on Sunday etc. (but see the <b>--weekstart</b> option). In non-calendar mode, the specs are interpreted more simply, working backwards from the moment when brandysnap is run. There will be no gap between periods: days and weeks can start at any time, depending on when the previous spec ran out.</p>
+<p>In &#39;calendar mode&#39;, which is the default, brandysnap works in terms of real weeks and months. Days always start at midnight, weeks at midnight on Sunday etc. (but see the <b>--weekstart</b> option).</p>
 
-<h2 id="a-name-safeModeSafe-mode-a">&lt;a name=&quot;safeMode&quot;&gt;Safe mode&lt;/a&gt;</h2>
+<p>In non-calendar mode, the specs are interpreted more simply, working backwards from the moment when brandysnap is run. There will be no gap between periods: days and weeks can start at any time, depending on when the previous spec ran out.</p>
 
-<p>In &#39;safe mode&#39;, which the default, specs will only match against the list of existing snapshots if there are enough snapshots to satisfy the spec&#39;s definition. Incomplete specs will be skipped. This has the result that brandysnap is less likely to delete snapshots. This is designed to cater for situations when brandysnap has not run successfully as often as it should have, for whatever reason. For example, because of weekends or holidays, or because the destination wasn&#39;t available because an external USB drive wasn&#39;t connected (or two or more USB drives are being used in rotation). e.g if the spec is <b>4d5</b>, it&#39;s now Monday and brandysnap did not run at the weekend, then the days with fewer than 4 snapshots (i.e. Saturday and Sunday) will be skipped; counting the 5 days will start on Friday and work backwards from there. Safe mode can be turned off via the <b>--safe</b> option.</p>
+<h2 id="Safe-mode">Safe mode</h2>
+
+<p>In &#39;safe mode&#39;, which is the default, specs will only match against the list of existing snapshots if there are enough snapshots to satisfy the spec&#39;s definition. Incomplete specs will be skipped. This has the result that brandysnap is less likely to delete snapshots. This is designed to cater for situations when brandysnap has not run successfully as often as it should have, for whatever reason. For example, because of weekends or holidays, or because the destination wasn&#39;t available because an external USB drive wasn&#39;t connected (or two or more USB drives are being used in rotation). e.g if the spec is <b>4d5</b>, it&#39;s now Monday and brandysnap did not run at the weekend, then the days with fewer than 4 snapshots (i.e. Saturday and Sunday) will be skipped; counting the 5 days will start on Friday and work backwards from there. Safe mode can be turned off via the <b>--safe</b> option.</p>
 
 <h2 id="Strict-mode">Strict mode</h2>
 
@@ -720,17 +758,13 @@
 
 <h2 id="Weeks-and-months-and-years">Weeks and months and years</h2>
 
-<p>The fact that months and years do not have whole or fixed numbers of weeks makes counting periods awkward. Brandysnap deals with this by skipping over the extra days, and not deleting any of their snapshots.</p>
+<p>The fact that months and years do not have whole or fixed numbers of weeks makes counting periods awkward. Brandysnap deals with this by skipping over the extra days, and only deleting their snapshots if they would have been deleted in a complete period.</p>
 
 <h2 id="Status-report">Status report</h2>
 
 <p>Brandysnap displays a status report on all existing snapshots at the end of each run.</p>
 
-<p>However, if the destination is on a remote computer, the status report does include details of the disk space used by each snapshot because of the process of retrieving that information is slow.</p>
-
-<p>The full status report can be seen for remote destinations by running brandysnap with the <b>--status</b> option in addition to the usual configuration. And even then, can only display &#39;Real size&#39;, not &#39;Delete size&#39;, because rsync doesn&#39;t give information about the number of hard links.</p>
-
-<h2 id="a-name-snapshotNamesSnapshot-names-a">&lt;a name=&quot;snapshotNames&quot;&gt;Snapshot names&lt;/a&gt;</h2>
+<h2 id="Snapshot-names">Snapshot names</h2>
 
 <p>Each snapshot is a separate directory within the destination, with a name of the form</p>
 
@@ -757,11 +791,15 @@
 
 <h1 id="KNOWN-ISSUES">KNOWN ISSUES</h1>
 
-<p>As of 1 March 2013 and version 0.2.14, the following issues and bugs are known.</p>
+<p>As of 22 April 2013 and version 0.2.15, the following issues and bugs are known.</p>
 
 <ul>
 
 <li><p>Under certain circumstances, rsync can fail if the source contains files that are hard-linked together and for which you do not have read permission. This is fixed in rsync 3.0.9 and later. You can get round it by specifying <b>--rsync-opts</b> with the usual options but omitting <b>--hard-links</b> at the cost of using more disk space.</p>
+
+<p>==item *</p>
+
+<p>The fmtRange routine uses Date::Manip::Delta, which insists that February is four weeks and not one month. There may be other similar cosmetic irritations.</p>
 
 </li>
 </ul>

@@ -1,6 +1,21 @@
 Changelog for brandysnap
 ========================
 
+0.2.16  28/10/2013
+* Added --hostname option -- see documentation.
+* Added --latest option -- see documentation.
+* Added --timeout-retries option -- see documentation.
+* Removed 'experimental' Perl features 'given', 'when', and smart-match.
+* Fixed bugs:
+  - bug in status() when oldest spec was unfinished
+  - include module in host directory name when source is a daemon
+  - more general error match for 'timed out' or 'timeout'
+  - bug in fmtRange() -- use 'approx' mode for months and years
+  - count in status listing included unfinished snapshots
+  - cope with changed --stats output in rsync 3.1.0
+  - --version now displays the version! (thanks to Nicholas Wastell)
+  - corrections to the documentation (thanks to Nicholas Wastell)
+
 0.2.15	30/05/2013
 * Replace 'bwlimit-in' and 'bwlimit-out' options with single 'bwlimit' --
   possible now that options can be specified per source or destination.
