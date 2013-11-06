@@ -82,7 +82,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-our $VERSION = "0.2.17";
+our $VERSION = "0.2.17-next";
 
 # A copy of @ARGV before it gets shifted
 my @ARGVcopy = @ARGV;
