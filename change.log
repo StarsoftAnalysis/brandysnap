@@ -1,6 +1,109 @@
 Changelog for brandysnap
 ========================
 
+0.2.17	6/11/2013
+* Added --latest-copy option -- see documentation.
+* include-from and exclude-from files are now checked for readability.
+  They can also be remote, which is sometimes convenient.
+* Fixed bugs:
+  - tweaked choice of snapshots to delete (in getMatchingSnapshots)
+  - in getDeleteList, don't reconsider snapshots deleted for a previous spec.
+  - process a destination even if none of its sources are readable 
+    (so that status still works etc.)
+  - don't attempt to create 'latest' snapshot on a dry run.
+
+0.2.16  28/10/2013
+* Added --hostname option -- see documentation.
+* Added --latest option -- see documentation.
+* Added --timeout-retries option -- see documentation.
+* Removed 'experimental' Perl features 'given', 'when', and smart-match.
+* Fixed bugs:
+  - bug in status() when oldest spec was unfinished
+  - include module in host directory name when source is a daemon
+  - more general error match for 'timed out' or 'timeout'
+  - bug in fmtRange() -- use 'approx' mode for months and years
+  - count in status listing included unfinished snapshots
+  - cope with changed --stats output in rsync 3.1.0
+  - --version now displays the version! (thanks to Nicholas Wastell)
+  - corrections to the documentation (thanks to Nicholas Wastell)
+
+0.2.15	30/05/2013
+* Replace 'bwlimit-in' and 'bwlimit-out' options with single 'bwlimit' --
+  possible now that options can be specified per source or destination.
+* Added period covered by each spec to the status listing at level 3 or
+  greater.
+* Bug fixes:
+  - use full range when visualising partial periods
+  - set end of current period to proper end, not now+1
+  - better fmtRange() that copes with DST changes
+  - better bytes() that deals with edge cases
+  - better printit() and logit()
+
+0.2.14  01/03/2013
+* Add 'visualisation' of snapshots (at verbosity 3) when deleting them.
+* Bug fixes:
+  - was deleting the new snapshot twice when not required.
+
+0.2.13  22/02/2013
+* Empty (or apparently empty) sources are now treated as failures
+  (including sources containing only empty directories).
+* Don't count 'small' snapshots as good ones when setting up --link-dest
+  options (where 'small' means less than (currently) 30% of the average.
+* Rewrite status() to calculate totals and averages properly.
+* Changed order of testing for errors in runRsync.
+* --include-from and --exclude-from files are now tested and ignored if they
+  don't exist; they can also now be remote, so that they can be kept on the
+  same machine as the source that they apply to.
+* Better messages when deleting snapshots.
+* Minor bugs:
+  - mark destination as successful if it wasn't needed.
+  - tidied error messages for command line option errors.
+
+0.2.12
+* Check for and delete any completely empty snapshots
+* Change the way existing snapshots are counted: for example if the spec calls
+  for 7 snapshots in a week, and there are 3 last week and 4 the week before,
+  then that now meets the requirement; previously the algorithm would look
+  for a single week with 7 snapshots.
+* Bug fixes:
+  - display summary correctly when there are 'old' but undeleted snapshots.
+  - deal with zero-size sources as failures
+
+0.2.11
+* Allow use of 'notes' on snapshot names to prevent deletion,
+  and tweak the code to make noted snapshots more likely to be kept.
+* Deal with (very unlikely) duplicate snapshot folders.
+* Reworked error/warning/note reporting.
+* Better trapping of time-out errors.
+* Better handling of interruptions.
+* More information in warning messages when sources and destinations are
+  unavailable
+
+0.2.10
+* Display more complete results, including elapsed times.
+* Send emails if not successful -- see various --email-xxx options.
+* Bug fixes:
+  - displaySummary -- don't assume that destination start and stop
+    times exist.
+  - fixed two bugs that only show up in Perl 5.10.1: use of
+    'keys $hashRef' instead of 'keys %$hashRef'
+
+0.2.9
+* Added option --rsync-xopts.
+* Print the getDeleteList summary only when debugging.
+* Display the 'padded' specs in the options summary and status listing.
+* Simplified the output from displayCSpecs.
+* Moved the test suite to a separate file.
+* Print timings for each source, destination, and whole run.
+* Bugs fixed:
+  - use $timesofar properly in parseSpecs().
+  - new version of fmtHours() that works.
+
+0.2.8
+* Better 'status' listing, including the size and number of files transferred
+  by rsync, gleaned from rsync's --stats option 
+* '--verbose 0' is now completely silent.
+
 0.2.7
 * Changes:
   - Remove 'stacktrace' option: just print a stacktrace when debugging.

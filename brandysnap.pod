@@ -15,7 +15,7 @@ brandysnap --conf brandysnap.conf [OTHER OPTIONS...]
 =head1 DESCRIPTION
 
  This is part of the brandysnap documentation.
- Copyright &copy; 2011,2012  Chris Dennis  chris@starsoftanalysis.co.uk
+ Copyright &copy; 2011-2013  Chris Dennis  chris@starsoftanalysis.co.uk
  See the file fdl-1.3.txt for copying conditions.
 
 Brandysnap is (yet another) script that uses rsync to create snapshot backups of files and 
@@ -30,30 +30,52 @@ snapshots are not created as regularly as they should be.
 This can be for a variety of reasons -- hardware failure, operator failure, 
 weekends, holidays, someone forgot to plug in the external USB drive...
 
-Rather than assigning 'importance' to snapshots according to when they were made (for example, keeping Friday afternoon backups for longer than Tuesday morning ones), it looks at what snapshots exist and decides if any can be deleted.  If the Friday afternoon backup is missing, it will keep the nearest one it can find.
+Rather than assigning 'importance' to snapshots according to when they were made 
+(for example, keeping Friday afternoon backups for longer than Tuesday morning ones), 
+it looks at what snapshots exist and decides if any can be deleted.  
+If the Friday afternoon backup is missing, it will keep the nearest one it can find.
 
-The basic rule is 'backup first, ask questions later'.  Brandysnap assumes that snapshots are cheap -- in both time and space.  In other words, making a snapshot is quick, and uses relatively little disk space because of the use of hard links.  (Of course the first snapshot is not cheap.  And snapshots over a network are never particularly quick.)
+The basic rule is 'backup first, ask questions later'.  Brandysnap assumes that snapshots 
+are cheap -- in both time and space.  In other words, making a snapshot is quick, and uses 
+relatively little disk space because of the use of hard links.  (Of course the first 
+snapshot is not cheap.  And snapshots over a network are never particularly quick.)
 
-It therefore creates a new snapshot every time it is run, and then thinks about which snapshots, if any, are no longer required.
+It therefore creates a new snapshot every time it is run, and then thinks about 
+which snapshots, if any, are no longer required.
 
-Brandysnap tries to cope with any situation.  Either the source or the destination can be on a remote computer (but not both at the same time).
+Brandysnap tries to cope with any situation.  Either the source or the destination can 
+be on a remote computer (but not both at the same time).
 
-Brandysnap is designed to be run regularly from cron (or similar automation system).  It can also be run manually if required without upsetting things.
+Brandysnap is designed to be run regularly from cron (or similar automation system).  
+It can also be run manually if required without upsetting things.
 
-One of the features of brandysnap is that it uses rsync to do all the work, even for deleting old snapshots locally etc.  That means
-that, if you need root access to create the snapshot maintaining ownership and permissions, the script only needs sudo access 
-for rsync, not for any other command nor for the script itself.  (e.g. use B<--rsync-cmd = 'sudo rsync'> and B<--remote-rsync-cmd = 'sudo rsync'> to avoid the need for passwords [need more explanation here])
+One of the features of brandysnap is that it uses rsync to do all the work, 
+even for deleting old snapshots locally etc.  That means
+that, if you need root access to create the snapshot maintaining 
+ownership and permissions, the script only needs sudo access 
+for rsync, not for any other command nor for the script itself.  
+(e.g. use B<--rsync-cmd = 'sudo rsync'> and B<--remote-rsync-cmd = 'sudo rsync'> to 
+avoid the need for passwords [need more explanation here])
 
-Brandysnap has been developed on Linux.  It is written in Perl and uses a selection of fairly standard modules (all available in Ubuntu repositories, and no doubt elsewhere too).  It relies on hard links [see ...] and will only work properly when creating snapshots on a filing system that can handle hard links, such as ext3 or ext4 [and others...].
+Brandysnap has been developed on Linux.  It is written in Perl and uses a selection of 
+fairly standard modules (all available in Ubuntu repositories, and no doubt elsewhere too).  
+It relies on hard links [see ...] and will only work properly when creating snapshots 
+on a filing system that can handle hard links, such as ext3 or ext4 [and others...].
 
-Lots of snapshots don't make a file more secure: if the file hasn't changed, and is the same in all snapshots, then it is only stored once on the disk.  If it gets corrupted for any reason, then it will be corrupted in all snapshots.  (If the file is DELETED from one snapshot, it will still exist in the others, because of the way hard links work.) Think of the whole set of snapshots as one backup, with multiple versions of files that have changed.
+Lots of snapshots don't make a file more secure: if the file hasn't changed, and is the 
+same in all snapshots, then it is only stored once on the disk.  If it gets corrupted 
+for any reason, then it will be corrupted in all snapshots.  
+(If the file is DELETED from one snapshot, it will still exist in the others, 
+because of the way hard links work.) 
+Think of the whole set of snapshots as one backup, with multiple versions of files that have changed.
 
 
 =head2 Very Quick Start
 
 See the README file for brief installation instructions.
 
-If you want to try it out without reading further, create a configuration file called brandysnap-test1.conf containing something like this:
+If you want to try it out without reading further, create a configuration file 
+called brandysnap-test1.conf containing something like this:
 
  source      = /path/to/something/to/backup
  destination = /path/to/writable/directory
@@ -64,7 +86,8 @@ and then run
 
  brandysnap --dry-run --conf brandysnap-test1.conf
 
-The B<dry-run> option will mean that nothing will actually be done.  Once you're happy than the script won't break anything, try it without the B<dry-run>.    
+The B<dry-run> option will mean that nothing will actually be done.  
+Once you're happy that the script won't break anything, try it without the B<dry-run>.    
 
 For more options, run B<brandysnap --help>.
 
@@ -85,26 +108,43 @@ If the remote side of the transfer is running SSH on a non-standard port, you'll
 
 and then specify the location as B<fred@eg2022:/thingy>.
 
+Note that it's the user running rsync that needs to modify their B<.ssh/config> file,
+not necessarily the one who runs brandysnap.  If, for 
+example you use B<--rsync='sudo rsync'>, then you'll need to edit B</root/.ssh/config>
+rather than B<~/.ssh/config>.
+
 This does not apply when using an rsync daemon, in which case the port can be specified as part of the location, e.g. rsync://fred\@example.com:1234/thingy.
 
-Multiple destinations can be configured, in which case snapshots will be created on all destinations that are available.  This can be used to put snapshots on several external USB drives in rotation, for example.  Or you could specify one local and one remote destination for security.  But note that multiple destinations won't be in sync with each other: that's not the intention.  They will end up with different lists of snapshots if they are available at different times.
+Multiple destinations can be configured, in which case snapshots will be created on all 
+destinations that are available.  
+This can be used to put snapshots on several external USB drives in rotation, for example.  
+Or you could specify one local and one remote destination for security.  
+But note that multiple destinations won't always be in sync with each other: 
+that's not the intention.  
+Destinations will end up with different lists of snapshots if they are available at different times.
 
 
 =head2 Preserving Ownership
 
-In order to preserver ownership of files, brandysnap needs to be run as root or via 'sudo'.
+In order to preserve ownership of files, brandysnap needs to be run as root or via 'sudo'.
 
 [More detail needed here re use of sudo and B<remote-rsync-cmd = 'sudo rsync'>]
 
 
 =head2 Keeping Snapshots
 
-The number of snapshots that are made depends on how often brandysnap is run.  It creates a new snapshot every time.  What is more interesting is how many snapshots are KEPT.  This is 
-determined by a series of specifications, or 'specs', such as
+The number of snapshots that are made depends on how often brandysnap is run.  
+It creates a new snapshot every time (usually).  
 
- 4d5,3w3,1d11
+What is more interesting is how many snapshots are KEPT.  
+This is determined by a series of specifications, or 'specs', such as
 
-which is a concise way of saying 'keep four snapshots a day from the last five days, then three a week for three weeks, then one a month for eleven months.  If brandysnap has run successfully for the last year, then there will be at least 4x5 + 3x3 + 1x11 = 40 snapshots.
+ 4d5,3w3,1m11
+
+which is a concise way of saying 'keep four snapshots a day from the last five days, 
+then three a week for three weeks, then one a month for eleven months.  
+If brandysnap has run successfully for the last year, then there will be at least 
+4x5 + 3x3 + 1x11 = 40 snapshots.
 
 Most of the tricky stuff in brandysnap is in deciding which snapshots to keep.
 
@@ -159,6 +199,8 @@ will be interpreted as B<4d7,2w4>.  The 'day' specification is expanded to a wee
 
 If the last spec has no count, it will be padded 'forever'.  The number of snapshots will only be limited by the available disk space.  And when the disk is full, the oldest snapshots will be deleted.
 
+Snapshots also get deleted as time passes.  If a day with four snapshots gets to be old enough to fall within a B<2w4> spec, then the extra snapshots will be deleted.
+
 More spec examples:
 
 =over
@@ -179,8 +221,34 @@ B<0-6d5,2-5w3,4m12> - keep up to 6 snapshots a day for five days, but consider d
 
 =back
 
-Snapshots also get deleted as time passes.  If a day with four snapshots gets to be old enough to fall within a B<3w> spec, then the extra snapshots will be deleted.
+=head2 Managing Snapshots Manually
 
+Snapshots are stored on the destination, each in a separate directory
+named I<template-timestamp>.  For example, 
+
+ mightyboosh-20120515-100749
+ mightyboosh-20120617-145513
+ mightyboosh-20120726-145512
+ mightyboosh-20120823-145511
+ mightyboosh-20120914-145511
+
+Normally, you would leave the snapshots alone, allowing brandysnap to delete them
+at the appropriate time.
+
+If you wish to mark a snapshot as 'special', just rename it by adding some 
+text to the end of the directory name.  Any text will do -- make it something
+meaningful.  For example,
+
+ mightyboosh-20120617-145513-before-upgrade
+
+brandysnap will process the snapshot as usual, but will never delete it.  (In fact it will 
+also tweak the priority calculations to make the 'special' snapshot more likely
+to be kept.  In other words, any non-special snapshots in the same time period
+are more likely to be chosen for deletion.)
+
+There is no way to mark a snapshot as 
+'unimportant, delete me first', but you can delete a 
+snapshot manually if you want to.
 
 =head2 Definition of 'snapshot' vs full/incremental backups
 
@@ -194,6 +262,12 @@ of the way hard links work.)
 
 Think of the whole set of snapshots as one backup, with multiple versions of files that have changed.
 
+=head2 Email Notifications
+
+Email messages can be sent if brandysnap fails.  Emails are sent simply by piping them
+to the 'sendmail' program, which is present on most Linux systems as part of the local
+email server (exim, for example) and can be installed
+in the Cygwin environment as part of exim.  
 
 =head2 Options
 
@@ -244,29 +318,33 @@ C</home/ann> (excluding C<.cache>) will be copied to C</backups/two>.
 
 Only certain options are valid within each context.  A destination context can contain these options:
 
- hbest dbest wbest mbest ybest
- safe calendar strict
- source template spec
- snapshot delete delete-cp
- weekstart
- rsync-cmd rsync-opts remote-rsync-cmd
- expire-old
- bwlimit-in bwlimit-out
- compress restart
- allow-restart ldcount
- all-failed some-failed
- min-interval
- verbose loglevel debug 
+        hbest dbest wbest mbest ybest
+        safe calendar strict
+        source template specs
+        include include-from exclude exclude-from   
+        snapshot delete delete-cp
+        weekstart
+        rsync-cmd rsync-opts rsync-xopts remote-rsync-cmd
+        expire-old
+        bwlimit latest latest-copy
+        compress restart
+        allow-restart ldcount timeout-retries
+        all-failed some-failed
+        min-interval hostname
+        verbose loglevel debug
 
 A source context can contain these options:
 
- rsync-cmd rsync-opts remote-rsync-cmd
- include include-from exclude exclude-from
- bwlimit-in bwlimit-out
- compress restart
- allow-restart 
- min-interval
- verbose loglevel debug
+        rsync-cmd rsync-opts rsync-xopts remote-rsync-cmd
+        include include-from exclude exclude-from
+        bwlimit
+        compress restart
+        allow-restart timeout-retries
+        min-interval hostname
+        verbose loglevel debug
+
+
+=head1 OPTIONS
 
 =over
 
@@ -279,9 +357,6 @@ Options marked with '!' in the following list are required.
 Options marked with '*' in the following list can be specified more than once.
 
 =back
-
-=head1 OPTIONS
-
 
 =head2 Main options
 
@@ -322,7 +397,7 @@ See the section on remote authorisation.
 By default, brandysnap uses the rsync options 
 B<--hard-links --numeric-ids --archive --one-file-system --timeout=300>, 
 so the whole of each source will be copied recursively without following symbolic links.  
-See the B<rsync-opts> option for ways to change this.
+See the B<rsync-opts> and B<rsync-xopts> options for ways to change this.
 
 =item B<destination I<dir>> *!
 
@@ -336,7 +411,7 @@ More than one destination can be specified (see B<source>).
 Destinations can be given specific options (including sources) with the following syntax:
 
  <destination chris@example.com:/backups>
-     bwlimit-out = 2000
+     bwlimit = 2000
      remote-rsync-cmd = sudo rsync
  </destination>
 
@@ -350,14 +425,15 @@ The directory name of each snapshot is of the form
 
  <template>-<timestamp>
 
-See the [Snapshot Names section](#snapshotNames) for more details.
+See the L<Snapshot names section|"Snapshot names"> for more details.
+
 Example:
 
  template docs
 
-=item B<spec I<string>> !   
+=item B<specs I<string>> !   
 
-The snapshot-keeping specification.  See the Keeping Snapshots section for full details.
+The snapshot-keeping specifications.  See the Keeping Snapshots section for full details.
 
 =item B<logfile I<file>>
 
@@ -433,17 +509,26 @@ Prints out a brief summary of options, and then stops.
 
 Prints out the brandysnap version number only and then stops.
 
-=item B<verbose I<0..3>>
+=item B<verbose I<0..9>>
 
-This options sets the verbosity of the printed output, on a scale from B<0> to B<3>.  Use higher values to see more about what brandysnap and rsync are doing.  (default: B<1>)
+This options sets the verbosity of the printed output, on a scale from B<0> to B<9>.  
+Use higher values to see more about what brandysnap and rsync are doing.  
+B<verbose> can also be spelled B<verbosity> (default: B<3>)
 
-=item B<loglevel I<0..3>>     
+=item B<loglevel I<0..9>>     
 
-Sets the verbosity level of output in the log file, on a scale from B<0> to B<3>.  If no B<logfile> is defined, this option is effectively set to B<0>.  (default: B<1>)
+Sets the verbosity level of output in the log file, on a scale from B<0> to B<9>.  
+If no B<logfile> is defined, this option is effectively set to B<0>.  (default: B<3>)
 
 =item B<[no]dry-run>
 
-In B<dry-run> mode, brandysnap goes through the motions, but doesn't actually create or delete any snapshots.  The B<dry-run> option is also passed through to rsync. (default: B<nodry-run>)
+In B<dry-run> mode, brandysnap goes through the motions, 
+including checking options, sources, and destinations, as well as calling
+rsync with its --dry-run option,
+but doesn't actually create or delete any snapshots.  
+The B<dry-run> option is also passed through to rsync. B<dry-run> can also be spelled B<dryrun>.  
+(default: B<nodry-run>)
+
 
 =back
 
@@ -453,7 +538,9 @@ In B<dry-run> mode, brandysnap goes through the motions, but doesn't actually cr
 
 =item B<rsync-cmd I<path>>
 
-The location of the rsync programme on your system.  The default is just B<rsync> which means brandysnap looks for rsync in you normal path. On some systems, you might need to set it to something else such as
+The location of the rsync programme on your system.  The default is just B<rsync> which 
+means brandysnap looks for rsync in your normal path. 
+On some systems, you might need to set it to something else such as
 
  rsync-cmd /usr/bin/rsync
 
@@ -465,17 +552,39 @@ Enable rsync compression for remote transfers. Note that this only applies compr
 
 Note that compression is used for any 'remote' transfer, i.e. when the source and destination are not on the same computer.  On a fast local network, you may want to use B<--nocompress>. 
 
-=item B<include>/B<include-from>/B<exclude>/B<exclude-from I<pattern-or-file>> *
+=item B<include>/<exclude>/ I<pattern>> *
 
-These four options are passed through to rsync unchecked and unchanged.  '~' is NOT expanded to a home directory.  See the rsync documentation for details.  (default: none)
+These two options are passed through to rsync unchecked and unchanged.  
+See the rsync documentation for details.  (default: none)
 
-=item B<bwlimit-in> <n>
+=item B<include-from>/B<exclude-from I<filename>> *
 
-Band-width limit for receiving in kbps.  Set it to 0 for no limit.  (default: B<0>)
+The filenames are checked: if the file exists and is readable, the option is passed on to rsync (but
+the contents of the file are not checked).  
 
-=item B<bwlimit-out> <n>         
+These files can be remote, so that they can be kept on the same computer
+as the source they refer to.  For example:
 
-Band-width limit for sending in kbps. Set it to 0 for no limit.  (default: B<0>)
+ source:        fred@host1:/home/fred
+ exclude-from:  fred@host1:/home/fred/brandysnap.exclusions
+
+See the rsync documentation for details.  (default: none)
+
+=item B<bwlimit> <n>         
+
+Band-width limit in kbps. Set it to 0 for no limit.  (default: B<0>)
+
+This option can be set per destination or per source/destination combination
+to allow for each transfer being made by a different route.  For example:
+
+  <destination: /local/dir>
+  	<source: /local/source>
+  		# no band-width limit
+  	</source>
+  	<source: rsync://remote/source>
+  		bwlimit: 1000
+  	</source>
+  <destination>
 
 Tip: keep the value low (e.g. 200) if connecting over wifi to avoid swamping the connection.
 
@@ -483,9 +592,49 @@ Tip: keep the value low (e.g. 200) if connecting over wifi to avoid swamping the
 
 Options to pass to rsync, in addition to those that brandysnap will always use (i.e. --relative and --link-dest). Use this only if you know what you are doing.  (default: -aHx --numeric-ids)
 
+=item B<rsync-xopts I<options>>
+
+Extra options to pass to rsync.  This is a convenience option to allow you to add to or override
+the standard options without having to remember what the standard options are.  (default: none)
+
+=item B<timeout-retries I<n>>
+
+The number of times to retry rsync after a time-out error.  This may be useful if the connection
+between the source and destination is unreliable.  (default: 0)
+
 =back
 
-=head2 Advanced options
+=head2 Email Options
+
+=over
+
+=item B<email-to I<address>>
+Email recipient for error messages (no default).  Multiple B<email-to> options
+can be given, or a comma-separated list of email addresses can be specified on 
+a single option.
+B<email-to> is required for any emails to be sent.
+
+=item B<email-from I<address>>
+ 
+Email address for From: header of email error messages.  (default: current user)
+
+=item B<email-prog I<server>>
+
+The email program to run.  The default is '/usr/sbin/sendmail -t -oi', which 
+is installed on many Linux-based systems, and can be set up to run under Cygwin on Windows.
+
+=item B<email-if I<all|any>>
+ 
+Send email if all or any destinations failed. (default: all)
+
+=item B<[no]email-test>
+
+Just send a message to test the other email settings. Brandsysnap will not
+do any other processing.  (default: no)
+
+=back
+
+=head2 Advanced Options
 
 =over
 
@@ -510,11 +659,55 @@ Include the 'current period' when considering which snapshots to delete.  See th
 
 =item B<[no]expire-old>
 
-Consider _all_ snapshots (oldest first) as expirable to make room when the destination is full. (default: B<noexpire-old>)
+Consider _all_ snapshots (oldest first) as expirable to make room when the destination is full. 
+(default: B<noexpire-old>)
+
+=item B<hostname>
+
+Override the hostname or fully-qualified domain name that is used in the snapshot path.
+Normally, this is the host name of the computer running brandysnap if the source is local, or the FQDN of the source if it's remote.
+
+This option is only useful if, for example, brandysnap 
+is running from a live CD to backup files from a non-functioning machine: you would
+then supply the hostname of the dead computer along with the configuration file from it so
+that the snapshot matches the existing ones (and so that --link-dest works properly).
+
+(default: the hostname of the source computer)
+
+=item B<[no]latest>
+
+If this option specified, an additional hard-linked copy of the new snapshot
+will be created called <template>-latest.  This is designed for use with, for example,
+and online backup service which is configured to upload just the latest snapshot.
+
+Note: if the destination is remote, brandysnap has to use ssh to run rsnapshot
+remotely: this may require extra configuration of permissions and ssh keys
+in order to allow brandysnap to run without prompting for passwords.
+
+Note: latest snapshots can NOT be created on remote destinations when connecting
+via an rsync daemon.
+
+(default: B<nolatest>)
+
+=item B<[no]latest-copy>
+
+This option specifies that the 'latest' snapshot (see above) should be created B<without> using
+rsync's --link-dest option to hard-link it back to the just-created normal snapshot.  In other
+words, the 'latest' snapshot will be a separate copy.
+
+Note that if you change this option after a 'latest' snapshot has already been created, the choice of linking or 
+copying will only apply to new or changed files in the snapshot.
+If you want to change the whole 'latest' snapshot, you will need to delete it and 
+let brandysnap create it afresh.
+
+This option is ignored if B<--latest> is not also specified.
+
+(default: B<no-latest-copy>)
 
 =item B<ldcount I<n>>
 
-Specify the number of previous snapshots that rsync will search looking for identical files to hard-link to.  
+Specify the number of previous snapshots that rsync will search looking for identical 
+files to hard-link to.  
 Normally the default value of B<1> is ideal.  Set this value to B<0> to turn off rsync's B<--link-dest> option
 completely, but be aware that this will greatly increase the size of the new snapshot, and the time
 taken to create it (especially over the network).  Values greater than B<1> can be used in conjunction
@@ -561,38 +754,46 @@ Run test case 'n'.
 
 =head1 FURTHER DETAILS
 
-=head2 <a name="calendarMode">Calendar mode</a>
+=head2 Calendar mode
 
 In 'calendar mode', which is the default, brandysnap works in terms of real weeks and months.  
 Days always start at midnight, weeks at midnight on Sunday etc. (but see the B<--weekstart> option).
+
 In non-calendar mode, the specs are interpreted more simply, 
 working backwards from the moment when brandysnap is run.  
 There will be no gap between periods: days and weeks can start at any time, 
 depending on when the previous spec ran out.
 
-=head2 <a name="safeMode">Safe mode</a>
+=head2 Safe mode
 
-In 'safe mode', which the default, specs will only match against the list of existing snapshots if there are enough snapshots to satisfy the spec's definition.  Incomplete specs will be skipped.  This has the result that brandysnap is less likely to delete snapshots.  This is designed to cater for situations when brandysnap has not run successfully as often as it should have, for whatever reason.  For example, because of weekends or holidays, or because the destination wasn't available because an external USB drive wasn't connected (or two or more USB drives are being used in rotation).  e.g if the spec is B<4d5>, it's now Monday and brandysnap did not run at the weekend, then the days with fewer than 4 snapshots (i.e. Saturday and Sunday) will be skipped; counting the 5 days will start on Friday and work backwards from there.  Safe mode can be turned off via the B<--safe> option.
+In 'safe mode', which is the default, specs will only match against the list of existing snapshots 
+if there are enough snapshots to satisfy the spec's definition.  Incomplete specs will be skipped.  
+This has the result that brandysnap is less likely to delete snapshots.  
+This is designed to cater for situations when brandysnap has not run successfully 
+as often as it should have, for whatever reason.  For example, because of weekends or holidays, 
+or because the destination wasn't available because an external USB drive wasn't connected 
+(or two or more USB drives are being used in rotation).  e.g if the spec is B<4d5>, it's now 
+Monday and brandysnap did not run at the weekend, then the days with fewer than 4 snapshots 
+(i.e. Saturday and Sunday) will be skipped; counting the 5 days will start on Friday and 
+work backwards from there.  Safe mode can be turned off via the B<--safe> option.
 
 =head2 Strict mode
 
-In 'strict mode', which is not the default, brandysnap will not run if there are minor problems with the specs.  Normally, it will display information about how it has interpreted the specs, and carry on.
+In 'strict mode', which is not the default, brandysnap will not run if there are minor problems with the specs.  
+Normally, it will display information about how it has interpreted the specs, and carry on.
 
 =head2 Weeks and months and years
 
 The fact that months and years do not have whole or fixed numbers of 
 weeks makes counting periods awkward.  Brandysnap deals with this by 
-skipping over the extra days, and not deleting any of their snapshots. 
+skipping over the extra days, and only deleting their snapshots if
+they would have been deleted in a complete period. 
 
 =head2 Status report
 
 Brandysnap displays a status report on all existing snapshots at the end of each run.
 
-However, if the destination is on a remote computer, the status report does include details of the disk space used by each snapshot because of the process of retrieving that information is slow.
-
-The full status report can be seen for remote destinations by running brandysnap with the B<--status> option in addition to the usual configuration.  And even then, can only display 'Real size', not 'Delete size', because rsync doesn't give information about the number of hard links.
-
-=head2 <a name="snapshotNames">Snapshot names</a>
+=head2 Snapshot names
 
 Each snapshot is a separate directory within the destination, with a name of the form
 
@@ -623,7 +824,7 @@ that there are no 'Permission denied' messages.  If there are, you may need to r
 
 =head1 KNOWN ISSUES
 
-As of 21 November 2012 and version 0.2.7, the following issues and bugs are known.
+As of 28 October October version 0.2.16, the following issues and bugs are known.
 
 =over
 
@@ -635,6 +836,9 @@ and for which you do not have read permission.  This is fixed in rsync 3.0.9 and
 round it by specifying B<--rsync-opts> with the usual options but omitting B<--hard-links>
 at the cost of using more disk space.
 
+==item *
+
+The fmtRange routine uses Date::Manip::Delta, which insists that February is four weeks and not one month.  There may be other similar cosmetic irritations.
 
 =back
 
