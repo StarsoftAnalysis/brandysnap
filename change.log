@@ -1,6 +1,17 @@
 Changelog for brandysnap
 ========================
 
+0.2.17	6/11/2013
+* Added --latest-copy option -- see documentation.
+* include-from and exclude-from files are now checked for readability.
+  They can also be remote, which is sometimes convenient.
+* Fixed bugs:
+  - tweaked choice of snapshots to delete (in getMatchingSnapshots)
+  - in getDeleteList, don't reconsider snapshots deleted for a previous spec.
+  - process a destination even if none of its sources are readable 
+    (so that status still works etc.)
+  - don't attempt to create 'latest' snapshot on a dry run.
+
 0.2.16  28/10/2013
 * Added --hostname option -- see documentation.
 * Added --latest option -- see documentation.

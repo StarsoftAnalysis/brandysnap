@@ -2,7 +2,7 @@
 
 #########################################################################
 # brandysnap: rsync-based backup snapshot creation and management       #
-# Copyright (C) 2011,2012 Chris Dennis, chris@starsoftanalysis.co.uk    #
+# Copyright (C) 2011-2013 Chris Dennis, chris@starsoftanalysis.co.uk    #
 #                                                                       #
 # This program is free software: you can redistribute it and/or modify  #
 # it under the terms of the GNU General Public License as published by  #
@@ -49,7 +49,7 @@ use Symbol qw(gensym);
 use IO::File;
 use Sys::Hostname;
 use Carp;
-use Data::Dumper;   # only for dev
+use Data::Dumper;   # only for development and debugging
 
 # Interrupts and other housekeeping ===============================================================
 
@@ -82,7 +82,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-our $VERSION = "0.2.16";
+our $VERSION = "0.2.17";
 
 # A copy of @ARGV before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -98,7 +98,7 @@ my $ExitCode = EXITOK;
 
 # Options -- need some options to start with
 our %Opt = ();   
-$Opt{debug}    = {}; #{'rc'=>1, 'cos'=>1}; # Set this when debugging processOptions(), or just {}
+$Opt{debug}    = {}; #{'po2'=>1, 'rml'=>1, 'cl'=>1, 'cs'=>1, 'cos'=>1}; # Set this when debugging processOptions(), or just {}
 $Opt{verbose}  = 1;
 $Opt{loglevel} = 1;
 
@@ -215,7 +215,7 @@ my @AllOpt = qw(
     rsync-cmd rsync-opts rsync-xopts remote-rsync-cmd
     include include-from exclude exclude-from
     expire-old
-    bwlimit latest
+    bwlimit latest latest-copy
     status compress restart
     allow-restart ldcount
     all-failed some-failed
@@ -234,7 +234,7 @@ my %MultiOpt = (map {$_ => 1} qw(source include include-from
 # Boolean options
 my @BoolOpt = qw(safe calendar snapshot delete delete-cp dry-run help strict 
     version expire-old status compress restart allow-restart
-    email-test latest);
+    email-test latest latest-copy);
 my %BoolOpt = (map {$_ => 1} @BoolOpt);
 # String options (NOT the multi-value ones, which are dealt with separately)
 my @StringOpt = qw(config lockfile logfile template
@@ -282,7 +282,7 @@ my %Matrix = (
         weekstart
         rsync-cmd rsync-opts rsync-xopts remote-rsync-cmd
         expire-old
-        bwlimit latest
+        bwlimit latest latest-copy
         compress restart
         allow-restart ldcount timeout-retries
         all-failed some-failed
@@ -1246,6 +1246,7 @@ sub rsyncMakeLocal ($) {
     my $origPath = shift;
     if (!remote($origPath)) {
         if (rsyncExistsTest($origPath)) {
+            debug "not remote, exists, returning origPath=$origPath\n", 'rML';
             return $origPath;
         } else {
             debug "no such local file: $origPath", 'rML';
@@ -1259,8 +1260,7 @@ sub rsyncMakeLocal ($) {
     my $dryrun = $Opt{'dry-run'};
     $Opt{'dry-run'} = 0;
     my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'}, 
-        stdArgs(0) . " '$origPath' '$tempdir/'", 
-        9,9, \@output, \@errors);
+        stdArgs(0) . " '$origPath' '$tempdir/'", 9,9, \@output, \@errors);
     $Opt{'dry-run'} = $dryrun;
     debug "rc=$rc rc2='$rc2' newfile='$tempdir/$origBase' output: '@output' errors: @errors\n", 'rML';
     if ($rc == 0) {
@@ -1695,7 +1695,7 @@ sub checkOptionSingle ($$) {
             }
         } elsif ($option eq 'bwlimit') {
             # Band-width limit (0 = unlimited)
-            # when (['bwlimit-in', 'bwlimit-out']) {
+            # when (['bwlimit-in', 'bwlimit-out']) 
             if (!looks_like_number($value) or $value < 0) {
                 $msg .= "ERROR: Invalid option: '$option' must be zero or a positive whole" . 
                 " number (in kbps), not '$value'\n";
@@ -1755,8 +1755,8 @@ sub checkOptionSingle ($$) {
 
         # Options 'include', 'include-from', 'exclude', 'exclude-from'
         # - these are not checked at all at this stage
-    }
 
+    }
     chomp($msg);
     #debug "returning e=$e w=$w value='$value' msg=$msg\n", 'cOS';
     return ($e, $w, $value, $msg);
@@ -2007,6 +2007,32 @@ sub mergeOpts (@) {
 
 #---------------------------------------------------------------------------------------------------
 
+sub checkInExcludeFrom ($) {
+    # Check that exclude-from and include-from files are readable
+    my $optR = shift;   # reference to an options hash (depending on context)
+    debug "optR: " . Dumper($optR), 'cIEF';
+    foreach my $opt ('exclude-from', 'include-from') {
+        if (defined $optR->{$opt}) {
+            debug "$opt array: " . Dumper(@{$optR->{$opt}}), 'cIEF';
+            my @tempOpt;
+            foreach my $file (@{$optR->{$opt}}) {
+                my $file2 = rsyncMakeLocal(safeAbsPath($file));
+                if ($file2 eq '' or !-r $file2) {
+                    printWarning "$opt file '$file' is not readable -- it will be ignored\n", 1;
+                } elsif ($file ne $file2) {
+                    printNote "Remote $opt file '$file'\n" .
+                        "has been copied to temporary local file '$file2'\n";
+                        push @tempOpt, $file2;
+                }
+            }
+            # copy the temporary array back to the real one
+            $optR->{$opt} = \@tempOpt;
+        }
+    }
+}
+
+#---------------------------------------------------------------------------------------------------
+
 sub processOptions () {
 
     # Default options hard-coded here
@@ -2038,6 +2064,7 @@ sub processOptions () {
     $defopt{'expire-old'}   = 0;          # expire oldest S's to make room, even when not unlimited
     $defopt{help}           = 0;
     $defopt{latest}         = 0;
+    $defopt{'latest-copy'}  = 0;
     $defopt{ldcount}        = 1;          # no. of link-dest options to create
     $defopt{'min-interval'} = 0;          # minutes between snapshots
     $defopt{restart}        = 0;
@@ -2092,6 +2119,7 @@ sub processOptions () {
             'include-from=s@',
             'include=s@',
             'latest!',
+            'latest-copy!',
             'ldcount=i',
             'lockfile=s',
             'logfile=s',
@@ -2288,13 +2316,11 @@ sub processOptions () {
     }
 
     # Sources, with extra options for each (there may be no sources at general level)
-    my $readableSources = 0;
     if ($Opt{source}) {
         foreach my $src (@{$Opt{source}}) {
             $src->{location} = safeAbsPath($src->{location});
             my ($rrrc, $rrrc2) = rsyncExists($src->{location});
             if ($rrrc == 0) {
-                $readableSources += 1; 
                 $src->{readable} = 1;
             } else {
                 printWarning "Source '$src->{location} cannot be read" .
@@ -2303,6 +2329,9 @@ sub processOptions () {
                 $warningcount += 1;
                 $src->{readable} = 0;
             }
+            # Check source-level include-from and exclude-from options
+            checkInExcludeFrom($src->{options});
+            #
             return ++$errorcount, $warningcount if $Interrupted;
         }
     }
@@ -2316,7 +2345,6 @@ sub processOptions () {
         $Summary{$dest->{location}}{result} = 'not attempted';
         my $destInfo = $Summary{$dest->{location}};
         my $options = $dest->{options};
-        my $readableSubSources = 0;
         if ($options->{source}) {
             # This destination has its own source(s) which
             # will override any at the general level
@@ -2324,9 +2352,7 @@ sub processOptions () {
                 $src->{location} = safeAbsPath($src->{location});
                 $destInfo->{source}{$src->{location}}{result} = 'not attempted';
                 my ($rrrc, $rrrc2) = rsyncExists($src->{location});
-                if ($rrrc == 0) {
-                    $readableSubSources += 1; 
-                } else {
+                if ($rrrc != 0) {
                     printWarning "Source '$src->{location}' cannot be read" .
                         ($rrrc2 eq '' ? '' : " ($ErrorCodes{$rrrc2})") .
                         "\n";
@@ -2334,11 +2360,12 @@ sub processOptions () {
                     $destInfo->{source}{$src->{location}}{result} = 'not readable';
                     $AnyDestFailed = 1;
                 }
+                # Check source-level include-from and exclude-from options
+                checkInExcludeFrom($src->{options});
                 return ++$errorcount, $warningcount if $Interrupted;
             }
         } else {
             # This destination has no sources of its own -- use the general-level ones
-            $readableSubSources = $readableSources;
             foreach my $src (@{$Opt{source}}) {
                 if ($src->{readable}) {
                     $destInfo->{source}{$src->{location}}{result} = 'not attempted';
@@ -2351,23 +2378,19 @@ sub processOptions () {
         # Check that destination is writable
         my ($rwrc, $rwrc2) = rsyncWritable($dest->{location});
         if ($rwrc == 0) {
-            if ($readableSubSources) {
-                $writableDests += 1;
-                # It's a good destination, so parse any destination-specific specs
-                if ($options->{specs}) {
-                    my ($w, $e, $rawspecs, @pspecs) = processSpecs($options->{specs});
-                    $errorcount += $e;
-                    $destError = 1 if $e;
-                    $warningcount += $w;
-                    #plpo "$msg\n" if $msg;
-                    $options->{pspecs} = \@pspecs if !$e;
-                    $options->{specs} = $rawspecs if !$e;
-                }
-            } else {
-                printWarning "None of the sources specified for destination '$dest->{location}'" . 
-                    " are readable\n" . 
-                    "The whole destination will be skipped\n";
+            $writableDests += 1;
+            # It's a good destination, so parse any destination-specific specs
+            if ($options->{specs}) {
+                my ($w, $e, $rawspecs, @pspecs) = processSpecs($options->{specs});
+                $errorcount += $e;
+                $destError = 1 if $e;
+                $warningcount += $w;
+                #plpo "$msg\n" if $msg;
+                $options->{pspecs} = \@pspecs if !$e;
+                $options->{specs} = $rawspecs if !$e;
             }
+            # Check destination-level include-from and exclude-from options
+            checkInExcludeFrom($options);
         } else {
             printWarning "Destination '$dest->{location}' is not available\n" .
                     "as a writable directory" .
@@ -2426,21 +2449,8 @@ sub processOptions () {
     # --restart implies --snapshot and --min-interval=0
     $Opt{snapshot} = 1 if $Opt{restart};
     $Opt{'min-interval'} = 0 if $Opt{restart};
-
-    # Check that exclude-from and include-from files are readable
-    foreach my $opt ('exclude-from', 'include-from') {
-        my @tempOpt;
-        foreach my $file (@{$Opt{$opt}}) {
-            my $file2 = rsyncMakeLocal(safeAbsPath($file));
-            if ($file2 eq '') {
-                printWarning "$opt file '$file' is not readable -- it will be ignored", 1;
-            } else {
-                push @tempOpt, $file2;
-            }
-        }
-        # copy the temporary array back to the real one
-        $Opt{$opt} = \@tempOpt;
-    }
+    # Check general-level include-from and exclude-from options
+    checkInExcludeFrom(\%Opt);
 
     # Options 'include' and 'exclude' (and the contents of include-from and exclude-from
     # files) are not checked at all, just passed to rsync
@@ -2566,7 +2576,7 @@ sub showLicence () {
 $Script version $VERSION
 
 rsync-based backup snapshot creation and management        
-Copyright (C) 2011,2012 Chris Dennis, chris\@starsoftanalysis.co.uk        
+Copyright (C) 2011-2013 Chris Dennis, chris\@starsoftanalysis.co.uk        
                                                                        
 This program is free software: you can redistribute it and/or modify  
 it under the terms of the GNU General Public License as published by  
@@ -2654,6 +2664,7 @@ Advanced options
 --[no]expire-old          d  delete oldest snapshots when disk is full (default: noexpire-old)
 --hostname     host/FQDN  ds hostname or FQDN to use in snapshot path (default: source computer)
 --[no]latest              d  create a <template>-latest snapshot (default: nolatest)
+--[no]latest-copy         d  latest snapshot is a full copy (not linked) (default: nolatest-copy)
 --ldcount      n          d  number of --link-dest options to create (default: 1, max: 20) 
 --[no]restart             ds continue snapshot(s) from previous run (default: norestart)
                               (implies --snapshot) 
@@ -3145,10 +3156,10 @@ sub visualise ($$$$$$@) {
     my $best       = shift; 
     # If plevel/llevel mean there will be no output, just return
     return if $plevel > $Opt{verbose} and $llevel > $Opt{loglevel};
-    my $labelwidth = 8;
+    my $labelwidth = 10;
     #my ($columns, $rows) = Term::Size::chars *STDOUT{IO};
     #$columns = max($columns, 132); # minimum, and also if there's no tty
-    my $columns = 80;
+    my $columns = 100;
     my $size = $columns - $labelwidth - 3;  # - 18; # -18 for log timestamp
     my $scale = ceil(($end - $beg) / $size);    
     debug "beg=$beg end=$end (" . fmtRange($beg,$end) . ") size=$size scale=$scale\n", 'visualise';
@@ -3198,6 +3209,18 @@ sub arrayDiff (\@\@) {
     my @Y = @{(shift)};
     my %Y = map {$_=>1} @Y; # hash version of @Y
     return grep(!defined $Y{$_}, @X);
+}
+
+sub arrayDiffRefs ($$) {    # FIXME not used
+    # Return elements of X that aren't in Y (i.e. X - Y)
+    # This doesn't work if there are duplicates in either array!
+    # (That's OK, 'cos we're only using it for arrays of snapshot
+    # timestamps which are required to be unique.)
+    my $Xref = shift;
+    my $Yref = shift;
+    debug "Xref=$Xref Yref=$Yref\n", 'aD';
+    my %Y = map {$_=>1} @$Yref; # hash version of @Y
+    return grep !defined($Y{$_}), @$Xref;
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -3346,11 +3369,12 @@ sub deleteSnapshots (\@\@) {
             my @d = snapshotsInPeriod(@D, $cs->{beg}, $cs->{fullend}, 1);
             debug "\@s=@s  \@d=@d\n", 'dS';
             if (@d) {
-                printlog "Snapshots for deletion from $cs->{label},  " . 
+                printlog "\nSnapshots for deletion from $cs->{label},  " . 
                     fmtRange($cs->{beg},$cs->{fullend}) . "\n", 3;
                 visualise($cs->{beg}, $cs->{fullend}, 0, 3,3, $cs->{best}, 
                     'All S\'s' => \@s, 
                     'Deleting' => \@d);
+                printlog "\n", 3;
             }
         }
         my $unfinished = $S{$d}{unfinished} ? 'unfinished ' : '';
@@ -3575,8 +3599,8 @@ sub getMatchingSnapshots ($$$$\@) {
         "  best time: " . time2stamp($beg + $best) . "\n", 'gMS'; 
     debug " (first S = $S[0]    last S = $S[-1]  -- in descending order)\n", 'gMS' if @S;
     debug "snapshots: \n", 'gMS';
-    foreach my $s (@S) {
-        debug "\t$s\t" . time2stamp($s) . "\n", 'gMS';
+    foreach my $si (0..$#S) {
+        debug "\t$si\t$S[$si]\t" . time2stamp($S[$si]) . "\n", 'gMS';
     }
 
     # Special case: if freqmax is zero, delete all snapshots (i.e. keep none)
@@ -3593,38 +3617,36 @@ sub getMatchingSnapshots ($$$$\@) {
 
     # Calculate closeness factor for each snapshot
     # so that snapshots with near neighbours are more likely to be deleted
-    # from formula closeness=r/(p+n)
+    # from formula closeness=w/(p+n)
     # where p = distance to previous snapshot (or r if none)
     #       n = distance to next snapshot (or n if none)
-    #       r = range (see above)
-    # possible tuning:
-    #      - set p or n to less than r if being on the end gets too much weight
-    #       = we're currently trying r/2
-    #       - could even make it an option
-    my @closeness;
-    my $endfactor1 = 0.5;
-    my $endfactor2 = 0.5; 
+    #       w = weighting (for tuning how much effect closeness has)
+    my $closenessWeighting = $range;    # scaled to current period
+    # First and last snapshots have no neighbour on one side,
+    # so use these tunable values instead:
+    my $firstCloseness = $range * 0.5;  # 
+    my $lastCloseness  = $range * 2.0;  # last snapshot is usually valued 
     # Note that only good snapshots are considered when calculating closeness
     # -- this is handled by snapshotBefore/After
     my $totalC = 0;
+    my @closeness;
     for my $s (0..$#S) {
         # Get distance to previous/next good snapshot 
         # (may be beyond current period)
         my $previous = snapshotBefore($S[$s]);
         my $next     = snapshotAfter($S[$s]);
-        # If previous/next don't exist, calculate a closeness value
-        # that is scaled to $range with a tuning factor
-        my $p = $previous ? abs($S[$s] - $previous) : $range * $endfactor1;
-        my $n = $next     ? abs($next  - $S[$s])    : $range * $endfactor2;
-        # Check if they're infinitely close! 
-        # (shouldn't happen because snapshots can't share a date)
-        my $closeness = ($p+$n == 0) ? 9999999999 : $range/($p+$n);
+        # If previous/next don't exist, use the end factor
+        my $p = $previous ? abs($S[$s] - $previous) : $firstCloseness;
+        my $n = $next     ? abs($next  - $S[$s])    : $lastCloseness;
+        #
+        my $closeness = $closenessWeighting / ($p + $n);
         debug "this=" . time2stamp($S[$s]) . " previous=" . time2stamp($previous) . 
             " next=" . time2stamp($next) . " p=$p n=$n c=$closeness\n", 'gMS';
         push @closeness, $closeness;
         $totalC += $closeness;
     }
     my $averageC = $totalC / scalar @S;
+    debug "average closeness = $averageC\n", 'gMS';
     
     my $bestTime = $beg + $best;    # best as Unix time, not offset from $beg
 
@@ -3740,7 +3762,7 @@ sub getMatchingSnapshots ($$$$\@) {
 
     # Generate all combinations of the ideal number of snapshots
     # out of the existing snapshots, then calculate a score for each combination
-    # and choose the one with the best score
+    # and choose the one with the best (lowest) score
     # (maybe we should leave first and last fixed if they're already aligned?)
     my @combs = combinations(scalar @I, 0..$#S); 
     #debug "\@combs(orig): " . Dumper(\@combs), 'gMS';
@@ -3794,9 +3816,9 @@ sub getMatchingSnapshots ($$$$\@) {
         join(' ', (map {sprintf("%.2f", $_)} reverse @closeness)) . 
         ", average: $averageC\n", 'gMS';
     visualise($oldBeg, $oldEnd, 1, 1,1, $bestTime, 
-        'Snap'  => \@S, 
-        'Ideal' => \@I, 
-        'Match' => \@bestMatches) if ($Opt{debug}->{'gMS'});
+        'Snapshot' => \@S, 
+        'Ideal'    => \@I, 
+        'Match'    => \@bestMatches) if ($Opt{debug}->{'gms'});
 
     return @bestMatches;
 }   # getMatchingSnapshots;
@@ -3864,7 +3886,7 @@ sub getDeleteList (\@;$) {
     }
 
     my @allMatches;
-    my @D;
+    my @D;  # accumulates list of snapshots to delete
     my $firstbeg = MAXTIME; 
     my $lastend = 0;
 
@@ -3886,10 +3908,10 @@ sub getDeleteList (\@;$) {
         #       but later than $end for a partial period.
         #       Snapshots in full period are considered when looking for matches
         #       but only those within $beg-$end will actually be deleted
-        my @Cgood = snapshotsInPeriod(@Sgood, $beg, $end, 1);
-        my @Cbad  = snapshotsInPeriod(@Sbad , $beg, $end, 1);
+        my @Cgood     = snapshotsInPeriod(@Sgood, $beg, $end,     1);
+        my @Cbad      = snapshotsInPeriod(@Sbad,  $beg, $end,     1);
         my @CgoodFull = snapshotsInPeriod(@Sgood, $beg, $fullend, 1);
-        my @CbadFull  = snapshotsInPeriod(@Sbad , $beg, $fullend, 1);
+        my @CbadFull  = snapshotsInPeriod(@Sbad,  $beg, $fullend, 1);
         debug "good candidates: " . dumpSnapshots(@Cgood) . " total: " . @Cgood . "\n", 'gDL';
         debug "bad  candidates: " . dumpSnapshots(@Cbad) . " total: " . @Cbad . "\n", 'gDL';
         if ($fullend != $end) {
@@ -3949,11 +3971,15 @@ sub getDeleteList (\@;$) {
                     "\n\@I:        " . dumpSnapshots(@I) . 
                     "\n\@Ipartial: " . dumpSnapshots(@Ipartial) . 
                      "\ndiff:      " . dumpSnapshots(arrayDiff(@Cgood, @I))."\n", 'gDL';
-                debug "\@D is now: " . dumpSnapshots2(@D) . "\n", 'gDL';
+                debug "\@D has now accumulated: " . dumpSnapshots2(@D) . "\n", 'gDL';
             } else {
                 debug " no more than required after deleting bad ones\n", 'gDL';
             }
         }
+        # Don't reconsider snapshots already marked for deletion in @D
+        # (only important when a partial period overlaps the following period)
+        @Sgood = arrayDiff(@Sgood, @D);
+        @Sbad  = arrayDiff(@Sbad,  @D);
 
     } # foreach spec
 
@@ -3968,10 +3994,10 @@ sub getDeleteList (\@;$) {
         printlog((@Sgood+@Sbad) . ' snapshots, ' . @allMatches . ' to be kept, ' . @D . 
             " to be deleted\n", 0);
         visualise($firstbeg, $lastend, 0, 0,0, 0,   
-            'SnapG' => \@Sgood, 
-            'SnapB' => \@Sbad, 
-            'Keep'  => \@allMatches, 
-            'Del'   => \@D);
+            'Snapshots'  => \@Sgood, 
+            'unfinished' => \@Sbad, 
+            'Keep'       => \@allMatches, 
+            'Del'        => \@D);
     }
 
     return @D;  # list of timestamps of snapshots to delete
@@ -4393,14 +4419,14 @@ sub compileSpecs ($$) {
 #                #partial => 0,
 #                fullend => $end,
 #            };  
-            debug "'empty' cSpec is not empty!!!!!!!!!!!!!!!!!!!!\n", 'cS'
-                if snapshotsInPeriod(@Sgood, $beg, $end) > 0 ;
-            debug "didn't create cSpec [5] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) . 
-                " freq=$cSpecs[-1]->{freqmin}-$cSpecs[-1]->{freqmax} " . 
-                "count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . 
-                time2stamp($cSpecs[-1]->{beg}+$cSpecs[-1]->{best}) . 
-                " label=$cSpecs[-1]->{label} " . 
-                "snapshots=$cSpecs[-1]->{sgood}/$cSpecs[-1]->{sbad}\n", 'cS';
+#            debug "'empty' cSpec is not empty!!!!!!!!!!!!!!!!!!!!\n", 'cS'
+#                if snapshotsInPeriod(@Sgood, $beg, $end) > 0 ;
+#            debug "didn't create cSpec [5] " . pair2range($cSpecs[-1]->{beg},$cSpecs[-1]->{end}) . 
+#                " freq=$cSpecs[-1]->{freqmin}-$cSpecs[-1]->{freqmax} " . 
+#                "count=$cSpecs[-1]->{count} period=$cSpecs[-1]->{period} best=" . 
+#                time2stamp($cSpecs[-1]->{beg}+$cSpecs[-1]->{best}) . 
+#                " label=$cSpecs[-1]->{label} " . 
+#                "snapshots=$cSpecs[-1]->{sgood}/$cSpecs[-1]->{sbad}\n", 'cS';
             $p += 1;
             ($beg, $end) = prevPeriod($beg, $spec->{periodn});
         }
@@ -4446,18 +4472,20 @@ sub compileSpecs ($$) {
     }
 
     # Double check that it's ok
-    my $lastbeg = $cSpecs[0]->{end};
-    foreach my $c (@cSpecs) {
-        if ($c->{end} != $lastbeg) {
-            debug "skipped " . fmtRange($c->{end}, $lastbeg) . ' with ' . 
+    if (@cSpecs) {
+        my $lastbeg = $cSpecs[0]->{end};
+        foreach my $c (@cSpecs) {
+            if ($c->{end} != $lastbeg) {
+                debug "skipped " . fmtRange($c->{end}, $lastbeg) . ' with ' . 
                 snapshotsInPeriod(@Sgood, $c->{end}, $lastbeg) . " snapshots\n", 'cS';
-            debug "!!!!!!!!!!!!! This shouldn't happen any more!\n", 'cS'; 
+                debug "!!!!!!!!!!!!! This shouldn't happen any more!\n", 'cS'; 
+            }
+            if ($c->{beg} > $c->{end}) {
+                debug "invalid cSpec -- beg > end: " . fmtRange($c->{beg}, $c->{end}) . "\n", 'cS'; 
+                debug "!!!!!!!!!!!!! This shouldn't happen any more!\n", 'cS'; 
+            }
+            $lastbeg = $c->{beg};
         }
-        if ($c->{beg} > $c->{end}) {
-            debug "invalid cSpec -- beg > end: " . fmtRange($c->{beg}, $c->{end}) . "\n", 'cS'; 
-            debug "!!!!!!!!!!!!! This shouldn't happen any more!\n", 'cS'; 
-        }
-        $lastbeg = $c->{beg};
     }
 
     return @cSpecs;
@@ -5019,21 +5047,28 @@ sub createLatest () {
         printWarning "\nCannot create 'latest' snapshot copy on rsync daemon destination\n\n", 1;
         return;
     }
+    if ($Opt{'dry-run'}) {
+        printNote "\nNot creating 'latest' snapshot copy because this is a dry-run\n";
+        # (can't use --dry-run below because the new snapshot doesn't exist)
+        return;
+    }
+    printlog "\nCreating 'latest' snapshot copy\n";
     my $cmd = '';
     my $args = '';
+    # use new snapshot as link-dest unless --latest-copy specified
+    my $linkdest = $Opt{'latest-copy'} ? '' : "--link-dest ../$new->{name}";
     if ($new->{remote}) {
         # ssh to remote destination, and run rsync there
         my ($server, $dir) = split(':', $new->{path}, 2);
         $cmd = "ssh";
         my $rsync = $Opt{'remote-rsync-cmd'} || 'rsync';
-        my $dryrun = $Opt{'dry-run'} ? '--dry-run' : '';
-        $args = "$server $rsync -aHx --numeric-ids $dryrun --delete --link-dest ../$new->{name} " .
+        $args = "$server $rsync -aHx --numeric-ids --delete $linkdest " .
             "$dir/$new->{name}/ $dir/$template-latest";
     } else {
-        # local destination -- just run rsync as usual (dry-run option will be applied later)
+        # local destination -- just run rsync as usual
         $cmd = $Opt{'rsync-cmd'};
-        $args = "-aHx --numeric-ids --delete --link-dest ../$new->{name} $new->{fullname}/ " .
-            "$new->{path}/$template-latest";
+        $args = "-aHx --numeric-ids --delete $linkdest " .
+            "$new->{fullname}/ $new->{path}/$template-latest";
     }
     debug "cmd is '$cmd'", 'cL';
     debug "args are '$args'", 'cL';
@@ -5042,9 +5077,9 @@ sub createLatest () {
     debug "items: @items",   'cL' if @items;
     debug "errors: @errors", 'cL' if @errors;
     if ($rc) {
-        printError "\nUnable to create 'latest' snapshot copy ($rc / '$rc2')\n\n";
+        printError "Unable to create 'latest' snapshot copy ($rc / '$rc2')\n\n";
     } else {
-        printlog "\nSuccessfully created 'latest' snapshot copy\n\n", 1;
+        printlog "Successfully created 'latest' snapshot copy\n\n", 1;
     }
 }
 
@@ -5163,7 +5198,7 @@ sub processDestination ($) {
             if ($rsyncOK) { 
                 $AllDestsFailed = 0;
                 # Create a 'latest' snapshot if required
-                if (!$lostDest and !$Opt{'dry-run'} and $Opt{latest}) {
+                if (!$lostDest and $Opt{latest}) {
                     createLatest();
                 }
             } else {

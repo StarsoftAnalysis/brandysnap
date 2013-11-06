@@ -63,7 +63,7 @@ It requires Perl 5 version 5.10.1 or later, and the following non-core modules:
 * JSON
 
 It also requires rsync, which should available in your version of Linux.
-Brandysnap has been developed with rsync version 3.0.7 and 3.0.9.  It should work with 
+Brandysnap has been developed with rsync version 3.0.7 to 3.1.0.  It should work with 
 any version of rsync that has the '--link-dest' option.
 
 
@@ -85,6 +85,17 @@ which just has to be run.  All you need to do is
 
         ./brandysnap --conf brandysnap-test1.conf --dry-run
 
+
+Future Plans
+------------
+
+I have ideas for a few brandysnap-related scripts that would facilitate
+searching for versions of backed-up files, restoring selected files from
+brandysnap snapshots, etc.
+
+But first I need to restructure some of the code into a Perl module 
+that the new scripts could access.
+
 Alternatives
 ------------
 
@@ -94,8 +105,8 @@ of [other alternatives](http://www.lbackup.org/alternatives).
 
 **************************************************************
 This is part of the brandysnap documentation.<br>
-Copyright &copy; 2011,2012  Chris Dennis  chris@starsoftanalysis.co.uk<br>
+Copyright &copy; 2011-2013  Chris Dennis  chris@starsoftanalysis.co.uk<br>
 See the file fdl-1.3.txt for copying conditions.
 **************************************************************
  
-Last modified: 1 March 2013
+Last modified: 28 October 2013

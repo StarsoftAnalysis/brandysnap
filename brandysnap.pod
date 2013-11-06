@@ -15,7 +15,7 @@ brandysnap --conf brandysnap.conf [OTHER OPTIONS...]
 =head1 DESCRIPTION
 
  This is part of the brandysnap documentation.
- Copyright &copy; 2011,2012  Chris Dennis  chris@starsoftanalysis.co.uk
+ Copyright &copy; 2011-2013  Chris Dennis  chris@starsoftanalysis.co.uk
  See the file fdl-1.3.txt for copying conditions.
 
 Brandysnap is (yet another) script that uses rsync to create snapshot backups of files and 
@@ -326,7 +326,7 @@ Only certain options are valid within each context.  A destination context can c
         weekstart
         rsync-cmd rsync-opts rsync-xopts remote-rsync-cmd
         expire-old
-        bwlimit latest
+        bwlimit latest latest-copy
         compress restart
         allow-restart ldcount timeout-retries
         all-failed some-failed
@@ -559,9 +559,9 @@ See the rsync documentation for details.  (default: none)
 
 =item B<include-from>/B<exclude-from I<filename>> *
 
-The filenames are checked: if the file exists, the option is passed on to rsync (but
+The filenames are checked: if the file exists and is readable, the option is passed on to rsync (but
 the contents of the file are not checked).  
-'~' is NOT expanded to a home directory.  
+
 These files can be remote, so that they can be kept on the same computer
 as the source they refer to.  For example:
 
@@ -689,6 +689,21 @@ via an rsync daemon.
 
 (default: B<nolatest>)
 
+=item B<[no]latest-copy>
+
+This option specifies that the 'latest' snapshot (see above) should be created B<without> using
+rsync's --link-dest option to hard-link it back to the just-created normal snapshot.  In other
+words, the 'latest' snapshot will be a separate copy.
+
+Note that if you change this option after a 'latest' snapshot has already been created, the choice of linking or 
+copying will only apply to new or changed files in the snapshot.
+If you want to change the whole 'latest' snapshot, you will need to delete it and 
+let brandysnap create it afresh.
+
+This option is ignored if B<--latest> is not also specified.
+
+(default: B<no-latest-copy>)
+
 =item B<ldcount I<n>>
 
 Specify the number of previous snapshots that rsync will search looking for identical 
@@ -809,7 +824,7 @@ that there are no 'Permission denied' messages.  If there are, you may need to r
 
 =head1 KNOWN ISSUES
 
-As of 22 April 2013 and version 0.2.15, the following issues and bugs are known.
+As of 28 October October version 0.2.16, the following issues and bugs are known.
 
 =over
 

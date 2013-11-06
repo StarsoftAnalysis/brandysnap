@@ -133,7 +133,7 @@
 .\" ========================================================================
 .\"
 .IX Title "BRANDYSNAP 1"
-.TH BRANDYSNAP 1 "2013-10-28" "perl v5.18.1" "User Contributed Perl Documentation"
+.TH BRANDYSNAP 1 "2013-10-31" "perl v5.18.1" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -151,7 +151,7 @@ brandysnap \-\-conf brandysnap.conf [\s-1OTHER OPTIONS...\s0]
 .IX Header "DESCRIPTION"
 .Vb 3
 \& This is part of the brandysnap documentation.
-\& Copyright &copy; 2011,2012  Chris Dennis  chris@starsoftanalysis.co.uk
+\& Copyright &copy; 2011\-2013  Chris Dennis  chris@starsoftanalysis.co.uk
 \& See the file fdl\-1.3.txt for copying conditions.
 .Ve
 .PP
@@ -453,7 +453,7 @@ Only certain options are valid within each context.  A destination context can c
 \&        weekstart
 \&        rsync\-cmd rsync\-opts rsync\-xopts remote\-rsync\-cmd
 \&        expire\-old
-\&        bwlimit latest
+\&        bwlimit latest latest\-copy
 \&        compress restart
 \&        allow\-restart ldcount timeout\-retries
 \&        all\-failed some\-failed
@@ -657,9 +657,9 @@ These two options are passed through to rsync unchecked and unchanged.
 See the rsync documentation for details.  (default: none)
 .IP "\fBinclude-from\fR/\fBexclude-from \f(BIfilename\fB\fR *" 4
 .IX Item "include-from/exclude-from filename *"
-The filenames are checked: if the file exists, the option is passed on to rsync (but
-the contents of the file are not checked).  
-\&'~' is \s-1NOT\s0 expanded to a home directory.  
+The filenames are checked: if the file exists and is readable, the option is passed on to rsync (but
+the contents of the file are not checked).
+.Sp
 These files can be remote, so that they can be kept on the same computer
 as the source they refer to.  For example:
 .Sp
@@ -766,6 +766,20 @@ Note: latest snapshots can \s-1NOT\s0 be created on remote destinations when con
 via an rsync daemon.
 .Sp
 (default: \fBnolatest\fR)
+.IP "\fB[no]latest\-copy\fR" 4
+.IX Item "[no]latest-copy"
+This option specifies that the 'latest' snapshot (see above) should be created \fBwithout\fR using
+rsync's \-\-link\-dest option to hard-link it back to the just-created normal snapshot.  In other
+words, the 'latest' snapshot will be a separate copy.
+.Sp
+Note that if you change this option after a 'latest' snapshot has already been created, the choice of linking or 
+copying will only apply to new or changed files in the snapshot.
+If you want to change the whole 'latest' snapshot, you will need to delete it and 
+let brandysnap create it afresh.
+.Sp
+This option is ignored if \fB\-\-latest\fR is not also specified.
+.Sp
+(default: \fBno-latest-copy\fR)
 .IP "\fBldcount \f(BIn\fB\fR" 4
 .IX Item "ldcount n"
 Specify the number of previous snapshots that rsync will search looking for identical 
@@ -862,7 +876,7 @@ Brandysnap ignores 'minor' errors from rsync, which includes errors regarding pe
 that there are no 'Permission denied' messages.  If there are, you may need to run brandysnap as root \*(-- see xxx.
 .SH "KNOWN ISSUES"
 .IX Header "KNOWN ISSUES"
-As of 22 April 2013 and version 0.2.15, the following issues and bugs are known.
+As of 28 October October version 0.2.16, the following issues and bugs are known.
 .IP "\(bu" 4
 Under certain circumstances, rsync can fail if the source 
 contains files that are hard-linked together
