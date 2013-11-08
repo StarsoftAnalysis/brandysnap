@@ -94,11 +94,15 @@ use Data::Dumper;   # only for development and debugging
 my $Win = 0;
 my $Cygwin = 0;
 print "OS=$^O\n";
-given ($^O) {   # Don't forget: $^O is the OS Perl was compiled for, not what it's running on.
-    when (/Win/) { $Win = 1; } # TODO if /Win/, look for cygwin environment
-    when ('cygwin') { $Win = 1; $Cygwin = 1; }
-    # TODO: if Win but not cygwin, could check for '-d /cygdrive' to see if we're in cygwin env.
+# Don't forget: $^O is the OS Perl was compiled for, not what it's running on.
+if ($^O =~ /Win/) { 
+    $Win = 1;  # TODO if /Win/, look for cygwin environment
+} elsif ($^O =~ 'cygwin') { 
+    $Win = 1; 
+    $Cygwin = 1; 
 }
+# TODO: if Win but not cygwin, could check for '-d /cygdrive' to see if we're in cygwin env.
+#  (but we'll probably never run under non-cygwin Windows)
 my $Cygdrive  = '/cygdrive';    # default
 my $CygdriveC = '/cygdrive/c';
 if ($Cygwin) {
@@ -1435,6 +1439,7 @@ sub rsyncFixPermsC ($$) {
         "      to sensible values: manual intervention will be required to access this snapshot\n", 
             1,1
     }
+}
 
 #---------------------------------------------------------------------------------------------------
 
@@ -2307,7 +2312,7 @@ sub processOptions () {
             printMsg "$msg (on command line)\n";
         }
 #        # TEMP
-#        if ($option eq 'email-to' and !$value) {
+#        if ($option eq 'email-to' and !$value) 
 #            print "email-to is blank -- delete it";
 #            ... no, we need to delete it from $Opt, not cmdopt
     }
@@ -3237,7 +3242,7 @@ sub readMetadata ($) {
     return $mdArrayRef if $mdfile eq '';    # not readable -- carry on without it
 
     # Read the metadata file
-    #if (open MDF, '<', "$tempdir/$mdfile") { 
+    #if (open MDF, '<', "$tempdir/$mdfile") 
     if (open MDF, '<', "$mdfile") { 
         my $json = ''; 
         while (<MDF>) { 
@@ -4083,6 +4088,7 @@ sub getDeleteList (\@;$) {
 #                    dumpSnapshots(@Call) . "\n\@I:   " . 
 #                    dumpSnapshots(@I) . "\ndiff: " .dumpSnapshots(arrayDiff(@Call, @I))."\n",'gDL';
 #                debug "\@D is now: " . dumpSnapshots2(@D) . "\n", 'gDL';
+#           }
             if (@CgoodFull > $c->{freqmax}) {
                 # Still more than enough good candidates: choose the ones to delete
                 #my $extras = $c->{freqmax} - @Cgood;
@@ -4217,7 +4223,7 @@ sub findGoodPeriods ($$$\@) {
            ($gpCount < $spec->{count} )     )  {
         my $sip = snapshotsInPeriod(@S, $beg, $end);
         if (($spec->{count} == UNLIMITED) or 
-            #($sip >= $spec->{freqmin}   )    ) {
+            #($sip >= $spec->{freqmin}   )    ) 
             ($sip >= $snapshotsNeeded   )    ) {
             # Period has enough snapshots
             push @good, [$beg, $end, 1, $sip, 1];
@@ -5079,7 +5085,7 @@ sub runRsync ($\@$) {
             }
 
             elsif ($rc != 0 and $rc != 23 and $rc != 24) {
-            #elsif (!($rc ~~ [0, 23, 24])) {
+            #elsif (!($rc ~~ [0, 23, 24])) 
                 #* any other error means rename/delete/abandon whole destination
                 # 11 e.g. include-from file not found
                 # 13 e.g. permission denied
@@ -5436,7 +5442,7 @@ sub systemCall ($$$$;$$) {
                 ($stats{totbytes} = $1) =~ tr/,//d;
                 debug "totbytes=$stats{totbytes}\n", 'sC';
             # 'Literal data' is apparently how much is actually sent
-            #} elsif (/Total transferred file size: (\d+)/) {
+            # elsif (/Total transferred file size: (\d+)/) 
             } elsif (/Literal data: ([\d,]+)/) {
                 ($stats{tfrbytes} = $1) =~ tr/,//d;
                 debug "tfrbytes=$stats{tfrbytes}\n", 'sC';
@@ -5616,10 +5622,10 @@ foreach my $dest (@{$Opt{destination}}) {
 
 displaySummary() if !$Opt{status};
 
-#if ($Interrupted) {
+#if ($Interrupted) 
 #    printlog "\n(Interrupted with signal '$Interrupted')\n", 1;
 #    $ExitCode = EXITINT if $ExitCode != EXITOK;
-#}
+#
 my $stopTime = time();
 printlog "\n$Script stopping at " . (strftime "%H:%M:%S", localtime) . 
     " with exit code $ExitCode\n", 1,1;
