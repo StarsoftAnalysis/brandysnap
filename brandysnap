@@ -1,6 +1,7 @@
 #!/usr/bin/perl
 
 # Forked from 0.2.5 to hack on Windows -- commented as 'W7'
+#   Nov 2013 -- 0.2.17 merged in to this 'portable' branch
 # To do:
 #   * can we do hard links!?    yes   
 #   * lots of stuff with slashes   not needed
@@ -16,6 +17,9 @@
 #      in rsyncReadable and other places
 #   * Signals!!! -- ctrl-c works with cygwin!
 #   * check if /cygdrive is really that, or has been set to something else.
+#   * see http://perldoc.perl.org/perlcygwin.html for possibly useful 
+#     stuff e.g. Cygwin::posix_to_win_path, Cygwin::mount_table
+#   * What about cygwin but NOT NTFS? e.g. FAT, or other
 
 # Assumptions / limitations
 #   * assumes the usual /cygdrive/c structure
@@ -30,13 +34,18 @@
 #   drwxr-xr-x  1 Chris            None             0 Oct 18 15:44 d
 # - can create backup, but not delete stuff
 #   - better without --relative??
-# - maybe we just can't create the backup within /cygdrive/c, 
-#   which is a stupid place to put it anyway.
 # Some suggest putting noacl in fstab, but that means everything
 # gets owned by the brandysnap runner.
-# Plan: treat /cygdrive/c as a special case -- it gets 000 permissions
+# Plan: treat /cygdrive/c as a special case -- it has 000 permissions
+# in the source
 # so set them to 777.
 #   -- per dest, if dest include /cygdrive/c
+#  !! need to do this for any /cygdrive/<x> -- no, just c
+#  And only when the destination is NTFS
+#    -- on FAT, all permissions get munged anyway, and the problem goes away
+#  Could just override all perms on NTFS, but would be nice to keep them.
+#  What about if the source is specified as C:\ instead of \cygdrive\c
+#    -- C:\ just gets converted to /cygdrive/c
 # 
 #########################################################################
 # brandysnap: rsync-based backup snapshot creation and management       #
@@ -103,6 +112,8 @@ if ($^O =~ /Win/) {
 }
 # TODO: if Win but not cygwin, could check for '-d /cygdrive' to see if we're in cygwin env.
 #  (but we'll probably never run under non-cygwin Windows)
+
+# Work out where we are
 my $Cygdrive  = '/cygdrive';    # default
 my $CygdriveC = '/cygdrive/c';
 if ($Cygwin) {
@@ -112,6 +123,10 @@ if ($Cygwin) {
         ($Cygdrive  = $CygdriveC) =~ s|/[^/]*$||;    # gets e.g. /cygdrive
     }
 }
+
+# Handling line endings
+my $EOL = '';
+$EOL = ':crlf' if $Cygwin;
 
 # Interrupts and other housekeeping ===============================================================
 
@@ -1004,6 +1019,7 @@ sub fullName ($) {
 sub emailSend ($$) {
     # Minimal email sending process: all the modules I could find are either
     # broken or too complex.  So this relies on the system having an email setup.
+    # TODO W7 not test at all yet
     my $subject = shift;
     my $body    = shift;
     debug "emailSend -- no email-to", 'eS' if !$Opt{'email-to'};
@@ -1422,21 +1438,23 @@ sub rsyncWritable ($) {
 
 #---------------------------------------------------------------------------------------------------
 
-sub rsyncFixPermsC ($$) {
+sub rsyncFixPermsC ($) {
     # Tweak the permissions of /cygdrive/c  (this is for cygwin only, obviously).
     # See e.g. http://tinyurl.com/dxucxg and http://tinyurl.com/2e7q6z8
     # for a discussion of the problem.
     # An alternative would be to set 'noacl' in cygwin's /etc/fstab, but that results in every
     # file being owned by the user who ran brandysnap.
     my $destdir = shift;
-    my $args    = shift;
-    debug "destdir='$destdir' args='$args'", 'rFPC';
+    return if $Opt{'dry-run'};
+    my $tempdir = tempdir(CLEANUP => 1);
+    mkdir "$tempdir/c";
+    debug "destdir='$destdir' tempdir='$tempdir'\n", 'rFPC';
     my ($rc, $rc2) = systemCall($Opt{'rsync-cmd'},
-        "$args -pr --chmod ugo=rwx $EmptyDir/ $destdir$CygdriveC",  9,9); 
+        "-pr $tempdir/c $destdir$Cygdrive/",  9,9);
     debug "rsync rc=$rc/$rc2\n", 'rFPC';
     if ($rc) {
-        printlog "\nNOTE: Could not set the permissions of $destdir$CygdriveC\n" . 
-        "      to sensible values: manual intervention will be required to access this snapshot\n", 
+        printNote "\nCould not set the permissions of $destdir$CygdriveC\n" . 
+            "to sensible values: manual intervention will be required to access this snapshot\n", 
             1,1
     }
 }
@@ -2146,7 +2164,8 @@ sub checkInExcludeFrom ($) {
             debug "$opt array: " . Dumper(@{$optR->{$opt}}), 'cIEF';
             my @tempOpt;
             foreach my $file (@{$optR->{$opt}}) {
-                my $file2 = rsyncMakeLocal(safeAbsPath($file));
+# FIXME W7 - no safeAbsPath, so just use absPath for now
+                my $file2 = rsyncMakeLocal(absPath($file));
                 if ($file2 eq '' or !-r $file2) {
                     printWarning "$opt file '$file' is not readable -- it will be ignored\n", 1;
                 } elsif ($file ne $file2) {
@@ -2383,7 +2402,7 @@ sub processOptions () {
     } else {
         $Opt{logfile} = absPath($Opt{logfile});
         # Open and lock the logfile
-        if (open LOGFILE, '>>', $Opt{logfile}) {
+        if (open LOGFILE, ">>$EOL", $Opt{logfile}) {
             if (flock(LOGFILE, LOCK_EX | LOCK_NB)) {
                 $Opt{validLogfile} = $Opt{logfile};
                 # Make the logfile unbuffered
@@ -2448,7 +2467,8 @@ sub processOptions () {
     # Sources, with extra options for each (there may be no sources at general level)
     if ($Opt{source}) {
         foreach my $src (@{$Opt{source}}) {
-            $src->{location} = safeAbsPath($src->{location});
+# FIXME W7 -- no safeAbsPath, so just use absPath for now
+            $src->{location} = absPath($src->{location});
             my ($rrrc, $rrrc2) = rsyncExists($src->{location});
             if ($rrrc == 0) {
                 $src->{readable} = 1;
@@ -2471,7 +2491,8 @@ sub processOptions () {
     my $destError = 0;
     my $writableDests = 0;
     foreach my $dest (@{$Opt{destination}}) { 
-        $dest->{location} = safeAbsPath($dest->{location});
+# FIXME W7 -- no safeAbsPath, so just use absPath for now
+        $dest->{location} = absPath($dest->{location});
         $Summary{$dest->{location}}{result} = 'not attempted';
         my $destInfo = $Summary{$dest->{location}};
         my $options = $dest->{options};
@@ -2479,7 +2500,8 @@ sub processOptions () {
             # This destination has its own source(s) which
             # will override any at the general level
             foreach my $src (@{$options->{source}}) {
-                $src->{location} = safeAbsPath($src->{location});
+# FIXME W7 -- no safeAbsPath, so just use absPath for now
+                $src->{location} = absPath($src->{location});
                 $destInfo->{source}{$src->{location}}{result} = 'not attempted';
                 my ($rrrc, $rrrc2) = rsyncExists($src->{location});
                 if ($rrrc != 0) {
@@ -4973,8 +4995,6 @@ sub runRsync ($\@$) {
         printlog "Running rsync from source '$location' to destination '$destDir'\n", 2;
         # Note that rsync-opts and rsync-xopts are put first -- 
         # our own required options will override the user's
-#        my $relative = '--relative';
-#        $relative = '' if $Win;     # FIXME random test!
         my $args = "$Opt{'rsync-opts'} $Opt{'rsync-xopts'} " .
             "$verbose $linkdest $incExcOpts $compression " . 
             "$bwlimit --relative --stats $rsyncPath '$location' '$destDir'";
@@ -5136,7 +5156,7 @@ sub runRsync ($\@$) {
             # is a special case that gets 000 permissions thanks to Windows' ACL system.
             # This has to be done per-source, because $subDir may be different.
             if ($location =~ m|^/cygdrive/c|) {
-                rsyncFixPermsC($destDir, "$verbose $rsyncPath");
+                rsyncFixPermsC($destDir);
             }
         }
 
