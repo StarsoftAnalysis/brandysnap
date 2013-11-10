@@ -4,26 +4,13 @@
 #   Nov 2013 -- 0.2.17 merged in to this 'portable' branch
 # To do:
 #   * can we do hard links!?    yes   
-#   * lots of stuff with slashes   not needed
+#   * IMPORTANT: detect non-NTFS, and warn re lack of hard links
 #   * different defaults?
 #   * is blocksize 512?
-#   * absPath()
 #   * sourceDir()
-#   * C:\ looks remote to rsync -- might require cygwin
 #   * tests for remoteness
-#   * absPath is OK, but not for things that are for rsync -- maybe just don't
-#      absPath them, make the user specify them properly
-#   * so need to tweak paths when passing them to rsync
-#      in rsyncReadable and other places
-#   * Signals!!! -- ctrl-c works with cygwin!
-#   * check if /cygdrive is really that, or has been set to something else.
-#   * see http://perldoc.perl.org/perlcygwin.html for possibly useful 
-#     stuff e.g. Cygwin::posix_to_win_path, Cygwin::mount_table
-#   * What about cygwin but NOT NTFS? e.g. FAT, or other
-#   * get ~ working?
 
 # Assumptions / limitations
-#   * assumes the usual /cygdrive/c structure
 #
 #
 # Problems -- permissions / ACLs on /cygdrive/c -- on w7u it's
@@ -1162,24 +1149,6 @@ sub absPath ($) {
 
 #---------------------------------------------------------------------------------------------------
 
-sub rsyncAbsPath ($) {
-    # A version of absPath that allows for the fact rsync uses ':' to 
-    # indicate a remote location (and :: for a remote daemon).
-    # FIXME and what about rsync://... style?
-    # On Windows, we have convert C:\... to /cygdrive/c... etc. first.
-    my $path = shift;
-    return absPath($path);
-    # FIXME -- always call absPath, so rsyncAbsPath seems redundant.  Is it on linux?
-#    # FIXME what's going on?
-#    #my $abspath = rel2abs($path);
-#    debug "path=$path   r2a=".rel2abs($path)."   canon=".canonpath($path)."\n", 'rAP';
-#    return $path if remote($path);
-#    return $path if $path =~ /cygdrive/;    # W7 FIXME
-#    return absPath($path);
-}
-
-#---------------------------------------------------------------------------------------------------
-
 sub sourceDir ($) { 
     # Remote sources require an enclosing directory on the destination
     # to ensure that there is no overlap.
@@ -2176,7 +2145,6 @@ sub checkInExcludeFrom ($) {
             debug "$opt array: " . Dumper(@{$optR->{$opt}}), 'cIEF';
             my @tempOpt;
             foreach my $file (@{$optR->{$opt}}) {
-# FIXME W7 - no safeAbsPath, so just use absPath for now
                 my $file2 = rsyncMakeLocal(absPath($file));
                 if ($file2 eq '' or !-r $file2) {
                     printWarning "$opt file '$file' is not readable -- it will be ignored\n", 1;
@@ -2479,7 +2447,6 @@ sub processOptions () {
     # Sources, with extra options for each (there may be no sources at general level)
     if ($Opt{source}) {
         foreach my $src (@{$Opt{source}}) {
-# FIXME W7 -- no safeAbsPath, so just use absPath for now
             $src->{location} = absPath($src->{location});
             my ($rrrc, $rrrc2) = rsyncExists($src->{location});
             if ($rrrc == 0) {
@@ -2503,7 +2470,6 @@ sub processOptions () {
     my $destError = 0;
     my $writableDests = 0;
     foreach my $dest (@{$Opt{destination}}) { 
-# FIXME W7 -- no safeAbsPath, so just use absPath for now
         $dest->{location} = absPath($dest->{location});
         $Summary{$dest->{location}}{result} = 'not attempted';
         my $destInfo = $Summary{$dest->{location}};
@@ -2512,7 +2478,6 @@ sub processOptions () {
             # This destination has its own source(s) which
             # will override any at the general level
             foreach my $src (@{$options->{source}}) {
-# FIXME W7 -- no safeAbsPath, so just use absPath for now
                 $src->{location} = absPath($src->{location});
                 $destInfo->{source}{$src->{location}}{result} = 'not attempted';
                 my ($rrrc, $rrrc2) = rsyncExists($src->{location});
