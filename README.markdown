@@ -79,7 +79,8 @@ which just has to be run.  All you need to do is
 
 2.  Make sure you've got rsync and the necessary Perl modules as described above.
 
-3.  Use a text editor to create a configuration file: refer to the user guide for details.
+3.  Use a text editor to create a configuration file: refer to the documentation (i.e. 
+    brandysnap.html or brandysnap.pod) for details.
 
 4.  Run the script, with a command something like this:
 

@@ -80,7 +80,7 @@ called brandysnap-test1.conf containing something like this:
  source      = /path/to/something/to/backup
  destination = /path/to/writable/directory
  template    = brandysnap-test1
- spec        = 4h1,1h1,1d7
+ spec        = 4h1,1h,1d7
 
 and then run
 

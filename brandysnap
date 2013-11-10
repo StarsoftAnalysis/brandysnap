@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-
+# This is the portable version.
 # Forked from 0.2.5 to hack on Windows -- commented as 'W7'
 #   Nov 2013 -- 0.2.17 merged in to this 'portable' branch
 # To do:
@@ -66,7 +66,7 @@ use File::Path qw(remove_tree);
 use File::Glob qw(:glob); 
 use File::Find;
 use File::Temp qw(tempfile tempdir);
-use File::Spec::Functions qw(canonpath rel2abs splitdir catfile catdir);
+use File::Spec::Functions qw(rel2abs splitdir catfile catdir);
 use File::Basename;
 use Fcntl qw(:flock);
 use Scalar::Util qw(looks_like_number);
@@ -120,7 +120,10 @@ $SIG{__DIE__} = sub { Carp::confess(@_) };
 # $Interrupted becomes true if the script has been interrupted
 my $Interrupted = '';
 # Set the process group so that we can tidy up child processes:
-# What's the W7 way for this?: setpgrp(0, 0);
+# What's the W7 way for this?: 
+if (!$Cygwin) {
+    setpgrp(0, 0);
+}
 # Trap interrupts: set a flag and make sure any children are killed
 sub killgroup {
     my $sig = shift;
@@ -142,7 +145,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-our $VERSION = '0.2.17portable';
+our $VERSION = '0.2.17-portable';
 
 # A copy of @ARGV before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -1183,14 +1186,12 @@ sub getSnapshotSize ($) {
     # Get the current size of a snapshot by getting the directory
     # listing via rsync and adding up the numbers.
     # 
-    # rsync returns directory listings thusly (even for recent dates, and even on Windows):
+    # rsync returns directory listings thusly (even for recent dates, and even on Cygwin):
     #    -rwxr-xr-x         149 2008/06/13 13:56:30 textsmart
     #    drwxr-xr-x        4096 2011/05/07 17:41:48 40dnamer
     # and gives return code 23 if the directory is not found
     #                       255 for wrong password, unknown host etc.
     # Note the lack of nlink information, so we can't calculate 'delete size'.
-    # W7 TODO C:\ looks like a remote host to rsync
-# W7 initial scan to here
     my $snapshot = shift;
     my $totalBytes = 0;
     my $totalFiles = 0;
@@ -3266,7 +3267,6 @@ sub readMetadata ($) {
     return $mdArrayRef if $mdfile eq '';    # not readable -- carry on without it
 
     # Read the metadata file
-    #if (open MDF, '<', "$tempdir/$mdfile") 
     if (open MDF, '<', "$mdfile") { 
         my $json = ''; 
         while (<MDF>) { 
