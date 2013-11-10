@@ -13,31 +13,9 @@
 # Assumptions / limitations
 #
 #
-# Problems -- permissions / ACLs on /cygdrive/c -- on w7u it's
-#   Chris@W7U /cygdrive
-#   $ ls -la
-#   total 12
-#   dr-xr-xr-x  1 Chris            None             0 Nov  4 22:16 .
-#   drwxr-xr-x+ 1 Chris            None             0 Nov  4 17:05 ..
-#   d---------+ 1 TrustedInstaller TrustedInstaller 0 Nov  3 23:32 c
-#   drwxr-xr-x  1 Chris            None             0 Oct 18 15:44 d
-# - can create backup, but not delete stuff
-#   - better without --relative??
-# Some suggest putting noacl in fstab, but that means everything
-# gets owned by the brandysnap runner.
-# Plan: treat /cygdrive/c as a special case -- it has 000 permissions
-# in the source
-# so set them to 777.
-#   -- per dest, if dest include /cygdrive/c
-#  !! need to do this for any /cygdrive/<x> -- no, just c
-#  And only when the destination is NTFS
-#    -- on FAT, all permissions get munged anyway, and the problem goes away
-#  Could just override all perms on NTFS, but would be nice to keep them.
-#  What about if the source is specified as C:\ instead of \cygdrive\c
-#    -- C:\ just gets converted to /cygdrive/c
-#  FIXED!!
-#
 # Known bugs and caveats:
+#  - only works on NTFS -- FAT lacks hard links; other filing systems
+#    may not work either.
 #  - a remote host with a single-letter hostname will be treated as
 #    a local drive letter.  If you've really got single-letter hosts,
 #    use 'rsync://C/path' instead of 'C:/path'.
@@ -113,6 +91,10 @@ if ($^O =~ /Win/) {
 }
 # TODO: if Win but not cygwin, could check for '-d /cygdrive' to see if we're in cygwin env.
 #  (but we'll probably never run under non-cygwin Windows)
+if ($Win and !$Cygwin) {
+    print "Error: Running on Windows without Cygwin is not supported -- stopping\n";
+    exit 6;
+}
 
 # Work out where we are
 my $Cygdrive  = '/cygdrive';    # default
@@ -176,7 +158,7 @@ my $ExitCode = EXITOK;
 
 # Options -- need some options to start with
 our %Opt = ();   
-$Opt{debug}    = {'ap'=>1}; #{'rc'=>1, 'ap'=>1, 'po'=>1 }; # Set this when debugging processOptions(), or just {}
+$Opt{debug}    = {}; #{'rc'=>1, 'ap'=>1, 'po'=>1 }; # Set this when debugging processOptions(), or just {}
 $Opt{verbose}  = 1;
 $Opt{loglevel} = 1;
 
@@ -528,6 +510,7 @@ sub debug ($;$) {
 
 sub printEWN ($$$;$) {
     # Print an error/warning/note message with fancy formatting
+    # FIXME this only indents the second line properly, not the third...
     my $text   = shift;
     my $prefix = shift;
     my $plevel = shift;
@@ -2162,6 +2145,50 @@ sub checkInExcludeFrom ($) {
 
 #---------------------------------------------------------------------------------------------------
 
+sub checkHardLinksAvailable () {
+    # Check that each destination's file system supports hard links, and warn otherwise.
+    # So far, this is only done for Windows (i.e. cygwin), and just distinguishes NTFS
+    # from everything else.
+    # The mount table looks something like this (an array of arrays)
+    #   /usr/bin C:/cygwin/bin ntfs binary,auto
+    #   /usr/lib C:/cygwin/lib ntfs binary,auto
+    #   / C:/cygwin ntfs binary,auto
+    #   /cygdrive/c C: ntfs binary,posix=0,user,noumount,auto
+    #   /cygdrive/f F: vfat binary,posix=0,user,noumount,auto
+    # We'll match the beginning of each destination against entries in that table.
+    my $warnings = 0;
+    if ($Cygwin) {
+        # Get the list of mounted file systems
+        my @mounts = Cygwin::mount_table();
+        # Match each destination's location
+        foreach my $dest (@{$Opt{destination}}) {
+            my $location = $dest->{location};
+            if ($location =~ m|^(/cygdrive/[A-Za-z])/|) {
+                my $drive = $1;
+                debug "checking location $location  drive=$drive\n", 'cHLA';
+                foreach my $mnt (@mounts) {
+                    debug "against @$mnt\n", 'cHLA';
+                    debug " [0]=$$mnt[0]  [2]=$$mnt[2]\n", 'cHLA';
+                    if ($$mnt[0] eq $drive) {
+                        if ($$mnt[2] ne 'ntfs') {
+                            printWarning "Destination '$location' does not support hard links.\n" .
+                                "Its file system type is '$$mnt[2].'\n" .
+                                "Snapshot sizes will be larger than normal.\n", 1;
+                            $warnings += 1;
+                        }
+                        last;
+                    }
+                }
+            } else {
+                # no drive letter found: it's probably remote, so can't check for hard links.
+            }
+        }
+    }
+    return $warnings;
+}
+
+#---------------------------------------------------------------------------------------------------
+
 sub processOptions () {
 
     # Default options hard-coded here
@@ -2310,13 +2337,7 @@ sub processOptions () {
         if ($msg) {
             printMsg "$msg (on command line)\n";
         }
-#        # TEMP
-#        if ($option eq 'email-to' and !$value) 
-#            print "email-to is blank -- delete it";
-#            ... no, we need to delete it from $Opt, not cmdopt
     }
-    # FIXME if we return here, less chance of emailing errors etc.  So should we?
-    #return ($errorcount, $warningcount) if $errorcount;
 
     # Tweak context options from command line to make them into config-file structures
     foreach my $context (keys %ValidContext) {
@@ -2573,6 +2594,10 @@ sub processOptions () {
                 "cannot continue\n";
             $errorcount += 1;
         }
+    }
+    
+    if ($errorcount == 0) {
+        $warningcount += checkHardLinksAvailable();
     }
     
     # --restart implies --snapshot and --min-interval=0
@@ -3133,9 +3158,9 @@ sub fmtRange ($$;$) {
     debug "beg: " . $begdate->printf("%Y-%m-%d %H:%M:%S %Z"), 'fR';
     $err = $enddate->secs_since_1970_GMT($end);
     debug "end: " . $enddate->printf("%Y-%m-%d %H:%M:%S %Z"), 'fR';
-    # NB: 'semi' and 'exact' modes are not available in older versions of
+    # NB: 'semi' and 'exact' modes are not available in older versions of 
     #     Date::Manip, so we trap the error and default to printing the range.
-    my $mode = 'semi';                      # 'semi' works mostly...
+    my $mode = 'semi';                      # 'semi' works mostly...    
     $mode = 'exact' if ($range <= HOUR);    # ...but not for hours...
     $mode = 'approx' if ($range >= MONTH);  # ...nor months and years
     $mode = $modeOverride if $modeOverride;
