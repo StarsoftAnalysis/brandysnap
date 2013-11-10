@@ -20,9 +20,11 @@
 #   * see http://perldoc.perl.org/perlcygwin.html for possibly useful 
 #     stuff e.g. Cygwin::posix_to_win_path, Cygwin::mount_table
 #   * What about cygwin but NOT NTFS? e.g. FAT, or other
+#   * get ~ working?
 
 # Assumptions / limitations
 #   * assumes the usual /cygdrive/c structure
+#
 #
 # Problems -- permissions / ACLs on /cygdrive/c -- on w7u it's
 #   Chris@W7U /cygdrive
@@ -46,6 +48,18 @@
 #  Could just override all perms on NTFS, but would be nice to keep them.
 #  What about if the source is specified as C:\ instead of \cygdrive\c
 #    -- C:\ just gets converted to /cygdrive/c
+#  FIXED!!
+#
+# Known bugs and caveats:
+#  - a remote host with a single-letter hostname will be treated as
+#    a local drive letter.  If you've really got single-letter hosts,
+#    use 'rsync://C/path' instead of 'C:/path'.
+#  - conversely, a local drive-letter+pathname combination without
+#    a slash or backslash, will be treated as a remote host.
+#    So use 'P:/full/path' instead of 'P:path'
+#    (the latter would be foolish in any case, because it would vary
+#    according to whatever happened to be the current working directory
+#    on drive P:)
 # 
 #########################################################################
 # brandysnap: rsync-based backup snapshot creation and management       #
@@ -1088,7 +1102,15 @@ sub remote ($) {
     # (via daemon or just ssh)
     # (See rsync's man page re the significance of ':')
     my $path = shift;
-#    return 0 if ($Cygwin and $path =~ /^[A-Za-z]:(\\|\/)/);    # FIXME is this OK?
+    if ($Cygwin) {
+        # On Windows, ':' can also indicate a drive letter.
+        # NOTE: if you have remote hosts with single-letter host names, you'll have to use
+        #       'rsync://C/path' syntax instead of 'C:/path'.
+        # NOTE: 'C:/something' is an absolute path
+        #       'C:another' just means 'another' in the current dir on drive c:
+        #       the use of which would be silly, so we won't worry about it.
+        return 0 if $path =~ m{^[A-Za-z]:(\\|\/)};
+    }
     return 1 if index($path, ':') > -1;
     return 0;
 }
@@ -1099,7 +1121,6 @@ sub remoteDaemon ($) {
     # Returns 'true' if the path is considered by rsync to be remote
     # via the rsync daemon
     # (See rsync's man page re the significance of '::' and 'rsync://')
-    # W7 TODO what does this look like on Windows?
     my $path = shift;
     return 1 if $path =~ m|^rsync://|;
     return 1 if index($path, '::') > -1;
@@ -1122,30 +1143,21 @@ sub absPath ($) {
     # Convert a file or directory name into an absolute
     # path, with '~' (home directory) expansion.
     my $path = shift;
-    if ($Cygwin) {
-#        # cygpath mangles remote paths...!!!
-#        chomp(my $cygpath = `cygpath -ua $path`);
-#        debug "'$path' becomes '$cygpath'", 'aP';
-#        return $cygpath;
-        # No change if path already starts with /cygdrive/
-        return $path if $path =~ m|^/$Cygdrive/|;
-        # Change C:\... to /cygdrive/c/... etc.; no other change
-        # !! What if it's really a single-letter hostname?
-        return $path if ($path =~ s|^([A-Za-z]):|"/cygdrive/".lc($1)|e);
-        # No change if remote
-        return $path if remote($path);
-        # what happens now?
-        return rel2abs($path);
-    }
-    # Not Windows:
-    # NOTE: This is Unix-specific
+    debug "orig: $path\n", 'aP';
+    return $path if remote($path);  # yes, that handles drive letters too
+    # Expand leading '~' to user's home path.
+    # NOTE: This is Unix-specific (but works with cygwin too) 
     # See http://stackoverflow.com/questions/4404628/abs-path-with-the-home-directory
     # and http://docstore.mik.ua/orelly/perl4/cook/ch07_04.htm
-    return $path if remote($path);
     $path =~ s{^~([^/]*)}{$1?(getpwnam($1))[7]:($ENV{HOME} || $ENV{LOGDIR} || (getpwuid($<))[7])}ex;
-    my $abspath = rel2abs($path);
-    debug "$path becomes $abspath", 'aP';
-    return $abspath;
+    debug "after ~: $path\n", 'aP';
+    if ($Cygwin) {
+        $path = Cygwin::win_to_posix_path($path, 1);
+        debug "after cygwin: $path\n", 'aP';
+    }
+    $path = rel2abs($path);
+    debug "after rel2abs: $path", 'aP';
+    return $path;
 }
 
 #---------------------------------------------------------------------------------------------------
