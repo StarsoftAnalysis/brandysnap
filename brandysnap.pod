@@ -836,7 +836,7 @@ and for which you do not have read permission.  This is fixed in rsync 3.0.9 and
 round it by specifying B<--rsync-opts> with the usual options but omitting B<--hard-links>
 at the cost of using more disk space.
 
-==item *
+=item *
 
 The fmtRange routine uses Date::Manip::Delta, which insists that February is four weeks and not one month.  There may be other similar cosmetic irritations.
 

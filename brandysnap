@@ -1009,8 +1009,9 @@ sub emailSend ($$) {
     # TODO W7 not test at all yet
     my $subject = shift;
     my $body    = shift;
+    debug "email-to="Opt{'email-to'} 
     debug "emailSend -- no email-to", 'eS' if !$Opt{'email-to'};
-    return 0 if $Opt{'email-to'};
+    return 0 if !$Opt{'email-to'};
     debug "email-to=@{$Opt{'email-to'}} body=$body\n", 'eS';
     my $rc = 0;
     if (open MAIL, '|-', $Opt{'email-prog'}) {

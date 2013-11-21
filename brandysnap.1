@@ -133,7 +133,7 @@
 .\" ========================================================================
 .\"
 .IX Title "BRANDYSNAP 1"
-.TH BRANDYSNAP 1 "2013-10-31" "perl v5.18.1" "User Contributed Perl Documentation"
+.TH BRANDYSNAP 1 "2013-11-21" "perl v5.18.1" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -216,7 +216,7 @@ called brandysnap\-test1.conf containing something like this:
 \& source      = /path/to/something/to/backup
 \& destination = /path/to/writable/directory
 \& template    = brandysnap\-test1
-\& spec        = 4h1,1h1,1d7
+\& spec        = 4h1,1h,1d7
 .Ve
 .PP
 and then run
@@ -883,9 +883,7 @@ contains files that are hard-linked together
 and for which you do not have read permission.  This is fixed in rsync 3.0.9 and later.  You can get
 round it by specifying \fB\-\-rsync\-opts\fR with the usual options but omitting \fB\-\-hard\-links\fR
 at the cost of using more disk space.
-.Sp
-==item *
-.Sp
+.IP "\(bu" 4
 The fmtRange routine uses Date::Manip::Delta, which insists that February is four weeks and not one month.  There may be other similar cosmetic irritations.
 .SH "AUTHOR"
 .IX Header "AUTHOR"
