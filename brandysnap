@@ -956,7 +956,8 @@ sub emailTest () {
     if (!$Opt{'email-to'}) {
         printError "Unable to send the test message: no email-to option given\n";
     }
-    my $msg = "This is a test message from $Script, running on " . hostname . ".\n\n";
+    my $msg = "This is a test message from backup script '$Script', running on '" . 
+        hostname . "'.\n\n";
     $msg   .= "The command-line options specified were: \n";
     $msg   .= "    @ARGVcopy";
     if (emailSend("$Script test message from " . hostname, $msg)) {
@@ -973,8 +974,10 @@ sub emailConfigError ($$) {
     my $e    = shift;
     my $w    = shift;
     return if !($Opt{'email-to'});
-    my $text = "This is an error message from $Script, running on " . hostname . ".\n\n";
-    $text .= "There was a problem with the configuration, and $Script did not run.\n\n";
+    my $text = "This is an error message from backup script '$Script', running on '" . 
+        hostname . "'.\n\n";
+    $text .= "There was a problem with the configuration, ' . 
+        'and backup script '$Script' did not run.\n\n";
     $text .= $Messages;
     $text .= "\n($e errors, $w warnings)\n\n";
     $text .= "Command line options: \n$0 @ARGVcopy\n";
@@ -982,7 +985,7 @@ sub emailConfigError ($$) {
     #$text .= formatOptions();
     # Errors in config, so better to not print options summary,
     # just command line, config file, and error messages
-    my $rc = emailSend("brandysnap error on " . hostname, $text);
+    my $rc = emailSend("$Script error on " . hostname, $text);
     if ($rc) {
         printWarning "\nCould not send email to @{$Opt{'email-to'}}.\n", 1;
     } else {
@@ -1296,7 +1299,7 @@ sub XrsyncReadable ($) {  # THIS IS NOT USABLE
 sub rsyncWritable ($) {
     # Use rsync to check if a destination is writable
     my $dest = shift;
-    my $tempdir = 'brandysnap-temp-dir';    # is this ok?
+    my $tempdir = '$Script-temp-dir';    # is this ok?
     my @output;
     my @errors;
     if ($Opt{'dry-run'} or $Opt{status}) {
@@ -2885,7 +2888,8 @@ sub displaySummary () {
     if ($Opt{'email-to'} and 
         ($AllDestsFailed or ($Opt{'email-if'} eq 'any' and $AnyDestFailed))) {
         my $rc = emailSend("$Script error on " . hostname, 
-            "This is an error message from $Script running on " . hostname . "." .
+            "This is an error message from backup script '$Script' running on '" . 
+            hostname . "'." .
             $text .
             formatOptions() .
             $Messages .
@@ -3075,7 +3079,7 @@ sub writeMetadata ($) {
     # Write to a temporary local file
     my ($tempfh, $tempfilename) = tempfile(UNLINK => 1);
     my $succeeded = 0;
-    print $tempfh "# Status of brandysnap backups for '$Opt{template}' on '$dest' as at " . 
+    print $tempfh "# Status of $Script backups for '$Opt{template}' on '$dest' as at " . 
         time2stamp(time()) . "\n";
     print $tempfh "# Do not edit or delete this file\n";
     print $tempfh $json;
