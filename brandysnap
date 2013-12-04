@@ -82,7 +82,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-our $VERSION = "0.2.17";
+our $VERSION = "0.2.17-bugfixes";
 
 # A copy of @ARGV before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -3437,8 +3437,9 @@ sub markOrDeleteSnapshot ($$$) {
     my $sName = $S{$snapshot}{name};   # for convenience
 
     my $action; # 'delete' or 'keep'
-    if ($restartable and $Opt{'allow-restart'}) {
-        # Don't delete if we want to restart
+    # Don't delete if we want to restart (or have already restarted)
+    if (($restartable and $Opt{'allow-restart'}) or
+        ($Opt{restart})                             ) {
         $action = 'keep';
     } else {
         if ($sourcesCompleted == 0) {
@@ -4902,13 +4903,13 @@ sub runRsync ($\@$) {
                 }
                 if ($retriesT > 0) {
                     # try again
-                    printNote "Will try again $retriesT more time(s)\n", 1;
+                    printNote "Will try again up to $retriesT more time(s)\n", 1;
                     $retriesT -= 1;
                 } else {
                     $keepTrying = 0;
                     $succeeded = 0;
-                    $restartable = 1;
                 }
+                $restartable = 1;
                 $srcInfo->{result} = 'timed out';
             }
 
