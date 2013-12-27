@@ -2,7 +2,7 @@ Brandysnap
 ==========
 
 Brandysnap is (yet another) script that uses rsync to create snapshot
-backups of files and directories.
+backups of files and directories. 
 
 It is designed to be flexible and robust.  In particular, it copes well
 with situations where snapshots are not created as regularly as they

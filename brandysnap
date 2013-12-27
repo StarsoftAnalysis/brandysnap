@@ -82,7 +82,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-our $VERSION = "0.2.17-bugfixes";
+our $VERSION = "0.2.18";
 
 # A copy of @ARGV before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -213,7 +213,7 @@ my @AllOpt = qw(
     weekstart
     logfile lockfile 
     rsync-cmd rsync-opts rsync-xopts remote-rsync-cmd
-    include include-from exclude exclude-from
+    include include-from exclude exclude-from filter ief
     expire-old
     bwlimit latest latest-copy
     status compress restart
@@ -230,7 +230,7 @@ my @ReqOpt = qw(destination);
 my %ReqOpt = (map {$_ => 1} @ReqOpt);
 # Multi-value options (are also all string options)
 my %MultiOpt = (map {$_ => 1} qw(source include include-from
-    exclude exclude-from destination debug email-to));
+    exclude exclude-from filter ief destination debug email-to));
 # Boolean options
 my @BoolOpt = qw(safe calendar snapshot delete delete-cp dry-run help strict 
     version expire-old status compress restart allow-restart
@@ -251,6 +251,9 @@ my %NumericOpt = (map {$_ => 1} @NumericOpt);
 # Level options (take values 0..9)
 my @LevelOpt = qw(verbose loglevel);
 my %LevelOpt = (map {$_ => 1} @LevelOpt);
+# Include/Exclude/Filter options (dealt with internally as ief)
+my @IEFOpt = qw(include exclude include-from exclude-from filter);
+my %IEFOpt = (map {$_ => 1} @IEFOpt);
 
 # Contexts
 # --------
@@ -277,7 +280,7 @@ my %Matrix = (
         hbest dbest wbest mbest ybest
         safe calendar strict
         source template specs
-        include include-from exclude exclude-from   
+        include include-from exclude exclude-from filter
         snapshot delete delete-cp
         weekstart
         rsync-cmd rsync-opts rsync-xopts remote-rsync-cmd
@@ -293,7 +296,7 @@ my %Matrix = (
     # so that each dest-source combination can be different
     source => {map {$_ => 1} qw(
         rsync-cmd rsync-opts rsync-xopts remote-rsync-cmd
-        include include-from exclude exclude-from
+        include include-from exclude exclude-from filter
         bwlimit
         compress restart
         allow-restart timeout-retries
@@ -976,8 +979,8 @@ sub emailConfigError ($$) {
     return if !($Opt{'email-to'});
     my $text = "This is an error message from backup script '$Script', running on '" . 
         hostname . "'.\n\n";
-    $text .= "There was a problem with the configuration, ' . 
-        'and backup script '$Script' did not run.\n\n";
+    $text .= "There was a problem with the configuration, " . 
+        "and backup script '$Script' did not run.\n\n";
     $text .= $Messages;
     $text .= "\n($e errors, $w warnings)\n\n";
     $text .= "Command line options: \n$0 @ARGVcopy\n";
@@ -1299,7 +1302,7 @@ sub XrsyncReadable ($) {  # THIS IS NOT USABLE
 sub rsyncWritable ($) {
     # Use rsync to check if a destination is writable
     my $dest = shift;
-    my $tempdir = '$Script-temp-dir';    # is this ok?
+    my $tempdir = "$Script-temp-dir";    # is this unique enough?
     my @output;
     my @errors;
     if ($Opt{'dry-run'} or $Opt{status}) {
@@ -1752,17 +1755,23 @@ sub checkOptionSingle ($$) {
                 " 'all', not '$value'\n";
                 $e += 1;
             }
+        } elsif ($IEFOpt{$option}) {
+            # It's one of the 'IEF' options, which are stored internally 
+            # in a single array to maintain their order
+            $value = "--$option='$value'";
+            # replace and return the name of the option:
+            $option = 'ief';
         }
 
         # Source and destination are done later
 
-        # Options 'include', 'include-from', 'exclude', 'exclude-from'
+        # Options 'include', 'include-from', 'exclude', 'exclude-from', 'filter'
         # - these are not checked at all at this stage
 
     }
     chomp($msg);
-    #debug "returning e=$e w=$w value='$value' msg=$msg\n", 'cOS';
-    return ($e, $w, $value, $msg);
+    #debug "returning e=$e w=$w option=$option value='$value' msg=$msg\n", 'cOS';
+    return ($e, $w, $option, $value, $msg);
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -1774,10 +1783,11 @@ sub checkOptionArray($$) {
     my $errorcount   = 0;
     my $warningcount = 0;
     my $message      = '';
+    my $newopt = $option;
     if (ref($valref) eq 'ARRAY') {
         my @values;
         foreach my $value (@$valref) {
-            my ($e, $w, $val, $msg) = checkOptionSingle($option, $value);
+            (my $e, my $w, $newopt, my $val, my $msg) = checkOptionSingle($option, $value);
             $errorcount += $e;
             $warningcount += $w;
             push @values, $val;
@@ -1785,13 +1795,13 @@ sub checkOptionArray($$) {
         }
         $valref = [@values];
     } else {
-        my ($e, $w, $val, $msg) = checkOptionSingle($option, $valref);
+        (my $e, my $w, $newopt, my $val, my $msg) = checkOptionSingle($option, $valref);
         $errorcount += $e;
         $warningcount += $w;
         $valref = $val;
         $message .= $msg;
     }
-    return ($errorcount, $warningcount, $valref, $message);
+    return ($errorcount, $warningcount, $newopt, $valref, $message);
 }  
 
 #---------------------------------------------------------------------------------------------------
@@ -1881,7 +1891,7 @@ sub readConfig ($$) {
                 } else {  # not boolean, so restore the 'no' prefix
                     $option = 'no' . $option if $+{no};
                 }
-                (my $e, my $w, $value, my $msg) = checkOptionSingle($option, $value);
+                (my $e, my $w, my $newopt, $value, my $msg) = checkOptionSingle($option, $value);
                 #debug "cOS returns $e, $w, '$value', '$msg'\n", 'rC';
                 if (!$AllOpt{$option}) {
                     printError "Unknown option '$option'" . confLine()
@@ -1909,12 +1919,12 @@ sub readConfig ($$) {
                     # Simple option -- just add it to the list
                     # First, print any warnings
                     printMsg $msg . confLine() if $w;
-                    if ($BoolOpt{$option}) {
+                    if ($BoolOpt{$option}) { # newopt not needed here
                         debug "restoring no?: option=$option value=$value\n", 'rC';
                         push @options, '--' . ($value ? '' : 'no') . $option;
                     } else {
-                        debug "storing option=$option value=$value\n", 'rC';
-                        push @options, "--$option";
+                        debug "storing option=$newopt($option) value=$value\n", 'rC';
+                        push @options, "--$newopt";
                         push @options, $value;
                     }
                     debug "$option = $value, now options=@options\n", 'rC';
@@ -1925,7 +1935,7 @@ sub readConfig ($$) {
                 my $option = fullName($+{option});
                 my $value = $+{value} // '';
                 debug "\n>>>>>> new context=$option  \n", 'rC';
-                (my $e, my $w, $value, my $msg) = checkOptionSingle($option, $value);
+                (my $e, my $w, undef, $value, my $msg) = checkOptionSingle($option, $value);
                 if (!$ValidContext{$option}) {
                     printError "Unknown context '$option' -- context skipped" . confLine();
                     $rc += 1;
@@ -2011,10 +2021,51 @@ sub mergeOpts (@) {
 #---------------------------------------------------------------------------------------------------
 
 sub checkInExcludeFrom ($) {
-    # Check that exclude-from and include-from files are readable
+    # Check that exclude-from, include-from, and filter files are readable.
+    # These options are now stored in the single ief option as an array.
     my $optR = shift;   # reference to an options hash (depending on context)
-    debug "optR: " . Dumper($optR), 'cIEF';
-    foreach my $opt ('exclude-from', 'include-from') {
+    #debug "optR: " . Dumper($optR), 'cIEF';
+    if (defined $optR->{ief}) {
+        my @tempief;
+        foreach my $entry (@{$optR->{ief}}) {  # $entry is e.g. "--include-from='inc.txt'"
+            # (the single quotes will always be there having been added by checkOptionSimple)
+            debug "entry: $entry\n", 'cIEF';
+            if ($entry =~ /(?<opt>include-from|exclude-from|filter)='(?<filename>.*)'$/) {
+                my $opt = $+{opt};
+                my $rule = '';
+                my $filename = $+{filename};
+                if ($opt eq 'filter') {
+                    # strip off the filter rule before the whitespace
+                    ($rule, $filename) = ($filename =~ /^(\S+\s+)(.*)$/)
+                }
+                my $file1 = safeAbsPath($filename);
+                my $file2 = rsyncMakeLocal($file1);
+                debug "file2 = $file2\n", 'cIEF';
+                if ($file2 eq '' or !-r $file2) {
+                    printWarning 
+                        "$opt file '$filename' is not readable -- it will be ignored\n", 1;
+                } else {
+                    push @tempief, "--$opt='$rule$file2'";
+                    if ($file1 ne $file2) {
+                        printNote "Remote $opt file '$filename'\n" .
+                            "has been copied to temporary local file '$file2'\n";
+                    }
+                }
+            } else {
+                # just keep the non-file option unchanged
+                push @tempief, $entry;
+            }
+            # copy the temporary array back to the real one
+            $optR->{ief} = \@tempief;
+        }
+    }
+}
+sub checkInExcludeFrom0 ($) {
+    # Check that exclude-from, include-from, and filter files are readable.
+    # These options are now stored in the single ief option as an array.
+    my $optR = shift;   # reference to an options hash (depending on context)
+    #debug "optR: " . Dumper($optR), 'cIEF';
+    foreach my $opt ('exclude-from', 'include-from', 'filter') {
         if (defined $optR->{$opt}) {
             debug "$opt array: " . Dumper(@{$optR->{$opt}}), 'cIEF';
             my @tempOpt;
@@ -2022,10 +2073,12 @@ sub checkInExcludeFrom ($) {
                 my $file2 = rsyncMakeLocal(safeAbsPath($file));
                 if ($file2 eq '' or !-r $file2) {
                     printWarning "$opt file '$file' is not readable -- it will be ignored\n", 1;
-                } elsif ($file ne $file2) {
-                    printNote "Remote $opt file '$file'\n" .
-                        "has been copied to temporary local file '$file2'\n";
-                        push @tempOpt, $file2;
+                } else {
+                    push @tempOpt, $file2;
+                    if ($file ne $file2) {
+                        printNote "Remote $opt file '$file'\n" .
+                            "has been copied to temporary local file '$file2'\n";
+                    }
                 }
             }
             # copy the temporary array back to the real one
@@ -2066,6 +2119,7 @@ sub processOptions () {
     $defopt{'dry-run'}      = 0;
     $defopt{'expire-old'}   = 0;          # expire oldest S's to make room, even when not unlimited
     $defopt{help}           = 0;
+    $defopt{ief}            = [];
     $defopt{latest}         = 0;
     $defopt{'latest-copy'}  = 0;
     $defopt{ldcount}        = 1;          # no. of link-dest options to create
@@ -2089,7 +2143,7 @@ sub processOptions () {
     $defopt{'email-test'}   = 0;
     # The following deliberately do not have defaults:
     #   template   source  logfile   config  destination  specs
-    #   include include-from exclude exclude-from
+    #   include include-from exclude exclude-from filter 
     #   remote-rsync-cmd  hostname
 
     my %confopt = ();   # config file options
@@ -2116,9 +2170,11 @@ sub processOptions () {
             'exclude-from=s@',
             'exclude=s@',
             'expire-old!',
+            'filter=s@',
             'hbest=i',
             'help!',
             'hostname=s',
+            'ief=s@',
             'include-from=s@',
             'include=s@',
             'latest!',
@@ -2176,13 +2232,20 @@ sub processOptions () {
 
     # Validate command-line options 
     foreach my $option (sort keys %cmdopt) {
-        my ($e, $w, $value, $msg) = checkOptionArray($option, $cmdopt{$option});
-        debug "cOA for $option returns $e, $w, '$value', '$msg'\n", 'pO';
+        my ($e, $w, $newopt, $value, $msg) = checkOptionArray($option, $cmdopt{$option});
+        debug "cOA for $option returns $e, $w, '$newopt', '$value', '$msg'\n", 'pO';
         $errorcount += $e;
         $warningcount += $w;
-        $cmdopt{$option} = $value;
         if ($msg) {
             printMsg "$msg (on command line)\n";
+        }
+        $cmdopt{$option} = $value;
+        if ($newopt ne $option) {
+            # currently only for ief which is an array option
+            # -- add the values to the 'new option' array
+            push @{$cmdopt{$newopt}}, @$value;
+            delete $cmdopt{$option};
+            debug "newopt $newopt is now " . Dumper($cmdopt{$newopt}) . "\n", 'pO';
         }
 #        # TEMP
 #        if ($option eq 'email-to' and !$value) {
@@ -2317,6 +2380,8 @@ sub processOptions () {
         $Opt{pspecs} = \@pspecs if !$e;
         $Opt{specs} = $rawspecs if !$e;
     }
+    # Check general-level include-from, exclude-from, and filter options
+    checkInExcludeFrom(\%Opt);
 
     # Sources, with extra options for each (there may be no sources at general level)
     if ($Opt{source}) {
@@ -2332,7 +2397,7 @@ sub processOptions () {
                 $warningcount += 1;
                 $src->{readable} = 0;
             }
-            # Check source-level include-from and exclude-from options
+            # Check source-level include-from, exclude-from, and filter options
             checkInExcludeFrom($src->{options});
             #
             return ++$errorcount, $warningcount if $Interrupted;
@@ -2363,7 +2428,7 @@ sub processOptions () {
                     $destInfo->{source}{$src->{location}}{result} = 'not readable';
                     $AnyDestFailed = 1;
                 }
-                # Check source-level include-from and exclude-from options
+                # Check source-level include-from, exclude-from, and filter options
                 checkInExcludeFrom($src->{options});
                 return ++$errorcount, $warningcount if $Interrupted;
             }
@@ -2392,7 +2457,7 @@ sub processOptions () {
                 $options->{pspecs} = \@pspecs if !$e;
                 $options->{specs} = $rawspecs if !$e;
             }
-            # Check destination-level include-from and exclude-from options
+            # Check destination-level include-from, exclude-from, and filter options
             checkInExcludeFrom($options);
         } else {
             printWarning "Destination '$dest->{location}' is not available\n" .
@@ -2452,11 +2517,6 @@ sub processOptions () {
     # --restart implies --snapshot and --min-interval=0
     $Opt{snapshot} = 1 if $Opt{restart};
     $Opt{'min-interval'} = 0 if $Opt{restart};
-    # Check general-level include-from and exclude-from options
-    checkInExcludeFrom(\%Opt);
-
-    # Options 'include' and 'exclude' (and the contents of include-from and exclude-from
-    # files) are not checked at all, just passed to rsync
 
     # $Opt{specs} is checked later
 
@@ -2467,13 +2527,21 @@ sub processOptions () {
 
 sub printableOption ($$;$) {
     # Return a printable version of an option and its value,
-    # with the option aligned right in the given width
+    # with the option aligned right in the given width.
+    # (arrays are dealt with by the caller)
     my $opt   = shift;
     my $val   = shift;
     my $width = shift // 0;
     debug "opt=$opt  val=$val  width=$width\n", 'prO';
     my $val2 = '';
-    # (arrays are dealt with by the caller)
+    # special case: ief
+    if ($opt eq 'ief') {
+        # 'value' is e.g. "--exclude-from='exc.file'"
+        if ($val =~ /--(.*)=(.*)/) {
+            return sprintf("%*s: %s", $width, $1, $2);
+        }
+    }
+    # other options
     if (ref($val) eq 'HASH') {
         # hash option -- just 'debug' so far
         if (keys %$val) {
@@ -2629,14 +2697,15 @@ Helpful options
 --verbose      0..9       ds amount of output displayed (default: 3) 
 --loglevel     0..9       ds amount of logging information (default: 3) 
 --[no]dry-run                make no actual changes (default: nodry-run) 
-Rsync options
+Rsync options (see rsync documentation)
 --rsync-cmd    file       ds location of the rsync programme (default: rsync) 
 --[no]compress            ds enable rsync compression for remote transfers 
                               (default: compress) 
---include      pattern   *ds rsync inclusion (see rsync documentation)
+--include      pattern   *ds rsync inclusion
 --include-from filename  *ds rsync inclusions (can be remote) 
 --exclude      pattern   *ds rsync exclusion
 --exclude-from filename  *ds rsync exclusions (can be remote)
+--filter 'rule filename' *ds rsync filter (can be remote)
 --bwlimit      n          ds bandwidth limit in kbps (default: 0) 
                               (set to 0 for no limit) 
 --rsync-opts   options    ds standard options to pass to rsync 
@@ -2665,7 +2734,8 @@ Advanced options
 --[no]delete              d  delete no-longer-required snapshots (default: delete) 
 --[no]delete-cp           d  delete even in current period (default: delete-cp)
 --[no]expire-old          d  delete oldest snapshots when disk is full (default: noexpire-old)
---hostname     host/FQDN  ds hostname or FQDN to use in snapshot path (default: source computer)
+--hostname     host/FQDN  ds hostname or FQDN of source to use in snapshot path 
+                              (default: source computer)
 --[no]latest              d  create a <template>-latest snapshot (default: nolatest)
 --[no]latest-copy         d  latest snapshot is a full copy (not linked) (default: nolatest-copy)
 --ldcount      n          d  number of --link-dest options to create (default: 1, max: 20) 
@@ -4778,7 +4848,7 @@ sub runRsync ($\@$) {
 
         # Override options for this source
         local %Opt = %Opt;
-        debug "override? " . Dumper($source), 'rR';
+        #debug "override? " . Dumper($source), 'rR';
         foreach my $srcOpt (keys %{$source->{options}}) {
             debug "overriding $srcOpt with '" . Dumper($source->{options}->{$srcOpt}) . "'\n", 'rR';
             $Opt{$srcOpt} = $source->{options}->{$srcOpt};
@@ -4788,13 +4858,16 @@ sub runRsync ($\@$) {
         my $verbose = '';
         $verbose = '--verbose' if $Opt{verbose} > 3;
 
-        # Add the include/exclude options -- there may be several of each
-        # Note that each file/directory is double-quoted to allow escapes to work
-        # (see stripQuotes()).
-        my $incExcOpts = '';
-        foreach my $opt (qw(include include-from exclude exclude-from)) {
-            $incExcOpts .= join(' ', map {"--$opt \"$_\""} @{$Opt{$opt}}) . ' ';
-        }
+#        # Add the include/exclude options -- there may be several of each
+#        # Note that each file/directory is double-quoted to allow escapes to work
+#        # (see stripQuotes()).
+#        my $incExcOpts = '';
+#        foreach my $opt (qw(include include-from exclude exclude-from)) {
+#            debug "adding ie options: " . join(' ', map {"--$opt \"$_\""} @{$Opt{$opt}}) . "\n", 'cIEF';
+#            $incExcOpts .= join(' ', map {"--$opt \"$_\""} @{$Opt{$opt}}) . ' ';
+#        }
+        # Add the filter options
+        my $iefOpts = join(' ', @{$Opt{ief}});
 
         my $destDir = $S{$snapshot}{fullname};    
         # Sub-directory within snapshot path is FQDN of remote source or
@@ -4824,8 +4897,14 @@ sub runRsync ($\@$) {
             while ($ld < $Opt{ldcount} and $s <= min($#S, 20)) {
                 debug "linking: s=$s S[s]=$S[$s] S{S[s]}{name}=$S{$S[$s]}{name}\n", 'rR';
                 $linkdest .= "--link-dest='../../$S{$S[$s]}{name}/$subDir' ";
-                debug "sAvBytes=$sAvBytes   this s=$S{$S[$s]}{totbytes}\n", 'rR';
-                $ld += 1 if !$S{$S[$s]}{unfinished} and ($S{$S[$s]}{totbytes} > $sAvBytes*0.3);
+                #debug "sAvBytes=$sAvBytes   this totbytes=" . $S{$S[$s]}{totbytes} || 'unset' . "\n", 'rR';
+                # count towards the total if...
+                if (!$S{$S[$s]}{unfinished}                 or     # ...its a finished snapshot or
+                    (defined($S{$S[$s]}{totbytes})      and        # ...(size is defined and
+                     ($S{$S[$s]}{totbytes} > $sAvBytes*0.3))   ) { # ... size is big enough)
+                    debug "snapshot $S{$S[$s]}{name} included in count back\n", 'rR';
+                    $ld += 1 
+                }
                 $s += 1;
             }
         }
@@ -4847,7 +4926,7 @@ sub runRsync ($\@$) {
         # Note that rsync-opts and rsync-xopts are put first -- 
         # our own required options will override the user's
         my $args = "$Opt{'rsync-opts'} $Opt{'rsync-xopts'} " .
-            "$verbose $linkdest $incExcOpts $compression " . 
+            "$verbose $linkdest $iefOpts $compression " . 
             "$bwlimit --relative --stats $rsyncPath '$location' '$destDir'";
 
         my $retriesD = @expirableSnapshots;        # retries after deleting to make space 
@@ -4890,14 +4969,15 @@ sub runRsync ($\@$) {
                 #* timed out -- continue with other sources/destinations
                 #               which may use a different route
                 if ($remoteDest) {
-                    # lost connection to remote destination 
+                    # lost connection to remote destination -- skip any other sources
                     printError "rsync timed out: probably lost connection to destination\n";
                     $lostDest = 1;
                     last SOURCE;
                 } elsif ($remoteSource) {
+                    # lost connection to remote source -- keep trying other sources
                     printError "rsync timed out: probably lost connection to source\n";
                 } else {
-                    # local/local rsync timed out -- why would that happen?
+                    # local-to-local rsync timed out -- why would that happen?
                     # - perhaps when using NFS, for example.
                     printError "rsync timed out\n";
                 }
@@ -5000,6 +5080,7 @@ sub runRsync ($\@$) {
             }
 
             debug "No more tries\n", 'rR' if $keepTrying <= 0;
+
         } # while keep trying for this source
 
         if ($deletions) {
@@ -5282,7 +5363,7 @@ sub systemCall ($$$$;$$) {
         my $outputStarted = 0;
         while (<CATCHOUT>) {
             if (!$outputStarted) {
-                printlog "------- $cmd output starts\n", $stdoutLevel unless $stdoutRef;
+                printlog "------- '$cmd' output starts\n", $stdoutLevel unless $stdoutRef;
                 $outputStarted = 1;
             }
             # intercept rsync's stats
@@ -5320,7 +5401,7 @@ sub systemCall ($$$$;$$) {
             }
         }
         if ($outputStarted) {
-            printlog "------- $cmd output ends\n", $stdoutLevel unless $stdoutRef;
+            printlog "------- '$cmd' output ends\n", $stdoutLevel unless $stdoutRef;
         }
         waitpid($pid, 0);
         $rc = $?;
@@ -5330,8 +5411,8 @@ sub systemCall ($$$$;$$) {
         $outputStarted = 0;
         while (<CATCHERR>) {
             if (!$outputStarted) {
-                #printlog "------- $cmd errors start\n", $stderrLevel unless $stderrRef;
-                printError "------- $cmd errors start\n" unless $stderrRef;
+                #printlog "------- '$cmd' errors start\n", $stderrLevel unless $stderrRef;
+                printError "------- '$cmd' errors start\n" unless $stderrRef;
                 $outputStarted = 1;
             }
             # scan for specific errors (see %ErrorCodes)
@@ -5359,8 +5440,8 @@ sub systemCall ($$$$;$$) {
             }
         }
         if ($outputStarted) {
-            #printlog "------- $cmd errors end\n", $stderrLevel unless $stderrRef;
-            printError "------- $cmd errors end\n" unless $stderrRef;
+            #printlog "------- '$cmd' errors end\n", $stderrLevel unless $stderrRef;
+            printError "------- '$cmd' errors end\n" unless $stderrRef;
         }
     }
     if ($rc == -1) {
