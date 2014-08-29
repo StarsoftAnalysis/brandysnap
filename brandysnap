@@ -81,7 +81,7 @@ use Data::Dumper;   # only for development and debugging
 
 my $Win = 0;
 my $Cygwin = 0;
-print "OS=$^O\n";
+#print "OS=$^O\n";
 # Don't forget: $^O is the OS Perl was compiled for, not what it's running on.
 if ($^O =~ /Win/) { 
     $Win = 1;  # TODO if /Win/, look for cygwin environment
@@ -1012,7 +1012,7 @@ sub emailSend ($$) {
     # TODO W7 not test at all yet
     my $subject = shift;
     my $body    = shift;
-    debug "email-to="Opt{'email-to'} 
+    #debug "email-to="Opt{'email-to'} 
     debug "emailSend -- no email-to", 'eS' if !$Opt{'email-to'};
     return 0 if !$Opt{'email-to'};
     debug "email-to=@{$Opt{'email-to'}} body=$body\n", 'eS';
@@ -2152,7 +2152,7 @@ sub checkInExcludeFrom ($) {
                     # strip off the filter rule before the whitespace
                     ($rule, $filename) = ($filename =~ /^(\S+\s+)(.*)$/)
                 }
-                my $file1 = safeAbsPath($filename);
+                my $file1 = absPath($filename);
                 my $file2 = rsyncMakeLocal($file1);
                 debug "file2 = $file2\n", 'cIEF';
                 if ($file2 eq '' or !-r $file2) {
