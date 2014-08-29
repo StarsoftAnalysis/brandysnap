@@ -133,7 +133,11 @@
 .\" ========================================================================
 .\"
 .IX Title "BRANDYSNAP 1"
+<<<<<<< HEAD
 .TH BRANDYSNAP 1 "2013-11-21" "perl v5.18.1" "User Contributed Perl Documentation"
+=======
+.TH BRANDYSNAP 1 "2013-12-24" "perl v5.18.1" "User Contributed Perl Documentation"
+>>>>>>> master
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -151,14 +155,14 @@ brandysnap \-\-conf brandysnap.conf [\s-1OTHER OPTIONS...\s0]
 .IX Header "DESCRIPTION"
 .Vb 3
 \& This is part of the brandysnap documentation.
-\& Copyright &copy; 2011\-2013  Chris Dennis  chris@starsoftanalysis.co.uk
+\& Copyright (c) 2011\-2013  Chris Dennis  chris@starsoftanalysis.co.uk
 \& See the file fdl\-1.3.txt for copying conditions.
 .Ve
 .PP
 Brandysnap is (yet another) script that uses rsync to create snapshot backups of files and 
 directories.
 .PP
-It is still being developed, and should be considered 'alpha' software.  
+It is still being developed, and should be considered 'beta' software.  
 Use it at your own risk!
 On the other hand, it's getting better: the author already uses it 'in production'.
 .PP
@@ -448,7 +452,7 @@ Only certain options are valid within each context.  A destination context can c
 \&        hbest dbest wbest mbest ybest
 \&        safe calendar strict
 \&        source template specs
-\&        include include\-from exclude exclude\-from   
+\&        include include\-from exclude exclude\-from filter
 \&        snapshot delete delete\-cp
 \&        weekstart
 \&        rsync\-cmd rsync\-opts rsync\-xopts remote\-rsync\-cmd
@@ -465,7 +469,7 @@ A source context can contain these options:
 .PP
 .Vb 7
 \&        rsync\-cmd rsync\-opts rsync\-xopts remote\-rsync\-cmd
-\&        include include\-from exclude exclude\-from
+\&        include include\-from exclude exclude\-from filter
 \&        bwlimit
 \&        compress restart
 \&        allow\-restart timeout\-retries
@@ -657,7 +661,7 @@ These two options are passed through to rsync unchecked and unchanged.
 See the rsync documentation for details.  (default: none)
 .IP "\fBinclude-from\fR/\fBexclude-from \f(BIfilename\fB\fR *" 4
 .IX Item "include-from/exclude-from filename *"
-The filenames are checked: if the file exists and is readable, the option is passed on to rsync (but
+The filename is checked: if the file exists and is readable, the option is passed on to rsync (but
 the contents of the file are not checked).
 .Sp
 These files can be remote, so that they can be kept on the same computer
@@ -667,6 +671,11 @@ as the source they refer to.  For example:
 \& source:        fred@host1:/home/fred
 \& exclude\-from:  fred@host1:/home/fred/brandysnap.exclusions
 .Ve
+.Sp
+See the rsync documentation for details.  (default: none)
+.IP "\fBfilter\fR \fIrule filename\fR *" 4
+.IX Item "filter rule filename *"
+The filter option is passed to rsync and checked in the same way as for include-from and exclude-from.
 .Sp
 See the rsync documentation for details.  (default: none)
 .IP "\fBbwlimit\fR <n>" 4
@@ -876,7 +885,11 @@ Brandysnap ignores 'minor' errors from rsync, which includes errors regarding pe
 that there are no 'Permission denied' messages.  If there are, you may need to run brandysnap as root \*(-- see xxx.
 .SH "KNOWN ISSUES"
 .IX Header "KNOWN ISSUES"
-As of 28 October October version 0.2.16, the following issues and bugs are known.
+As of 23 December 2013 and version 0.2.18, the following issues and bugs are known.
+.IP "\(bu" 4
+On the command line, rsync options \-\-include, \-\-exclude, \-\-include\-from, \-\-exclude\-from, and \-\-filter are grouped together, rather
+than preserving their order.  If you need to specify complex
+include/exclude/filter rules, put them in the configuration file.
 .IP "\(bu" 4
 Under certain circumstances, rsync can fail if the source 
 contains files that are hard-linked together

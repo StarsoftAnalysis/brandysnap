@@ -1,6 +1,17 @@
 Changelog for brandysnap
 ========================
 
+0.2.18  23/12/2013:w
+* Added --filter option -- see documentation.
+* Reworked all rsync include/exclude/filter options to keep them in
+  the same order as specified.  Any such option in a context overrides
+  all of them in the previous context.
+* Fixed bugs:
+  - emailSend had the test backwards!
+  - don't delete a failed snapshot if we've restarted
+  - mark snapshot as restartable after a timeout (some data may have been
+    copied)
+
 0.2.17	6/11/2013
 * Added --latest-copy option -- see documentation.
 * include-from and exclude-from files are now checked for readability.
