@@ -7,7 +7,7 @@
 <link rev="made" href="mailto:" />
 </head>
 
-<body style="background-color: white">
+<body>
 
 
 
@@ -94,6 +94,8 @@
 <p>One of the features of brandysnap is that it uses rsync to do all the work, even for deleting old snapshots locally etc. That means that, if you need root access to create the snapshot maintaining ownership and permissions, the script only needs sudo access for rsync, not for any other command nor for the script itself. (e.g. use <b>--rsync-cmd = &#39;sudo rsync&#39;</b> and <b>--remote-rsync-cmd = &#39;sudo rsync&#39;</b> to avoid the need for passwords [need more explanation here])</p>
 
 <p>Brandysnap has been developed on Linux. It is written in Perl and uses a selection of fairly standard modules (all available in Ubuntu repositories, and no doubt elsewhere too). It relies on hard links [see ...] and will only work properly when creating snapshots on a filing system that can handle hard links, such as ext3 or ext4 [and others...].</p>
+
+<p>Starting with version 0.2.19, Brandysnap can also run under Cygwin on Windows. Please note that this has not been extensively tested yet.</p>
 
 <p>Lots of snapshots don&#39;t make a file more secure: if the file hasn&#39;t changed, and is the same in all snapshots, then it is only stored once on the disk. If it gets corrupted for any reason, then it will be corrupted in all snapshots. (If the file is DELETED from one snapshot, it will still exist in the others, because of the way hard links work.) Think of the whole set of snapshots as one backup, with multiple versions of files that have changed.</p>
 
@@ -800,7 +802,7 @@
 
 <h2 id="Interrupt-handling">Interrupt handling</h2>
 
-<p>Brandysnap is designed to be robust: if it receives an interrupt signal, for example if the computer is shutting down, or the user has pressed ctrl-C, while rsync is running, it traps the signal and stops cleanly, deleting any partially completed snapshot if possible.</p>
+<p>Brandysnap is designed to be robust: if it receives an interrupt signal, for example if the computer is shutting down, or the user has pressed ctrl-C, while rsync is running, it traps the signal and stops cleanly.</p>
 
 <h2 id="Other-notes">Other notes</h2>
 
@@ -813,19 +815,16 @@
 
 <h1 id="KNOWN-ISSUES">KNOWN ISSUES</h1>
 
-<p>As of 23 December 2013 and version 0.2.18, the following issues and bugs are known.</p>
+<p>As of 29 August 2014 and version 0.2.19, the following issues and bugs are known.</p>
 
 <ul>
 
 <li><p>On the command line, rsync options --include, --exclude, --include-from, --exclude-from, and --filter are grouped together, rather than preserving their order. If you need to specify complex include/exclude/filter rules, put them in the configuration file.</p>
 
 </li>
-<<<<<<< HEAD
-=======
 <li><p>Under certain circumstances, rsync can fail if the source contains files that are hard-linked together and for which you do not have read permission. This is fixed in rsync 3.0.9 and later. You can get round it by specifying <b>--rsync-opts</b> with the usual options but omitting <b>--hard-links</b> at the cost of using more disk space.</p>
 
 </li>
->>>>>>> master
 <li><p>The fmtRange routine uses Date::Manip::Delta, which insists that February is four weeks and not one month. There may be other similar cosmetic irritations.</p>
 
 </li>

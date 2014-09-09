@@ -47,14 +47,14 @@ each site.
 * The things it doesn't do are compression and deduplication on the destination.
 There are no plans to include those features: they belong in the filing system.
 btrfs, for example, already includes compression, and may do deduplication one day.
-Nor does it do encryption.
+Nor does Brandysnap do encryption.
 
 Requirements
 ------------
 
 Brandysnap has been developed on and runs on Linux.
 I have heard that it also runs on Mac OS X (at least a previous version did).  Work to let 
-it run on Windows in the Cygwin environment is under way.
+it run on Windows in the Cygwin environment is under way, and is included from version 0.2.19.
 
 It requires Perl 5 version 5.10.1 or later, and the following non-core modules:
 
@@ -106,8 +106,8 @@ of [other alternatives](http://www.lbackup.org/alternatives).
 
 **************************************************************
 This is part of the brandysnap documentation.<br>
-Copyright &copy; 2011-2013  Chris Dennis  chris@starsoftanalysis.co.uk<br>
+Copyright &copy; 2011-2014  Chris Dennis  chris@starsoftanalysis.co.uk<br>
 See the file fdl-1.3.txt for copying conditions.
 **************************************************************
  
-Last modified: 28 October 2013
+Last modified: 29 August 2014

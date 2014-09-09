@@ -1,34 +1,8 @@
 #!/usr/bin/perl
-# This is the portable version.
-# Forked from 0.2.5 to hack on Windows -- commented as 'W7'
-#   Nov 2013 -- 0.2.17 merged in to this 'portable' branch
-# To do:
-#   * can we do hard links!?    yes   
-#   * IMPORTANT: detect non-NTFS, and warn re lack of hard links
-#   * different defaults?
-#   * is blocksize 512?
-#   * sourceDir()
-#   * tests for remoteness
-
-# Assumptions / limitations
-#
-#
-# Known bugs and caveats:
-#  - only works on NTFS -- FAT lacks hard links; other filing systems
-#    may not work either.
-#  - a remote host with a single-letter hostname will be treated as
-#    a local drive letter.  If you've really got single-letter hosts,
-#    use 'rsync://C/path' instead of 'C:/path'.
-#  - conversely, a local drive-letter+pathname combination without
-#    a slash or backslash, will be treated as a remote host.
-#    So use 'P:/full/path' instead of 'P:path'
-#    (the latter would be foolish in any case, because it would vary
-#    according to whatever happened to be the current working directory
-#    on drive P:)
 # 
 #########################################################################
 # brandysnap: rsync-based backup snapshot creation and management       #
-# Copyright (C) 2011-2013 Chris Dennis, chris@starsoftanalysis.co.uk    #
+# Copyright (C) 2011-2014 Chris Dennis, chris@starsoftanalysis.co.uk    #
 #                                                                       #
 # This program is free software: you can redistribute it and/or modify  #
 # it under the terms of the GNU General Public License as published by  #
@@ -51,6 +25,28 @@
 # Formatting this file -- see the 'vim:' line at the end,
 # and limit lines to 100 characters if possible.
 # Keep it neat and tidy!
+
+# This version now includes code to work on Cygwin
+# which has not been extensively tested yet.
+# To do:
+#   * IMPORTANT: detect non-NTFS, and warn re lack of hard links
+#   * different defaults?
+#   * is blocksize 512?
+#   * sourceDir()
+#   * tests for remoteness
+#
+# Known bugs and caveats:
+#  - only works on NTFS -- FAT lacks hard links; other filing systems
+#    may not work either.
+#  - a remote host with a single-letter hostname will be treated as
+#    a local drive letter.  If you've really got single-letter hosts,
+#    use 'rsync://C/path' instead of 'C:/path'.
+#  - conversely, a local drive-letter+pathname combination without
+#    a slash or backslash, will be treated as a remote host.
+#    So use 'P:/full/path' instead of 'P:path'
+#    (the latter would be foolish in any case, because it would vary
+#    according to whatever happened to be the current working directory
+#    on drive P:)
 
 use 5.10.1;         
 use strict;
@@ -120,7 +116,7 @@ $SIG{__DIE__} = sub { Carp::confess(@_) };
 # $Interrupted becomes true if the script has been interrupted
 my $Interrupted = '';
 # Set the process group so that we can tidy up child processes:
-# What's the W7 way for this?: 
+# What's the Cygwin way for this?: 
 if (!$Cygwin) {
     setpgrp(0, 0);
 }
@@ -145,7 +141,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-our $VERSION = "0.2.18-next";
+our $VERSION = "0.2.19";
 
 # A copy of @ARGV before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -242,6 +238,7 @@ my %ErrorCodes = (
     'interrupted' => 'interrupted',
     'timedout'    => 'connection timed out',
     'permission'  => 'permission denied',
+    'readonly'    => 'read-only file system',
 );
 
 # Regexp used for parsing a spec, e.g. 1d or 1d7 or 0-2d31
@@ -605,7 +602,6 @@ my @Suffix = ('B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB', 'EiB', 'ZiB', 'YiB');
         # see http://physics.nist.gov/cuu/Units/binary.html
 sub bytes ($) {
     # Simple routine for displaying a file size
-    # Return '0 B' if size is zero or less
     # (it could be -1 for a new snapshot during a dry-run)
     my $n = shift;
     return '' if (!defined $n) or ($n eq '') or ($n < 0);
@@ -618,7 +614,7 @@ sub bytes ($) {
         $mult += 1;
         #debug "n=$n mult=$mult\n", 'bytes';
     }
-    my $dp = 0;
+    my $dp = 0; # number of decimal places
     if ($mult > 0) {
         # minimal code for displaying 3 significant figures:
         my $intn = int($n + 0.5);   # $n is always positive
@@ -639,7 +635,7 @@ sub bytes ($) {
 sub superchomp ($) {
     # Chomp that also removes trailing \015 -- why is this needed??
     # - because in cygwin \n is just \012, but files (such as the
-    # configuration file) have probably been edited with Windows' \015\012 newlines
+    # configuration file) have possibly been edited with Windows' \015\012 newlines
     # That doesn't explain why this is only need for 'spec' though.
     foreach (@_) {
         s/\r?\n?$//;
@@ -1009,7 +1005,7 @@ sub fullName ($) {
 sub emailSend ($$) {
     # Minimal email sending process: all the modules I could find are either
     # broken or too complex.  So this relies on the system having an email setup.
-    # TODO W7 not test at all yet
+    # TODO Cygwin: not tested at all yet
     my $subject = shift;
     my $body    = shift;
     #debug "email-to="Opt{'email-to'} 
@@ -2358,7 +2354,7 @@ sub processOptions () {
             'template=s',
             'test=i',
             'timeout-retries=i',
-            'verbose|verbosity=s',
+            'verbose=s',
             'version',
             'wbest=i',
             'weekstart=i',
@@ -2664,7 +2660,7 @@ sub processOptions () {
             }
         }
         if (!$somethingToDo) {
-            printError "All destination/source combinations are remote/remote -- " . 
+            printError "All destination/source combinations are remote<->remote -- " . 
                 "cannot continue\n";
             $errorcount += 1;
         }
@@ -3995,6 +3991,28 @@ sub getMatchingSnapshots ($$$$\@) {
 
     debug "ideals: @I total: " . @I . "\n", 'gMS';
 
+#  # Experimental: just get the score for each snapshot,
+#  # and choose the n best-scored ones
+#  !! I wish it were that simple
+#   my @scores;
+#   foreach my $s (0..$#S) {
+#       $scores[$s] = abs($I[$i] - $S[$s]) * $closeness[$s];
+#       if ($S{$S[$c]}{note}) {
+#           # Snapshot has a note -- treat it special:
+#           # - ignore badoffset
+#           # - reduce the score by a factor (this could be an option perhaps)
+#           # This makes the special snapshot more likely to be kept
+#           # (it won't actually be deleted anyway, but this effectively makes
+#           # a non-special adjacent snapshot more likely to be deleted)
+#           my $noteFactor = 2;
+#           debug "note for $S[$c] $S{$S[$c]}{name}: $score ... " . $score/$noteFactor, 'gMS';
+#           $scores{$s} /= $noteFactor;
+#       } else {
+#           # No note -- include badness score
+#           $scores{$s} += $badoffset[$c];
+#       }
+#   }
+
     # Generate all combinations of the ideal number of snapshots
     # out of the existing snapshots, then calculate a score for each combination
     # and choose the one with the best (lowest) score
@@ -4022,7 +4040,7 @@ sub getMatchingSnapshots ($$$$\@) {
                 # - reduce the score by a factor (this could be an option perhaps)
                 # This makes the special snapshot more likely to be kept
                 # (it won't actually be deleted anyway, but this effectively makes
-                # the non-special adjacent snapshot more likely to be deleted)
+                # a non-special adjacent snapshot more likely to be deleted)
                 my $noteFactor = 2;
                 debug "note for $S[$c] $S{$S[$c]}{name}: $score ... " . $score/$noteFactor, 'gMS';
                 $score /= $noteFactor;
@@ -4241,6 +4259,7 @@ sub getDeleteList (\@;$) {
 
 #===================================================================================================
 
+## FIXME this is obsolete
 sub findGoodPeriodsOld ($$$\@) {
     # Starting with period ($beg, $end) and working backwards in time, 
     # check for $count periods each with at least $freqmin snapshots.
@@ -5115,6 +5134,17 @@ sub runRsync ($\@$) {
                 $srcInfo->{result} = 'source not found';
             }
 
+            elsif (($rc == 23) and ($rc2 eq 'readonly')) {
+                #* file system has gone read-only
+                printError "The destination's file system has become read-only; " .
+                    "this problem must be correct before running $Script again.\n";
+                $keepTrying = 0;
+                $succeeded = 0;
+                $restartable = 0;
+                $srcInfo->{result} = 'readonly';
+                last SOURCE;
+            }
+
             elsif ($rsyncInterrupted ne '' or $rc2 eq 'interrupted') {
                 #* interrupted
                 printWarning "rsync was interrupted with signal '$rsyncInterrupted' -- " .
@@ -5598,6 +5628,8 @@ sub systemCall ($$$$;$$) {
                 $rc2 = 'timedout';
             } elsif (/Permission denied/i) {
                 $rc2 = 'permission';
+            } elsif (/Read-only file system/i) {
+                $rc2 = 'readonly';
             }
             # direct the output as required
             if (ref($stderrRef) eq 'ARRAY') {

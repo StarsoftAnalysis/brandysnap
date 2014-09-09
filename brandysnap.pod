@@ -62,6 +62,9 @@ fairly standard modules (all available in Ubuntu repositories, and no doubt else
 It relies on hard links [see ...] and will only work properly when creating snapshots 
 on a filing system that can handle hard links, such as ext3 or ext4 [and others...].
 
+Starting with version 0.2.19, Brandysnap can also run under Cygwin on Windows.  
+Please note that this has not been extensively tested yet.
+
 Lots of snapshots don't make a file more secure: if the file hasn't changed, and is the 
 same in all snapshots, then it is only stored once on the disk.  If it gets corrupted 
 for any reason, then it will be corrupted in all snapshots.  
@@ -814,8 +817,7 @@ That format is fixed -- it is used to identify snapshots; any directory that doe
 =head2 Interrupt handling
 
 Brandysnap is designed to be robust: if it receives an interrupt signal, for example if the computer
-is shutting down, or the user has pressed ctrl-C, while rsync is running, it traps the signal and stops cleanly, 
-deleting any partially completed snapshot if possible.
+is shutting down, or the user has pressed ctrl-C, while rsync is running, it traps the signal and stops cleanly. 
 
 =head2 Other notes
 
@@ -830,7 +832,7 @@ that there are no 'Permission denied' messages.  If there are, you may need to r
 
 =head1 KNOWN ISSUES
 
-As of 23 December 2013 and version 0.2.18, the following issues and bugs are known.
+As of 29 August 2014 and version 0.2.19, the following issues and bugs are known.
 
 =over
 

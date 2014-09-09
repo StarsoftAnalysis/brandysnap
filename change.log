@@ -1,7 +1,12 @@
 Changelog for brandysnap
 ========================
 
-0.2.18  23/12/2013:w
+0.2.19  9/9/2014
+* Incorporated Cygwin compatibility code
+* Fixed bugs:
+  - deal with destination file system becoming read-only
+
+0.2.18  23/12/2013
 * Added --filter option -- see documentation.
 * Reworked all rsync include/exclude/filter options to keep them in
   the same order as specified.  Any such option in a context overrides
