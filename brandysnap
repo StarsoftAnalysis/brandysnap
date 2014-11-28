@@ -4070,7 +4070,7 @@ sub getMatchingSnapshots ($$$$\@) {
     }
     #debug "ideals: @I total: " . @I . "\n", 'gMS';
 
-#    if ($Opt{debug}->{'test30'}) {
+    if ($Opt{debug}->{'test30'}) {
         # Experimental: another attempt
         # For each snapshot, get time to nearest snapshot
         # (BUT do we need to know WHICH ideal is nearest? No)
@@ -4135,8 +4135,8 @@ sub getMatchingSnapshots ($$$$\@) {
             'keepers'    => \@keepers, 
             'keeperssq'    => \@keeperssq) if ($Opt{debug}->{'gms'});
 
-    return @keepers;
-#    }
+        return @keepers;
+    }
 
     # Generate all combinations of the ideal number of snapshots
     # out of the existing snapshots, then calculate a score for each combination
