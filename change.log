@@ -1,12 +1,17 @@
 Changelog for brandysnap
 ========================
 
-0.2.19  9/9/2014
+0.2.20	28/11/14
+* Added --ldmin option
+* Fixed bugs:
+  - time-out errors not setting flags correctly -- fix use of 'last SOURCE'
+
+0.2.19	9/9/2014
 * Incorporated Cygwin compatibility code
 * Fixed bugs:
   - deal with destination file system becoming read-only
 
-0.2.18  23/12/2013
+0.2.18	23/12/2013
 * Added --filter option -- see documentation.
 * Reworked all rsync include/exclude/filter options to keep them in
   the same order as specified.  Any such option in a context overrides
@@ -28,7 +33,7 @@ Changelog for brandysnap
     (so that status still works etc.)
   - don't attempt to create 'latest' snapshot on a dry run.
 
-0.2.16  28/10/2013
+0.2.16	28/10/2013
 * Added --hostname option -- see documentation.
 * Added --latest option -- see documentation.
 * Added --timeout-retries option -- see documentation.

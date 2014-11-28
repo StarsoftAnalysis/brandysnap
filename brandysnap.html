@@ -304,7 +304,7 @@
         expire-old
         bwlimit latest latest-copy
         compress restart
-        allow-restart ldcount timeout-retries
+        allow-restart ldcount ldmin timeout-retries
         all-failed some-failed
         min-interval hostname
         verbose loglevel debug</code></pre>
@@ -709,7 +709,15 @@
 <dt id="ldcount-n"><b>ldcount <i>n</i></b></dt>
 <dd>
 
-<p>Specify the number of previous snapshots that rsync will search looking for identical files to hard-link to. Normally the default value of <b>1</b> is ideal. Set this value to <b>0</b> to turn off rsync&#39;s <b>--link-dest</b> option completely, but be aware that this will greatly increase the size of the new snapshot, and the time taken to create it (especially over the network). Values greater than <b>1</b> can be used in conjunction with [options yet to be implemented] to tune the behaviour of brandysnap. (default: <b>1</b>)</p>
+<p>Specify the number of previous snapshots that rsync will search looking for identical files to hard-link to. Normally the default value of <b>1</b> is ideal. Set this value to <b>0</b> to turn off rsync&#39;s <b>--link-dest</b> option completely, but be aware that this will greatly increase the size of the new snapshot, and the time taken to create it (especially over the network). Values greater than <b>1</b> can be used in conjunction with [options yet to be implemented] to tune the behaviour of brandysnap. (default: <b>1</b>) The count ignores unfinished snapshots, and snapshots that are too small, as defined by <b>--ldcount</b>.</p>
+
+</dd>
+<dt id="ldmin-0.0..1.0"><b>ldmin 0.0..1.0</b></dt>
+<dd>
+
+<p>Sets the minimum size of snapshots, as a proportion of the average of existing finished snapshots, that will be considered for hard-linking. See the <b>--ldcount</b> option above. (default: <b>0.0</b>)</p>
+
+<p>If you expect all your snapshots to be a similar size, with only a small proportion of that size changing between snapshots, then setting this to a fairly high value such as 0.8 will decrease the chances of wastefully resending lots of data.</p>
 
 </dd>
 <dt id="no-restart"><b>[no]restart</b></dt>

@@ -331,7 +331,7 @@ Only certain options are valid within each context.  A destination context can c
         expire-old
         bwlimit latest latest-copy
         compress restart
-        allow-restart ldcount timeout-retries
+        allow-restart ldcount ldmin timeout-retries
         all-failed some-failed
         min-interval hostname
         verbose loglevel debug
@@ -721,6 +721,18 @@ Normally the default value of B<1> is ideal.  Set this value to B<0> to turn off
 completely, but be aware that this will greatly increase the size of the new snapshot, and the time
 taken to create it (especially over the network).  Values greater than B<1> can be used in conjunction
 with [options yet to be implemented] to tune the behaviour of brandysnap. (default: B<1>)
+The count ignores unfinished snapshots, and snapshots that are too small, as defined
+by B<--ldcount>.
+
+=item B<ldmin 0.0..1.0>
+
+Sets the minimum size of snapshots, as a proportion of the average of existing finished snapshots,
+that will be considered for hard-linking.  See the B<--ldcount> option above.
+(default: B<0.0>)
+
+If you expect all your snapshots to be a similar size, with only a small proportion of that
+size changing between snapshots, then setting this to a fairly high
+value such as 0.8 will decrease the chances of wastefully resending lots of data.
 
 =item B<[no]restart>
 

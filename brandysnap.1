@@ -133,7 +133,7 @@
 .\" ========================================================================
 .\"
 .IX Title "BRANDYSNAP 1"
-.TH BRANDYSNAP 1 "2014-08-29" "perl v5.20.0" "User Contributed Perl Documentation"
+.TH BRANDYSNAP 1 "2014-11-27" "perl v5.20.1" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -458,7 +458,7 @@ Only certain options are valid within each context.  A destination context can c
 \&        expire\-old
 \&        bwlimit latest latest\-copy
 \&        compress restart
-\&        allow\-restart ldcount timeout\-retries
+\&        allow\-restart ldcount ldmin timeout\-retries
 \&        all\-failed some\-failed
 \&        min\-interval hostname
 \&        verbose loglevel debug
@@ -796,6 +796,17 @@ Normally the default value of \fB1\fR is ideal.  Set this value to \fB0\fR to tu
 completely, but be aware that this will greatly increase the size of the new snapshot, and the time
 taken to create it (especially over the network).  Values greater than \fB1\fR can be used in conjunction
 with [options yet to be implemented] to tune the behaviour of brandysnap. (default: \fB1\fR)
+The count ignores unfinished snapshots, and snapshots that are too small, as defined
+by \fB\-\-ldcount\fR.
+.IP "\fBldmin 0.0..1.0\fR" 4
+.IX Item "ldmin 0.0..1.0"
+Sets the minimum size of snapshots, as a proportion of the average of existing finished snapshots,
+that will be considered for hard-linking.  See the \fB\-\-ldcount\fR option above.
+(default: \fB0.0\fR)
+.Sp
+If you expect all your snapshots to be a similar size, with only a small proportion of that
+size changing between snapshots, then setting this to a fairly high
+value such as 0.8 will decrease the chances of wastefully resending lots of data.
 .IP "\fB[no]restart\fR" 4
 .IX Item "[no]restart"
 If a previous run of brandysnap was interrupted for any reason, use this option to re-do the same snapshot (simply by relying on rsync's ability to not copy files that have not changed).  Any files in the source that have changed since the previous run _will_ be updated.  If more than one destination is being used, rsync will be run for _all_ destinations, even if some of them completed successfully before.
