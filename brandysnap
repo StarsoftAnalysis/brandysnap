@@ -143,7 +143,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-our $VERSION = "0.2.20";
+our $VERSION = "0.2.20-next";
 
 # A copy of @ARGV before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -2967,6 +2967,23 @@ sub averageSnapshotBytes () {
 
 #---------------------------------------------------------------------------------------------------
 
+sub ldCountable ($$) {
+    # Return true if the snapshot counts for the purposes of ldcount
+    my $s        = shift;   # snapshot timestamp
+    my $sAvBytes = shift;
+    debug "sAvBytes=$sAvBytes   this totbytes=" . $S{$S[$s]}{totbytes} || 'unset' . "\n", 'ldC';
+    my $countable = 0;
+    if (!$S{$s}{unfinished}                            or               # ...its a finished snapshot or
+        (defined($S{$s}{totbytes})      and                  # ...(size is defined and
+         ($S{$s}{totbytes} > $sAvBytes*$Opt{'ldmin'}))   ) { # ... size is big enough)
+        debug "snapshot $S{$S[$s]}{name} included in count back\n", 'ldC';
+        $countable = 1;
+    }
+    return $countable;
+}
+
+#---------------------------------------------------------------------------------------------------
+
 sub status ($\@) {
     # Print a status report on existing snapshots for a single destination
     my $dest   = shift;
@@ -4942,12 +4959,12 @@ sub getExpirableSnapshots ($\@$) {
     my @cSpecs = @{(shift)};
     my $now    = shift;
 
-    my @S = rsort keys %S;
-    debug "\@S=@S specsR=$specsR \$now=$now\n", 'gES';
+    my @S = rsort keys %S;  # Gives most recent ones first
+    debug "\@S=@S specsR=@$specsR \$now=$now\n", 'gES';
     my @expirable;
     # The current snapshot and any that we're linking to
     # are never expirable, so shift them off the local copy of @S
-    # # FIXME this doesn't take --ldmin into account.  nor unfinished snapshots
+    # # FIXME this doesn't take --ldmin into account.  nor unfinished snapshots within ldcount range
     for my $i (0..$Opt{ldcount}) {
         shift @S; 
     }
@@ -4955,30 +4972,34 @@ sub getExpirableSnapshots ($\@$) {
         debug "no \@S, so no expirables\n", 'gES';
         return @expirable;
     }
-    # Put unfinished snapshots on the list first
-    foreach my $s (@S) {
-        if ($S{$s}{unfinished}) {
-            unshift @expirable, $s;
+    # Put unfinished snapshots on the list first (oldest first)
+    for (my $i = $#S; $i >= 0; $i--) {
+        if ($S{$S[$i]}{unfinished}) {
+            push @expirable, $S[$i];
+            # and remove from @S
+            splice @S, $i, 1;
         }
     }
     debug "expiring unfinisheds: " . join(' ', map {time2stamp($_)} @expirable) . "\n", 'gES';
-    @S = rsort keys %S;  # now with no unfinished snapshots
+    # WTF!!! FIXME   @S = rsort keys %S;  # now with no unfinished snapshots
     # Return if there are none left
     return @expirable if !@S;
     if ($Opt{'expire-old'}) {
         # Any snapshot is expirable so return @S in oldest-first order.
+            # FIXME not if has an extra bit on the label
         push @expirable, reverse @S;
         debug "expire-old: they're all expirable EXCEPT the first one(s): \n", 'gES';
         debug "       " . join(' ', map {time2stamp($_)} @expirable) . "\n", 3;
         return @expirable;
     }
+    # Pick out snapshots in the 'unlimited' cSpec, which is always at the end
     my $lastSpec = @$specsR[-1];
     if ($lastSpec->{count} == UNLIMITED) {
         my $lastraw = $lastSpec->{rawspec};
         my $i = $#cSpecs;
-        # Pick out snapshots in the 'unlimited' cSpec, which is always at the end
         while (($i >= 0) and ($cSpecs[$i]->{label} =~ /^($lastraw)/)) {
             debug "lastC is unlimited, getting expirables\n", 'gES'; 
+            # FIXME not if has an extra bit on the label
             unshift @expirable, snapshotsInPeriod(@S, $cSpecs[$i]->{beg}, $cSpecs[$i]->{end}, 1);
             $i -= 1;
         }
@@ -5112,12 +5133,11 @@ sub runRsync ($\@$) {
     my $dest               = shift; 
     my @expirableSnapshots = @{(shift)};
     my $snapshot           = shift;
+    my $sAvBytes           = shift;  # average size of previous snapshots
     my @S = rsort keys %S;
     debug "\@eS='@expirableSnapshots' snapshot " . dumpSnapshot($snapshot) . ")\n", 'rR';
 
     my $remoteDest = remote($dest);
-
-    my $sAvBytes = averageSnapshotBytes();  # average size of previous snapshots
 
     my $succeeded = 1;          # stays true if ALL sources are copied successfully
     my $sourcesSucceeded = 0;   # count of successfully backed-up sources
@@ -5203,12 +5223,13 @@ sub runRsync ($\@$) {
             while ($ld < $Opt{ldcount} and $s <= min($#S, 20)) {
                 debug "linking: s=$s S[s]=$S[$s] S{S[s]}{name}=$S{$S[$s]}{name}\n", 'rR';
                 $linkdest .= "--link-dest='../../$S{$S[$s]}{name}/$subDir' ";
-                debug "sAvBytes=$sAvBytes   this totbytes=" . $S{$S[$s]}{totbytes} || 'unset' . "\n", 'rR';
-                # count towards the total if...
-                if (!$S{$S[$s]}{unfinished}                 or               # ...its a finished snapshot or
-                    (defined($S{$S[$s]}{totbytes})      and                  # ...(size is defined and
-                     ($S{$S[$s]}{totbytes} > $sAvBytes*$Opt{'ldmin'}))   ) { # ... size is big enough)
-                    #($S{$S[$s]}{totbytes} > $sAvBytes*0.3))   ) { # ... size is big enough)
+#                debug "sAvBytes=$sAvBytes   this totbytes=" . $S{$S[$s]}{totbytes} || 'unset' . "\n", 'rR';
+#                # count towards the total if...
+#                if (!$S{$S[$s]}{unfinished}                 or               # ...its a finished snapshot or
+#                    (defined($S{$S[$s]}{totbytes})      and                  # ...(size is defined and
+#                     ($S{$S[$s]}{totbytes} > $sAvBytes*$Opt{'ldmin'}))   ) { # ... size is big enough)
+#                    #($S{$S[$s]}{totbytes} > $sAvBytes*0.3))   ) { # ... size is big enough)
+                if (ldCountable($S[$s], $sAvBytes) {
                     debug "snapshot $S{$S[$s]}{name} included in count back\n", 'rR';
                     $ld += 1 
                 }
@@ -5606,9 +5627,10 @@ sub processDestination ($) {
             # note that it's not marked as failed
             $AllDestsFailed = 0;
         } else {
-            my @expirableSnapshots = getExpirableSnapshots($Opt{pspecs}, @cSpecs, $now);
+            my $sAvBytes = averageSnapshotBytes();
+            my @expirableSnapshots = getExpirableSnapshots($Opt{pspecs}, @cSpecs, $now, $sAvBytes);
             # Run rsync to create the new snapshot
-            (my $rsyncOK, $lostDest) = runRsync($dest, @expirableSnapshots, $now);  
+            (my $rsyncOK, $lostDest) = runRsync($dest, @expirableSnapshots, $now, $sAvBytes);  
             if ($rsyncOK) { 
                 $AllDestsFailed = 0;
                 # Create a 'latest' snapshot if required
