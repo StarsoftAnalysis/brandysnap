@@ -2952,16 +2952,19 @@ sub averageSnapshotBytes () {
     # Get average size of previous snapshots
     my ($count, $totsize) = (0,0);
     foreach my $s (sort keys %S) {
+	debug "aSB considering snapshot $s $S{$s}{name}", 'ldcount';
         if (defined $S{$s}{totbytes} and 
             $S{$s}{totbytes} > 0     and   # only count non-empty ones
             !$S{$s}{unfinished}          ) # and only finished ones
         {
+	    debug "aSB size is " . bytes($S{$s}{totbytes}), 'ldcount';
             $count += 1;
             $totsize += $S{$s}{totbytes};
         }
     }
     my $sAvBytes = 0;
     $sAvBytes = round($totsize / $count) if $count > 0;
+    debug "aSB totsize=" . bytes($totsize) . " count=$count sAvBytes=" . bytes($sAvBytes), 'ldcount'; 
     return $sAvBytes;
 }
 
@@ -5217,24 +5220,36 @@ sub runRsync ($\@$) {
         # But don't do any of this in --dry-run mode because the new directory won't
         # have been created from which we're creating the relative path.
         my $linkdest = '';
-        if (!$Opt{'dry-run'}) {
-            my $ld = 0; # number of 'good' link-dests created
-            my $s = 1;  # start at snapshot 1 (i.e. skip the 0th one that we're creating now)
-            while ($ld < $Opt{ldcount} and $s <= min($#S, 20)) {
-                debug "linking: s=$s S[s]=$S[$s] S{S[s]}{name}=$S{$S[$s]}{name}\n", 'rR';
+        my $ld = 0; # number of 'good' link-dests created
+        my $s = 1;  # start at snapshot 1 (i.e. skip the 0th one that we're creating now)
+        debug '$sAvBytes * $Opt{\'ldmin\'} is ' . bytes($sAvBytes*$Opt{'ldmin'}), 'ldcount';
+        while ($ld < $Opt{ldcount} and $s <= min($#S, 20)) {
+            debug "linking: s=$s S[s]=$S[$s] S{S[s]}{name}=$S{$S[$s]}{name}\n", 'ldcount';
+            if (!$Opt{'dry-run'}) {
                 $linkdest .= "--link-dest='../../$S{$S[$s]}{name}/$subDir' ";
-#                debug "sAvBytes=$sAvBytes   this totbytes=" . $S{$S[$s]}{totbytes} || 'unset' . "\n", 'rR';
-#                # count towards the total if...
-#                if (!$S{$S[$s]}{unfinished}                 or               # ...its a finished snapshot or
-#                    (defined($S{$S[$s]}{totbytes})      and                  # ...(size is defined and
-#                     ($S{$S[$s]}{totbytes} > $sAvBytes*$Opt{'ldmin'}))   ) { # ... size is big enough)
-#                    #($S{$S[$s]}{totbytes} > $sAvBytes*0.3))   ) { # ... size is big enough)
-                if (ldCountable($S[$s], $sAvBytes) {
-                    debug "snapshot $S{$S[$s]}{name} included in count back\n", 'rR';
-                    $ld += 1 
-                }
-                $s += 1;
+            }   
+            if (defined($S{$S[$s]})) {
+                debug "this totbytes=" . bytes($S{$S[$s]}{totbytes}), 'ldcount';
+            } else {
+                debug "this totbytes=undefined", 'ldcount';
             }
+            # Extra tests to analyse the reason
+            debug "unfinished", 'ldcount' if $S{$S[$s]}{unfinished};
+            if (!defined($S{$S[$s]}{totbytes})) {
+                debug "size is undefined", "ldcount";
+            } elsif ($S{$S[$s]}{totbytes} < $sAvBytes*$Opt{'ldmin'}) {
+                debug "size is less than " . bytes($sAvBytes*$Opt{'ldmin'}), 'ldcount';
+            }
+            # count towards the total if...
+            if ($S{$S[$s]}{unfinished}                    or      # ...its an unfinished snapshot or
+                !defined($S{$S[$s]}{totbytes})            or      # ...size is undefined or
+                $S{$S[$s]}{totbytes} < $sAvBytes*$Opt{'ldmin'}) { # ...size is not big enough
+                debug "snapshot $S{$S[$s]}{name} linked but not counted\n", 'ldcount';
+            } else {
+                debug "snapshot $S{$S[$s]}{name} included in count back\n", 'ldcount';
+                $ld += 1 
+            }
+            $s += 1;
         }
 
         # Set compression option
