@@ -434,6 +434,7 @@ sub printit ($;$) {
     my $lnl = prechomps(\$text);    # no. of leading newlines
     my $tnl = chomps(\$text);       # no. of trailing newlines
     $lnl -= max($prevnl-1, 0);      # merge newlines from previous line
+    $lnl = 0 if $lnl < 0;
     if ($tnl == 0) {
         # text is not complete -- just buffer it
         $buffer .= "\n"x$lnl . $text;
@@ -460,6 +461,7 @@ sub logit ($;$) {
     my $lnl = prechomps(\$text);    # no. of leading newlines
     my $tnl = chomps(\$text);       # no. of trailing newlines
     $lnl -= max($prevnl-1, 0);      # merge newlines from previous line
+    $lnl = 0 if $lnl < 0;
     if ($tnl == 0) {
         # text is not complete -- just buffer it
         $buffer .= "\n"x$lnl . $text;
@@ -2948,24 +2950,27 @@ sub longestName () {
 
 #---------------------------------------------------------------------------------------------------
 
-sub averageSnapshotBytes () {
-    # Get average size of previous snapshots
+sub minimumSnapshotBytes () {
+    # Get minimum size of a snapshot suitable for being a linkdest as the 
+    # average previous snapshots multiplied by the ldmin option
     my ($count, $totsize) = (0,0);
-    foreach my $s (sort keys %S) {
-	debug "aSB considering snapshot $s $S{$s}{name}", 'ldcount';
+    foreach my $s (rsort keys %S) {
+	    debug "considering snapshot $s $S{$s}{name}", 'mSB';
         if (defined $S{$s}{totbytes} and 
             $S{$s}{totbytes} > 0     and   # only count non-empty ones
             !$S{$s}{unfinished}          ) # and only finished ones
         {
-	    debug "aSB size is " . bytes($S{$s}{totbytes}), 'ldcount';
+	    debug "size is " . bytes($S{$s}{totbytes}), 'mSB';
             $count += 1;
             $totsize += $S{$s}{totbytes};
         }
     }
-    my $sAvBytes = 0;
-    $sAvBytes = round($totsize / $count) if $count > 0;
-    debug "aSB totsize=" . bytes($totsize) . " count=$count sAvBytes=" . bytes($sAvBytes), 'ldcount'; 
-    return $sAvBytes;
+    my $avBytes = 0;
+    $avBytes = round($totsize / $count) if $count > 0;
+    my $minBytes = $avBytes * $Opt{'ldmin'};
+    debug "totsize=" . bytes($totsize) . " count=$count avBytes=" . bytes($avBytes) .
+        ' minBytes=' . bytes($minBytes), 'mSB'; 
+    return $minBytes;
 }
 
 #---------------------------------------------------------------------------------------------------
@@ -2973,14 +2978,18 @@ sub averageSnapshotBytes () {
 sub ldCountable ($$) {
     # Return true if the snapshot counts for the purposes of ldcount
     my $s        = shift;   # snapshot timestamp
-    my $sAvBytes = shift;
-    debug "sAvBytes=$sAvBytes   this totbytes=" . $S{$S[$s]}{totbytes} || 'unset' . "\n", 'ldC';
-    my $countable = 0;
-    if (!$S{$s}{unfinished}                            or               # ...its a finished snapshot or
-        (defined($S{$s}{totbytes})      and                  # ...(size is defined and
-         ($S{$s}{totbytes} > $sAvBytes*$Opt{'ldmin'}))   ) { # ... size is big enough)
-        debug "snapshot $S{$S[$s]}{name} included in count back\n", 'ldC';
-        $countable = 1;
+    my $minbytes = shift;   # minimum snapshot size
+    my $totbytes = $S{$s} // 0;
+    my $countable = 1;
+    if ($S{$s}{unfinished}) {
+        $countable = 0;
+        debug "snapshot $S{$s}{name} not counted -- unfinished\n", 'ldC';
+    } elsif ($totbytes < $minbytes) {
+        debug "snapshot $S{$s}{name} not counted -- " . bytes($totbytes) . ' is less than ' . 
+            bytes($minbytes) . "\n", 'ldC';
+        $countable = 0;
+    } else {
+        debug "snapshot $S{$s}{name} included in count back\n", 'ldC';
     }
     return $countable;
 }
@@ -3678,7 +3687,7 @@ sub deleteOldSnapshots (\@;$) {
     my $deleted = 0;
     debug "n=$n  expirables=@$expirablesR\n", 'dOS';
     while (@$expirablesR and $n > 0) {
-        my $e = pop @$expirablesR;
+        my $e = shift @$expirablesR;
         $n -= 1;
         printNote "Expiring old snapshot $S{$e}{name}\n";
         if (deleteSnapshot($e) == 0) {  
@@ -3827,6 +3836,7 @@ sub getSnapshotList ($) {
         }
     }
     # Check for zero-size snapshots (from metadata and/or file system) and delete them
+    # (but not if --nodelete)
     foreach my $s (sort keys %S) {
         #debug "Checking for zero size: s=$s totbytes=$S{$s}{totbytes}", 'gSL';
         if (defined $S{$s}{totbytes} and $S{$s}{totbytes} == 0) {
@@ -3834,8 +3844,12 @@ sub getSnapshotList ($) {
             my ($totbytes, $totfiles) = getSnapshotSize($s);
             if ($totbytes == 0) {
                 # delete it
-                printWarning "Deleting empty snapshot $S{$s}{name}\n";
-                deleteSnapshot($s);
+                if ($Opt{'delete'}) {
+                    printWarning "Deleting empty snapshot $S{$s}{name}\n";
+                    deleteSnapshot($s);
+                } else {
+                    printWarning "Snapshot $S{$s}{name} is empty, but will not be deleted because of --nodelete option\n";
+                }
             } elsif ($totbytes > -1) { # (it will be -1 if couldn't get the size)
                 # update the metadata
                 printNote "Correcting size of snapshot $S{$s}{name} from 0 to " . 
@@ -4954,61 +4968,86 @@ sub displayCSpecs (\@) {
 
 #===================================================================================================
 
-sub getExpirableSnapshots ($\@$) {
+# Expirable snapshots.
+# 0. Current snapshot is not expirable
+# 1. Snapshots within ldcount range are never expirable (even if unfinished)
+# 2. If --expire-old, all others are expirable
+# 3. Else...
+# 4. Unfinished snapshots are expirable
+# 5. Snapshots in the last UNLIMITED spec are expirable
+
+
+sub getExpirableSnapshots ($\@$$) {
     # Return a list of snapshots that are 'expirable'
     # because they fall within range of the last 'unlimited' spec,
     # or because the expire-old option allows it
-    my $specsR = shift;
-    my @cSpecs = @{(shift)};
-    my $now    = shift;
+    my $specsR   = shift;
+    my @cSpecs   = @{(shift)};
+    my $now      = shift;
+    my $minBytes = shift;
 
-    my @S = rsort keys %S;  # Gives most recent ones first
-    debug "\@S=@S specsR=@$specsR \$now=$now\n", 'gES';
-    my @expirable;
-    # The current snapshot and any that we're linking to
-    # are never expirable, so shift them off the local copy of @S
-    # # FIXME this doesn't take --ldmin into account.  nor unfinished snapshots within ldcount range
-    for my $i (0..$Opt{ldcount}) {
-        shift @S; 
+    # Start with all the snapshots, and remove the unexpirable ones
+    my @expirables = rsort keys %S;  # Gives most recent ones first
+    debug "initially expirables: " . dumpSnapshots(@expirables), 'gES';
+
+    # Exclude the current (about to be created) one
+    splice @expirables, 0, 1;
+
+    # Exclude those within ldcount range
+    my $ld = 0; # number of 'good' link-dests created
+    my $i = 0;  
+    while ($ld < $Opt{ldcount} and $i <= min($#expirables, 19)) {  # 20 is rsync's max for link-dests
+        $ld += 1 if ldCountable($expirables[$i], $minBytes);
+        $i += 1;
     }
-    if (!@S) {
-        debug "no \@S, so no expirables\n", 'gES';
-        return @expirable;
-    }
-    # Put unfinished snapshots on the list first (oldest first)
-    for (my $i = $#S; $i >= 0; $i--) {
-        if ($S{$S[$i]}{unfinished}) {
-            push @expirable, $S[$i];
-            # and remove from @S
-            splice @S, $i, 1;
-        }
-    }
-    debug "expiring unfinisheds: " . join(' ', map {time2stamp($_)} @expirable) . "\n", 'gES';
-    # WTF!!! FIXME   @S = rsort keys %S;  # now with no unfinished snapshots
-    # Return if there are none left
-    return @expirable if !@S;
+    splice @expirables, 0, $i;
+    debug "after excluding ldcount     expirables: " . dumpSnapshots(@expirables), 'gES';
+
+    # Exclude any snapshot with a note
+    @expirables = grep {$S{$_}{'note'} eq ''} @expirables;
+    debug "after excluding notes       expirables: " . dumpSnapshots(@expirables), 'gES';
+
+    # Split finished and unfinished lists
+    my @unfinished = grep {$S{$_}{'unfinished'} == 1} @expirables;
+    my @finished   = grep {$S{$_}{'unfinished'} == 0} @expirables;
+    debug "unfinished: " . dumpSnapshots(@unfinished), 'gES';
+    debug "finished:   " . dumpSnapshots(@finished), 'gES';
+
     if ($Opt{'expire-old'}) {
-        # Any snapshot is expirable so return @S in oldest-first order.
-            # FIXME not if has an extra bit on the label
-        push @expirable, reverse @S;
-        debug "expire-old: they're all expirable EXCEPT the first one(s): \n", 'gES';
-        debug "       " . join(' ', map {time2stamp($_)} @expirable) . "\n", 3;
-        return @expirable;
-    }
-    # Pick out snapshots in the 'unlimited' cSpec, which is always at the end
-    my $lastSpec = @$specsR[-1];
-    if ($lastSpec->{count} == UNLIMITED) {
-        my $lastraw = $lastSpec->{rawspec};
-        my $i = $#cSpecs;
-        while (($i >= 0) and ($cSpecs[$i]->{label} =~ /^($lastraw)/)) {
-            debug "lastC is unlimited, getting expirables\n", 'gES'; 
-            # FIXME not if has an extra bit on the label
-            unshift @expirable, snapshotsInPeriod(@S, $cSpecs[$i]->{beg}, $cSpecs[$i]->{end}, 1);
-            $i -= 1;
+        
+        # all finished ones are expirable
+        debug "expire-old, so all are expirable", 'gES';
+        
+    } else {
+
+        # Keep only in the 'unlimited' Spec, which is always at the end
+        my @lastspec_ones;
+        my $lastSpec = @$specsR[-1];
+        if ($lastSpec->{count} == UNLIMITED) {
+            debug "lastSpec  count=$lastSpec->{count}  rawspec=$lastSpec->{rawspec}", 'gES';
+            my $lastraw = $lastSpec->{rawspec};
+            my $i = $#cSpecs;
+            # loop through all the cSpecs, and pick snapshots from the unlimited one
+            while (($i >= 0) and ($cSpecs[$i]->{label} =~ /^($lastraw)/)) {
+                debug "i=$i  cSpecs[i]: beg=$cSpecs[$i]->{beg}  end=$cSpecs[$i]->{end}  label=$cSpecs[$i]->{label}", 'gES';
+                # Remove all the snapshots in the relevant period
+                my @lsoi = snapshotsInPeriod(@finished, $cSpecs[$i]->{beg}, $cSpecs[$i]->{end}, 1);
+                debug "keeping (i=$i) @lsoi", 'gES';
+                push @lastspec_ones, @lsoi;
+                $i -= 1;
+            }
+            #@finished = snapshotsInPeriod(@finished, $
+            @finished = @lastspec_ones;
+        } else {
+            # none are expirable
+            debug "no finished snapshots are expirable", 'gES';
+            @finished = ();
         }
     }
-    debug "returning expirables: " . join(' ', map {time2stamp($_)} @expirable) . "\n", 'gES';
-    return @expirable;
+
+    # Return the expirables oldest first
+    debug "returning expirables (will be sorted): " . dumpSnapshots(@unfinished) . ' | ' . dumpSnapshots(@finished), 'gES';
+    return (sort @unfinished), (sort @finished);
 }
 
 #===================================================================================================
@@ -5128,7 +5167,7 @@ sub fixStats ($) {
 
 #---------------------------------------------------------------------------------------------------
 
-sub runRsync ($\@$) {
+sub runRsync ($\@$$) {
     # Run rsync to create the snapshot.
     # If it fails for lack of disk space, delete expirable snapshots and try again.
     # Returns 1 for successful creation of a new snapshot, and a flag indicating
@@ -5136,9 +5175,9 @@ sub runRsync ($\@$) {
     my $dest               = shift; 
     my @expirableSnapshots = @{(shift)};
     my $snapshot           = shift;
-    my $sAvBytes           = shift;  # average size of previous snapshots
+    my $minBytes           = shift;  # minimum size of a countable snapshot
     my @S = rsort keys %S;
-    debug "\@eS='@expirableSnapshots' snapshot " . dumpSnapshot($snapshot) . ")\n", 'rR';
+    debug "new snapshot: " . dumpSnapshot($snapshot) . "  expirables: " . dumpSnapshots(@expirableSnapshots), 'gES';
 
     my $remoteDest = remote($dest);
 
@@ -5222,33 +5261,37 @@ sub runRsync ($\@$) {
         my $linkdest = '';
         my $ld = 0; # number of 'good' link-dests created
         my $s = 1;  # start at snapshot 1 (i.e. skip the 0th one that we're creating now)
-        debug '$sAvBytes * $Opt{\'ldmin\'} is ' . bytes($sAvBytes*$Opt{'ldmin'}), 'ldcount';
-        while ($ld < $Opt{ldcount} and $s <= min($#S, 20)) {
+        #debug '$sAvBytes * $Opt{\'ldmin\'} is ' . bytes($sAvBytes*$Opt{'ldmin'}), 'ldcount';
+        while ($ld < $Opt{ldcount} and $s <= min($#S, 19)) {
+            if (!$S{$S[$s]}{name}) {
+                debug "!!! snapshot with no name: S[s]=$S[$s] " . time2stamp($S[$s]), 'ldcount';
+            }
             debug "linking: s=$s S[s]=$S[$s] S{S[s]}{name}=$S{$S[$s]}{name}\n", 'ldcount';
             if (!$Opt{'dry-run'}) {
                 $linkdest .= "--link-dest='../../$S{$S[$s]}{name}/$subDir' ";
             }   
-            if (defined($S{$S[$s]})) {
-                debug "this totbytes=" . bytes($S{$S[$s]}{totbytes}), 'ldcount';
-            } else {
-                debug "this totbytes=undefined", 'ldcount';
-            }
-            # Extra tests to analyse the reason
-            debug "unfinished", 'ldcount' if $S{$S[$s]}{unfinished};
-            if (!defined($S{$S[$s]}{totbytes})) {
-                debug "size is undefined", "ldcount";
-            } elsif ($S{$S[$s]}{totbytes} < $sAvBytes*$Opt{'ldmin'}) {
-                debug "size is less than " . bytes($sAvBytes*$Opt{'ldmin'}), 'ldcount';
-            }
-            # count towards the total if...
-            if ($S{$S[$s]}{unfinished}                    or      # ...its an unfinished snapshot or
-                !defined($S{$S[$s]}{totbytes})            or      # ...size is undefined or
-                $S{$S[$s]}{totbytes} < $sAvBytes*$Opt{'ldmin'}) { # ...size is not big enough
-                debug "snapshot $S{$S[$s]}{name} linked but not counted\n", 'ldcount';
-            } else {
-                debug "snapshot $S{$S[$s]}{name} included in count back\n", 'ldcount';
-                $ld += 1 
-            }
+            $ld += 1 if ldCountable($S[$s], $minBytes);
+#            if (defined($S{$S[$s]}{totbytes})) {
+#                debug "this totbytes=" . bytes($S{$S[$s]}{totbytes}), 'ldcount';
+#            } else {
+#                debug "this totbytes=undefined", 'ldcount';
+#            }
+#            # Extra tests to analyse the reason
+#            debug "unfinished", 'ldcount' if $S{$S[$s]}{unfinished};
+#            if (!defined($S{$S[$s]}{totbytes})) {
+#                debug "size is undefined", "ldcount";
+#            } elsif ($S{$S[$s]}{totbytes} < $sAvBytes*$Opt{'ldmin'}) {
+#                debug "size is less than " . bytes($sAvBytes*$Opt{'ldmin'}), 'ldcount';
+#            }
+#            # count towards the total if...
+#            if ($S{$S[$s]}{unfinished}                    or      # ...its an unfinished snapshot or
+#                !defined($S{$S[$s]}{totbytes})            or      # ...size is undefined or
+#                $S{$S[$s]}{totbytes} < $sAvBytes*$Opt{'ldmin'}) { # ...size is not big enough
+#                debug "snapshot $S{$S[$s]}{name} linked but not counted\n", 'ldcount';
+#            } else {
+#                debug "snapshot $S{$S[$s]}{name} included in count back\n", 'ldcount';
+#                $ld += 1 
+#            }
             $s += 1;
         }
 
@@ -5272,7 +5315,7 @@ sub runRsync ($\@$) {
             "$verbose $linkdest $iefOpts $compression " . 
             "$bwlimit --relative --stats $rsyncPath '$location' '$destDir'";
 
-        my $retriesD = @expirableSnapshots;        # retries after deleting to make space 
+        #NOT NEEDEDmy $retriesD = @expirableSnapshots;        # retries after deleting to make space 
         my $retriesT = $Opt{'timeout-retries'};    # retries after time-outs
         my $keepTrying = 1; 
         my $deletions = 0;
@@ -5347,19 +5390,22 @@ sub runRsync ($\@$) {
                 }
             }
 
-            elsif (($rc == 12) and ($rc2 eq 'diskfull')) {
+            #elsif (($rc == 12) and ($rc2 eq 'diskfull')) {
+            elsif (($rc2 eq 'diskfull')) {
                 #* disk full
+                # (happens with rc=11 or rc=12 -- others??)
                 # Try to make some space before having another go
                 printError "Destination '$dest' is full!\n";
-                if ($retriesD > 0) { 
+                if (@expirableSnapshots) { 
                     printNote "Will try to delete an old snapshot to make space\n", 1;
+                    debug "expirables before delete: " . dumpSnapshots(@expirableSnapshots), 'dOS';
                     my $deleted = deleteOldSnapshots(@expirableSnapshots, 1);
+                    debug "expirables after  delete: " . dumpSnapshots(@expirableSnapshots), 'dOS';
                     if ($deleted >= 1) {
                         # More space freed, so try again
                         printNote "Old snapshot deleted successfully, will try again\n", 1;
                         $deletions += $deleted;
                         $deletionsAllSources += $deleted;
-                        $retriesD -= 1;
                     } else {
                         # No snapshots deleted, so stop trying
                         printError "Unable to delete old snapshot to make space\n";
@@ -5642,10 +5688,11 @@ sub processDestination ($) {
             # note that it's not marked as failed
             $AllDestsFailed = 0;
         } else {
-            my $sAvBytes = averageSnapshotBytes();
-            my @expirableSnapshots = getExpirableSnapshots($Opt{pspecs}, @cSpecs, $now, $sAvBytes);
+            my $minBytes = minimumSnapshotBytes();
+            my @expirableSnapshots = getExpirableSnapshots($Opt{pspecs}, @cSpecs, $now, $minBytes);
+            debug "gES returned " . dumpSnapshots(@expirableSnapshots), 'gES';
             # Run rsync to create the new snapshot
-            (my $rsyncOK, $lostDest) = runRsync($dest, @expirableSnapshots, $now, $sAvBytes);  
+            (my $rsyncOK, $lostDest) = runRsync($dest, @expirableSnapshots, $now, $minBytes);  
             if ($rsyncOK) { 
                 $AllDestsFailed = 0;
                 # Create a 'latest' snapshot if required
