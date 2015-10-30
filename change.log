@@ -1,6 +1,10 @@
 Changelog for brandysnap
 ========================
 
+0.2.21  30/10/15
+* Fixes re --expire-old
+* Use carton to manage dependencies
+
 0.2.20	28/11/14
 * Added --ldmin option
 * Fixed bugs:
