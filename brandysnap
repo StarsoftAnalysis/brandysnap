@@ -143,7 +143,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-our $VERSION = "0.2.21";
+our $VERSION = "0.2.21-bugfixes";
 
 # A copy of @ARGV before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -2979,7 +2979,7 @@ sub ldCountable ($$) {
     # Return true if the snapshot counts for the purposes of ldcount
     my $s        = shift;   # snapshot timestamp
     my $minbytes = shift;   # minimum snapshot size
-    my $totbytes = $S{$s} // 0;
+    my $totbytes = $S{$s}{totbytes} // 0;
     my $countable = 1;
     if ($S{$s}{unfinished}) {
         $countable = 0;
@@ -3150,6 +3150,15 @@ sub displaySummary () {
                 $timing = ", time taken: " . elapsed($srcInfo->{start}, $srcInfo->{stop});
             }
             $text .= "\t\t$srcInfo->{result}$timing\n";
+        }
+        if (defined $destInfo->{deleteCount} && $destInfo->{deleteCount} > 0) {
+            my $timing = '';
+            if (defined $destInfo->{deleteStop} && $destInfo->{deleteStop} > $destInfo->{deleteStart}) {
+                $timing = ' in ' . elapsed($destInfo->{deleteStart}, $destInfo->{deleteStop});;
+            }
+            $text .= "\t$destInfo->{deleteCount} snapshot(s) deleted$timing\n";
+        } else {
+            $text .= "\tNo snapshots were deleted\n";
         }
         my $timing = '';
         if (defined $destInfo->{stop}) {
@@ -5226,15 +5235,7 @@ sub runRsync ($\@$$) {
         my $verbose = '';
         $verbose = '--verbose' if $Opt{verbose} > 3;
 
-#        # Add the include/exclude options -- there may be several of each
-#        # Note that each file/directory is double-quoted to allow escapes to work
-#        # (see stripQuotes()).
-#        my $incExcOpts = '';
-#        foreach my $opt (qw(include include-from exclude exclude-from)) {
-#            debug "adding ie options: " . join(' ', map {"--$opt \"$_\""} @{$Opt{$opt}}) . "\n", 'cIEF';
-#            $incExcOpts .= join(' ', map {"--$opt \"$_\""} @{$Opt{$opt}}) . ' ';
-#        }
-        # Add the filter options
+        # Add the include/exclude/filter options
         my $iefOpts = join(' ', @{$Opt{ief}});
 
         my $destDir = $S{$snapshot}{fullname};    
@@ -5251,12 +5252,13 @@ sub runRsync ($\@$$) {
         $destDir = "$destDir/$subDir";
 
         # Set up link-dest options if there are any previous snapshots.
+        # This has to be re-done for each source because it uses $subDir.
         # Loop to create as many link-dests as required.
         # Previous unfinished snapshots are linked in case they contain useful
         # files, but don't count towards the total.
-        # Experimental: snapshots less than a % of the average size are linked but not counted
+        # Snapshots less than a % of the average size are linked but not counted.
         # Note that rsync limits the number of link-dests to 20.
-        # But don't do any of this in --dry-run mode because the new directory won't
+        # But don't add link-dest in --dry-run mode because the new directory won't
         # have been created from which we're creating the relative path.
         my $linkdest = '';
         my $ld = 0; # number of 'good' link-dests created
@@ -5264,6 +5266,7 @@ sub runRsync ($\@$$) {
         #debug '$sAvBytes * $Opt{\'ldmin\'} is ' . bytes($sAvBytes*$Opt{'ldmin'}), 'ldcount';
         while ($ld < $Opt{ldcount} and $s <= min($#S, 19)) {
             if (!$S{$S[$s]}{name}) {
+                # Shouldn't happen!
                 debug "!!! snapshot with no name: S[s]=$S[$s] " . time2stamp($S[$s]), 'ldcount';
             }
             debug "linking: s=$s S[s]=$S[$s] S{S[s]}{name}=$S{$S[$s]}{name}\n", 'ldcount';
@@ -5271,27 +5274,6 @@ sub runRsync ($\@$$) {
                 $linkdest .= "--link-dest='../../$S{$S[$s]}{name}/$subDir' ";
             }   
             $ld += 1 if ldCountable($S[$s], $minBytes);
-#            if (defined($S{$S[$s]}{totbytes})) {
-#                debug "this totbytes=" . bytes($S{$S[$s]}{totbytes}), 'ldcount';
-#            } else {
-#                debug "this totbytes=undefined", 'ldcount';
-#            }
-#            # Extra tests to analyse the reason
-#            debug "unfinished", 'ldcount' if $S{$S[$s]}{unfinished};
-#            if (!defined($S{$S[$s]}{totbytes})) {
-#                debug "size is undefined", "ldcount";
-#            } elsif ($S{$S[$s]}{totbytes} < $sAvBytes*$Opt{'ldmin'}) {
-#                debug "size is less than " . bytes($sAvBytes*$Opt{'ldmin'}), 'ldcount';
-#            }
-#            # count towards the total if...
-#            if ($S{$S[$s]}{unfinished}                    or      # ...its an unfinished snapshot or
-#                !defined($S{$S[$s]}{totbytes})            or      # ...size is undefined or
-#                $S{$S[$s]}{totbytes} < $sAvBytes*$Opt{'ldmin'}) { # ...size is not big enough
-#                debug "snapshot $S{$S[$s]}{name} linked but not counted\n", 'ldcount';
-#            } else {
-#                debug "snapshot $S{$S[$s]}{name} included in count back\n", 'ldcount';
-#                $ld += 1 
-#            }
             $s += 1;
         }
 
@@ -5400,6 +5382,7 @@ sub runRsync ($\@$$) {
                     printNote "Will try to delete an old snapshot to make space\n", 1;
                     debug "expirables before delete: " . dumpSnapshots(@expirableSnapshots), 'dOS';
                     my $deleted = deleteOldSnapshots(@expirableSnapshots, 1);
+                    $Summary{$dest}{deleteCount} += $deleted;
                     debug "expirables after  delete: " . dumpSnapshots(@expirableSnapshots), 'dOS';
                     if ($deleted >= 1) {
                         # More space freed, so try again
@@ -5711,9 +5694,12 @@ sub processDestination ($) {
         if ($Opt{delete}) {
             # Get the delete list again because the snapshot we've just created (if any)
             # may not be complete (or may not have been created)
+            $Summary{$dest}{deleteStart} = time();
             @D = getDeleteList(@cSpecs) if $Opt{snapshot};
+            $Summary{$dest}{deleteCount} += @D;
             # Now we can actually delete things
             deleteSnapshots(@D, @cSpecs);
+            $Summary{$dest}{deleteStop} = time();
         } else {
             printNote "Option 'nodelete' given, so no existing snapshots will be deleted\n", 1;
         }
