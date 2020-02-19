@@ -1261,15 +1261,23 @@ sub getSnapshotSize ($) {
 
 sub updateSnapshotSizes () {
     # Make sure that each snapshot in %S has size information
-    foreach my $snapshot (keys %S) {
+    printNote "\nUpdating snapshot sizes:\n";
+    foreach my $snapshot (sort keys %S) {
         next if (defined $S{$snapshot}{totbytes});  # info is already there 
+        printNote "\tfor snapshot $S{$snapshot}{name}\n";
         my ($totalBytes, $totalFiles) = getSnapshotSize($snapshot);
         if ($totalBytes >= 0) { 
             $S{$snapshot}{totbytes} = $totalBytes;
-            $S{$snapshot}{totfiles} = $totalFiles; # FIXME why was this commented out?
+            $S{$snapshot}{totfiles} = $totalFiles;
+            $S{$snapshot}{tfrbytes} = -1;
+            $S{$snapshot}{tfrfiles} = -1;
             debug "adding size information for $S{$snapshot}{name}, bytes=$totalBytes\n", 'uSS';
         } else {
-            # couldn't get the size, leave it undefined
+            # couldn't get the size, leave it undefined -- no, set to -1
+            $S{$snapshot}{totbytes} = -1;
+            $S{$snapshot}{totfiles} = -1;
+            $S{$snapshot}{tfrbytes} = -1;
+            $S{$snapshot}{tfrfiles} = -1;
         }
     }
 }
@@ -3044,10 +3052,10 @@ sub status ($\@) {
         my (%total, %count, %value, %avrag);
         my @cols = qw(totbytes tfrbytes totfiles tfrfiles);
         foreach my $col (@cols) {
-            $total{$col} = '';
+            $total{$col} = 0;
             $count{$col} = 0;
-            $value{$col} = '';
-            $avrag{$col} = '';
+            $value{$col} = 0;
+            $avrag{$col} = 0;
         }
         foreach my $s (rsort keys %S) {
             # Print period details if we've got to a new spec
@@ -3093,6 +3101,8 @@ sub status ($\@) {
             # Get values for each column and add to totals
             foreach my $col (@cols) {
                 $value{$col} = '';
+                debug "s=$s col=$col S{s}=" . Dumper($S{$s}), 'status';
+                debug "value{$col}=$value{$col}  total{$col}=$total{$col}  count{$col}=$count{$col}", 'status';
                 if (defined $S{$s}{$col} and $S{$s}{$col} >= 0) {
                     $value{$col}  = $S{$s}{$col};
                     $total{$col} += $S{$s}{$col};
