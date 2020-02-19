@@ -114,7 +114,7 @@ $EOL = ':crlf' if $Cygwin;
 # get a stacktrace: (may get turned off later)
 $SIG{__DIE__} = sub { Carp::confess(@_) };
 
-# Make this script robust against interruptions.
+# Make this script handle interruptions gracefully.
 # $Interrupted becomes true if the script has been interrupted
 my $Interrupted = '';
 # Set the process group so that we can tidy up child processes:
@@ -143,7 +143,7 @@ $| = 1;
 my $Script = 'brandysnap';
 
 # Version of this script
-our $VERSION = "0.2.21";
+our $VERSION = "0.2.22";
 
 # A copy of @ARGV before it gets shifted
 my @ARGVcopy = @ARGV;
@@ -1243,16 +1243,16 @@ sub getSnapshotSize ($) {
                 debug "ignoring non-matching $item\n", 'gSS'
             }
         }
+        # If a snapshot only contains empty directories, consider it empty
+        if ($dirsOnly) {
+            printWarning "Snapshot $S{$snapshot}{name} has only empty directories -" .
+            " its size will be set to zero\n";
+            return (0, 0);
+        }
     } else {
         # Error -- return -1
-        printError "Unable to get the size of snapshot $S{$snapshot}{fullname}";
+        printError "Unable to get the size of snapshot $S{$snapshot}{fullname}\n";
         ($totalBytes, $totalFiles) = (-1, -1);
-    }
-    # If a snapshot only contains empty directories, consider it empty
-    if ($dirsOnly) {
-        printWarning "Snapshot $S{$snapshot}{name} has only empty directories -" .
-        " its size will be set to zero\n";
-        return (0, 0);
     }
     return ($totalBytes, $totalFiles);
 }
@@ -3044,8 +3044,9 @@ sub status ($\@) {
         my (%total, %count, %value, %avrag);
         my @cols = qw(totbytes tfrbytes totfiles tfrfiles);
         foreach my $col (@cols) {
-            #$total{$col} = '';    # will stay undefined if nothing is added
+            $total{$col} = '';
             $count{$col} = 0;
+            $value{$col} = '';
             $avrag{$col} = '';
         }
         foreach my $s (rsort keys %S) {
@@ -5324,7 +5325,7 @@ sub runRsync ($\@$$) {
 
             printlog "Running rsync command: $Opt{'rsync-cmd'} $args\n", 1;
                       #####################
-            my $rsyncInterrupted = '';     # only true if interrupted during the main rsync  
+            my $rsyncInterrupted = '';     # will only become true if interrupted during the main rsync  
             my ($rc, $rc2, $statsR) = systemCall($Opt{'rsync-cmd'}, $args, 4,4);
             $rsyncInterrupted = $Interrupted;
             debug "after rsync rc=$rc rc2='$rc2' rsyncInterrupted='$rsyncInterrupted'\n", 'rR';
@@ -5343,7 +5344,7 @@ sub runRsync ($\@$$) {
             elsif (($rc == 23) and ($rc2 eq 'readonly')) {
                 #* file system has gone read-only
                 printError "The destination's file system has become read-only; " .
-                    "this problem must be correct before running $Script again.\n";
+                    "this problem must be corrected before running $Script again.\n";
                 $keepTrying = 0;
                 $succeeded = 0;
                 $restartable = 0;
@@ -5355,6 +5356,7 @@ sub runRsync ($\@$$) {
                 #* interrupted
                 printWarning "rsync was interrupted with signal '$rsyncInterrupted' -- " .
                     "the snapshot will be kept to allow restart\n";
+                $Interrupted = "rsync interrupted";  # Child interruption should shutdown operations in this script too
                 $keepTrying = 0;
                 $succeeded = 0;
                 $restartable = 1;
@@ -5719,7 +5721,7 @@ sub processDestination ($) {
         }
     }
 
-    if (!$lostDest and ($Opt{snapshot} or $Opt{delete})) {
+    if (!$Interrupted and !$lostDest and ($Opt{snapshot} or $Opt{delete})) {
         # Complete and store the metadata
         updateSnapshotSizes();
         writeMetadata($dest);

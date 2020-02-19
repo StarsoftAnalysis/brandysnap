@@ -1,3 +1,5 @@
 * find the old to-do list
+
+DONE:
 * if ctrl-c'd, or otherwise stopped, don't go on to delete snapshots
 * if getting a snapsshot's size fails (e.g. child killed), don't assume size is zero and then delete it
